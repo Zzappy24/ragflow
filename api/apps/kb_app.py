@@ -45,9 +45,10 @@ from common.constants import RetCode, PipelineTaskType, VALID_TASK_STATUS, LLMTy
 from common import settings
 from common.doc_store.doc_store_base import OrderByExpr
 from api.apps import login_required, current_user
+from api.apps.extensions.rbac import require_permission, Permission
 
 """
-Deprecated, todo delete 
+Deprecated, todo delete
 @manager.route('/create', methods=['post'])  # noqa: F821
 @login_required
 @validate_request("name")
@@ -184,6 +185,7 @@ async def update():
 
 @manager.route('/update_metadata_setting', methods=['post'])  # noqa: F821
 @login_required
+@require_permission(Permission.DATASET_UPDATE)
 @validate_request("kb_id", "metadata")
 async def update_metadata_setting():
     req = await get_request_json()
@@ -200,6 +202,7 @@ async def update_metadata_setting():
 
 @manager.route('/detail', methods=['GET'])  # noqa: F821
 @login_required
+@require_permission(Permission.DATASET_READ)
 def detail():
     kb_id = request.args["kb_id"]
     try:
@@ -328,6 +331,7 @@ async def rm():
 
 @manager.route('/<kb_id>/tags', methods=['GET'])  # noqa: F821
 @login_required
+@require_permission(Permission.DATASET_READ)
 def list_tags(kb_id):
     if not KnowledgebaseService.accessible(kb_id, current_user.id):
         return get_json_result(
@@ -345,6 +349,7 @@ def list_tags(kb_id):
 
 @manager.route('/tags', methods=['GET'])  # noqa: F821
 @login_required
+@require_permission(Permission.DATASET_READ)
 def list_tags_from_kbs():
     kb_ids = request.args.get("kb_ids", "").split(",")
     for kb_id in kb_ids:
@@ -364,6 +369,7 @@ def list_tags_from_kbs():
 
 @manager.route('/<kb_id>/rm_tags', methods=['POST'])  # noqa: F821
 @login_required
+@require_permission(Permission.DATASET_UPDATE)
 async def rm_tags(kb_id):
     req = await get_request_json()
     if not KnowledgebaseService.accessible(kb_id, current_user.id):
@@ -384,6 +390,7 @@ async def rm_tags(kb_id):
 
 @manager.route('/<kb_id>/rename_tag', methods=['POST'])  # noqa: F821
 @login_required
+@require_permission(Permission.DATASET_UPDATE)
 async def rename_tags(kb_id):
     req = await get_request_json()
     if not KnowledgebaseService.accessible(kb_id, current_user.id):
@@ -459,6 +466,7 @@ def delete_knowledge_graph(kb_id):
 
 @manager.route("/get_meta", methods=["GET"])  # noqa: F821
 @login_required
+@require_permission(Permission.DATASET_READ)
 def get_meta():
     kb_ids = request.args.get("kb_ids", "").split(",")
     for kb_id in kb_ids:
@@ -473,6 +481,7 @@ def get_meta():
 
 @manager.route("/basic_info", methods=["GET"])  # noqa: F821
 @login_required
+@require_permission(Permission.DATASET_READ)
 def get_basic_info():
     kb_id = request.args.get("kb_id", "")
     if not KnowledgebaseService.accessible(kb_id, current_user.id):
@@ -489,6 +498,7 @@ def get_basic_info():
 
 @manager.route("/list_pipeline_logs", methods=["POST"])  # noqa: F821
 @login_required
+@require_permission(Permission.DATASET_READ)
 async def list_pipeline_logs():
     kb_id = request.args.get("kb_id")
     if not kb_id:
@@ -533,6 +543,7 @@ async def list_pipeline_logs():
 
 @manager.route("/list_pipeline_dataset_logs", methods=["POST"])  # noqa: F821
 @login_required
+@require_permission(Permission.DATASET_READ)
 async def list_pipeline_dataset_logs():
     kb_id = request.args.get("kb_id")
     if not kb_id:
@@ -567,6 +578,7 @@ async def list_pipeline_dataset_logs():
 
 @manager.route("/delete_pipeline_logs", methods=["POST"])  # noqa: F821
 @login_required
+@require_permission(Permission.DATASET_DELETE)
 async def delete_pipeline_logs():
     kb_id = request.args.get("kb_id")
     if not kb_id:
@@ -582,6 +594,7 @@ async def delete_pipeline_logs():
 
 @manager.route("/pipeline_log_detail", methods=["GET"])  # noqa: F821
 @login_required
+@require_permission(Permission.DATASET_READ)
 def pipeline_log_detail():
     log_id = request.args.get("log_id")
     if not log_id:
@@ -736,6 +749,7 @@ def trace_raptor():
 
 @manager.route("/run_mindmap", methods=["POST"])  # noqa: F821
 @login_required
+@require_permission(Permission.DATASET_UPDATE)
 async def run_mindmap():
     req = await get_request_json()
 
@@ -783,6 +797,7 @@ async def run_mindmap():
 
 @manager.route("/trace_mindmap", methods=["GET"])  # noqa: F821
 @login_required
+@require_permission(Permission.DATASET_READ)
 def trace_mindmap():
     kb_id = request.args.get("kb_id", "")
     if not kb_id:
@@ -805,6 +820,7 @@ def trace_mindmap():
 
 @manager.route("/unbind_task", methods=["DELETE"])  # noqa: F821
 @login_required
+@require_permission(Permission.DATASET_DELETE)
 def delete_kb_task():
     kb_id = request.args.get("kb_id", "")
     if not kb_id:
@@ -852,6 +868,7 @@ def delete_kb_task():
 
 @manager.route("/check_embedding", methods=["post"])  # noqa: F821
 @login_required
+@require_permission(Permission.DATASET_READ)
 async def check_embedding():
 
     def _guess_vec_field(src: dict) -> str | None:

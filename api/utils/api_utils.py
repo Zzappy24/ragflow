@@ -315,6 +315,23 @@ def token_required(func):
 
         # On success, inject tenant_id into the route function's kwargs
         kwargs["tenant_id"] = objs[0].tenant_id
+
+        # RBAC: check api_key_scope if present
+        try:
+            from api.db.services.workspace_service import ApiKeyScopeService
+            from datetime import datetime
+            scope = ApiKeyScopeService.get_by_token(token)
+            if scope:
+                if scope.expires_at and scope.expires_at < datetime.utcnow():
+                    raise WerkzeugUnauthorized(description="API key expired")
+                if scope.status != "1":
+                    raise WerkzeugUnauthorized(description="API key disabled")
+                ApiKeyScopeService.touch_last_used(token)
+        except WerkzeugUnauthorized:
+            raise
+        except Exception:
+            pass  # no scope = legacy token, allow through
+
         result = func(*args, **kwargs)
         if inspect.iscoroutine(result):
             return await result

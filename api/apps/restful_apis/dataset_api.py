@@ -29,11 +29,13 @@ from api.utils.validation_utils import (
     validate_and_parse_request_args,
 )
 from api.apps.services import dataset_api_service
+from api.apps.extensions.rbac import require_permission, Permission
 
 
 @manager.route("/datasets", methods=["POST"])  # noqa: F821
 @login_required
 @add_tenant_id_to_kwargs
+@require_permission(Permission.DATASET_CREATE)
 async def create(tenant_id: str=None):
     """
     Create a new dataset.
@@ -110,6 +112,7 @@ async def create(tenant_id: str=None):
 @manager.route("/datasets", methods=["DELETE"])  # noqa: F821
 @login_required
 @add_tenant_id_to_kwargs
+@require_permission(Permission.DATASET_DELETE)
 async def delete(tenant_id):
     """
     Delete datasets.
@@ -169,6 +172,7 @@ async def delete(tenant_id):
 @manager.route("/datasets/<dataset_id>", methods=["PUT"])  # noqa: F821
 @login_required
 @add_tenant_id_to_kwargs
+@require_permission(Permission.DATASET_UPDATE)
 async def update(tenant_id, dataset_id):
     """
     Update a dataset.
@@ -256,6 +260,7 @@ async def update(tenant_id, dataset_id):
 @manager.route("/datasets", methods=["GET"])  # noqa: F821
 @login_required
 @add_tenant_id_to_kwargs
+@require_permission(Permission.DATASET_READ)
 def list_datasets(tenant_id):
     """
     List datasets.
@@ -333,6 +338,7 @@ def list_datasets(tenant_id):
 @manager.route('/datasets/<dataset_id>/knowledge_graph', methods=['GET'])  # noqa: F821
 @login_required
 @add_tenant_id_to_kwargs
+@require_permission(Permission.DATASET_READ)
 async def knowledge_graph(tenant_id, dataset_id):
     try:
         success, result = await dataset_api_service.get_knowledge_graph(dataset_id, tenant_id)
@@ -352,6 +358,7 @@ async def knowledge_graph(tenant_id, dataset_id):
 @manager.route('/datasets/<dataset_id>/knowledge_graph', methods=['DELETE'])  # noqa: F821
 @login_required
 @add_tenant_id_to_kwargs
+@require_permission(Permission.DATASET_DELETE)
 def delete_knowledge_graph(tenant_id, dataset_id):
     try:
         success, result = dataset_api_service.delete_knowledge_graph(dataset_id, tenant_id)
@@ -371,6 +378,7 @@ def delete_knowledge_graph(tenant_id, dataset_id):
 @manager.route("/datasets/<dataset_id>/run_graphrag", methods=["POST"])  # noqa: F821
 @login_required
 @add_tenant_id_to_kwargs
+@require_permission(Permission.DATASET_UPDATE)
 async def run_graphrag(tenant_id, dataset_id):
     try:
         success, result = dataset_api_service.run_graphrag(dataset_id, tenant_id)
@@ -386,6 +394,7 @@ async def run_graphrag(tenant_id, dataset_id):
 @manager.route("/datasets/<dataset_id>/trace_graphrag", methods=["GET"])  # noqa: F821
 @login_required
 @add_tenant_id_to_kwargs
+@require_permission(Permission.DATASET_READ)
 def trace_graphrag(tenant_id, dataset_id):
     try:
         success, result = dataset_api_service.trace_graphrag(dataset_id, tenant_id)
@@ -401,6 +410,7 @@ def trace_graphrag(tenant_id, dataset_id):
 @manager.route("/datasets/<dataset_id>/run_raptor", methods=["POST"])  # noqa: F821
 @login_required
 @add_tenant_id_to_kwargs
+@require_permission(Permission.DATASET_UPDATE)
 async def run_raptor(tenant_id, dataset_id):
     try:
         success, result = dataset_api_service.run_raptor(dataset_id, tenant_id)
@@ -416,6 +426,7 @@ async def run_raptor(tenant_id, dataset_id):
 @manager.route("/datasets/<dataset_id>/trace_raptor", methods=["GET"])  # noqa: F821
 @login_required
 @add_tenant_id_to_kwargs
+@require_permission(Permission.DATASET_READ)
 def trace_raptor(tenant_id, dataset_id):
     try:
         success, result = dataset_api_service.trace_raptor(dataset_id, tenant_id)

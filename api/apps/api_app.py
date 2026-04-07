@@ -26,6 +26,13 @@ from api.apps import login_required, current_user
 @manager.route('/new_token', methods=['POST'])  # noqa: F821
 @login_required
 async def new_token():
+    # RBAC: only superusers can create native API tokens
+    if not current_user.is_superuser:
+        return get_json_result(
+            data=False,
+            message="API tokens must be created via the admin panel",
+            code=403
+        )
     req = await get_request_json()
     try:
         tenants = UserTenantService.query(user_id=current_user.id)

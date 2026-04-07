@@ -52,10 +52,12 @@ from rag.prompts.template import load_prompt
 from rag.prompts.generator import cross_languages, keyword_extraction, chunks_format
 from common.constants import RetCode, LLMType, StatusEnum
 from common import settings
+from api.apps.extensions.rbac import require_permission, Permission
 
 
 @manager.route("/agents/<agent_id>/sessions", methods=["POST"])  # noqa: F821
 @token_required
+@require_permission(Permission.CHAT_USE)
 async def create_agent_session(tenant_id, agent_id):
     req = await get_request_json()
     user_id = req.get("user_id") or request.args.get("user_id", tenant_id)
@@ -94,6 +96,7 @@ async def create_agent_session(tenant_id, agent_id):
 
 @manager.route("/chats/<chat_id>/completions", methods=["POST"])  # noqa: F821
 @token_required
+@require_permission(Permission.CHAT_USE)
 async def chat_completion(tenant_id, chat_id):
     req = await get_request_json()
     if not req:
@@ -146,6 +149,7 @@ async def chat_completion(tenant_id, chat_id):
 @manager.route("/chats_openai/<chat_id>/chat/completions", methods=["POST"])  # noqa: F821
 @validate_request("model", "messages")  # noqa: F821
 @token_required
+@require_permission(Permission.CHAT_USE)
 async def chat_completion_openai_like(tenant_id, chat_id):
     """
     OpenAI-like chat completion API that simulates the behavior of OpenAI's completions endpoint.
@@ -438,6 +442,7 @@ async def chat_completion_openai_like(tenant_id, chat_id):
 @manager.route("/agents_openai/<agent_id>/chat/completions", methods=["POST"])  # noqa: F821
 @validate_request("model", "messages")  # noqa: F821
 @token_required
+@require_permission(Permission.CHAT_USE)
 async def agents_completion_openai_compatibility(tenant_id, agent_id):
     req = await get_request_json()
     messages = req.get("messages", [])
@@ -497,6 +502,7 @@ async def agents_completion_openai_compatibility(tenant_id, agent_id):
 
 @manager.route("/agents/<agent_id>/completions", methods=["POST"])  # noqa: F821
 @token_required
+@require_permission(Permission.CHAT_USE)
 async def agent_completions(tenant_id, agent_id):
     req = await get_request_json()
     return_trace = bool(req.get("return_trace", False))
@@ -583,6 +589,7 @@ async def agent_completions(tenant_id, agent_id):
 
 @manager.route("/agents/<agent_id>/sessions", methods=["GET"])  # noqa: F821
 @token_required
+@require_permission(Permission.CHAT_READ)
 async def list_agent_session(tenant_id, agent_id):
     if not UserCanvasService.query(user_id=tenant_id, id=agent_id):
         return get_error_data_result(message=f"You don't own the agent {agent_id}.")
@@ -646,6 +653,7 @@ async def list_agent_session(tenant_id, agent_id):
 
 @manager.route("/agents/<agent_id>/sessions", methods=["DELETE"])  # noqa: F821
 @token_required
+@require_permission(Permission.CHAT_DELETE)
 async def delete_agent_session(tenant_id, agent_id):
     errors = []
     success_count = 0
@@ -699,6 +707,7 @@ async def delete_agent_session(tenant_id, agent_id):
 
 @manager.route("/sessions/ask", methods=["POST"])  # noqa: F821
 @token_required
+@require_permission(Permission.CHAT_USE)
 async def ask_about(tenant_id):
     req = await get_request_json()
     if not req.get("question"):
@@ -738,6 +747,7 @@ async def ask_about(tenant_id):
 
 @manager.route("/sessions/related_questions", methods=["POST"])  # noqa: F821
 @token_required
+@require_permission(Permission.CHAT_USE)
 async def related_questions(tenant_id):
     req = await get_request_json()
     if not req.get("question"):
@@ -1181,6 +1191,7 @@ async def mindmap():
 
 @manager.route("/sequence2txt", methods=["POST"])  # noqa: F821
 @token_required
+@require_permission(Permission.CHAT_USE)
 async def sequence2txt(tenant_id):
     req = await request.form
     stream_mode = req.get("stream", "false").lower() == "true"

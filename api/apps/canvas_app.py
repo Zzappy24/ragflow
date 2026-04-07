@@ -48,12 +48,14 @@ from rag.nlp import search
 from rag.utils.redis_conn import REDIS_CONN
 from common import settings
 from api.apps import login_required, current_user
+from api.apps.extensions.rbac import require_permission, Permission
 from api.apps.services.canvas_replica_service import CanvasReplicaService
 from api.db.services.canvas_service import completion as agent_completion
 
 
 @manager.route('/templates', methods=['GET'])  # noqa: F821
 @login_required
+@require_permission(Permission.AGENT_READ)
 def templates():
     return get_json_result(data=[c.to_dict() for c in CanvasTemplateService.get_all()])
 
@@ -61,6 +63,7 @@ def templates():
 @manager.route('/rm', methods=['POST'])  # noqa: F821
 @validate_request("canvas_ids")
 @login_required
+@require_permission(Permission.AGENT_DELETE)
 async def rm():
     req = await get_request_json()
     for i in req["canvas_ids"]:
@@ -75,6 +78,7 @@ async def rm():
 @manager.route('/set', methods=['POST'])  # noqa: F821
 @validate_request("dsl", "title")
 @login_required
+@require_permission(Permission.AGENT_CREATE)
 async def save():
     req = await get_request_json()
     req['release'] = bool(req.get("release", ""))
@@ -118,6 +122,7 @@ async def save():
 
 @manager.route('/get/<canvas_id>', methods=['GET'])  # noqa: F821
 @login_required
+@require_permission(Permission.AGENT_READ)
 def get(canvas_id):
     if not UserCanvasService.accessible(canvas_id, current_user.id):
         return get_data_error_result(message="canvas not found.")
@@ -190,6 +195,7 @@ def getsse(canvas_id):
 @manager.route('/completion', methods=['POST'])  # noqa: F821
 @validate_request("id")
 @login_required
+@require_permission(Permission.CHAT_USE)
 async def run():
     req = await get_request_json()
     query = req.get("query", "")
@@ -269,6 +275,7 @@ async def run():
 
 @manager.route("/<canvas_id>/completion", methods=["POST"])  # noqa: F821
 @login_required
+@require_permission(Permission.CHAT_USE)
 async def exp_agent_completion(canvas_id):
     tenant_id = current_user.id
     req = await get_request_json()
@@ -314,6 +321,7 @@ async def exp_agent_completion(canvas_id):
 @manager.route('/rerun', methods=['POST'])  # noqa: F821
 @validate_request("id", "dsl", "component_id")
 @login_required
+@require_permission(Permission.AGENT_UPDATE)
 async def rerun():
     req = await get_request_json()
     doc = PipelineOperationLogService.get_documents_info(req["id"])
@@ -341,6 +349,7 @@ async def rerun():
 
 @manager.route('/cancel/<task_id>', methods=['PUT'])  # noqa: F821
 @login_required
+@require_permission(Permission.CHAT_USE)
 def cancel(task_id):
     try:
         REDIS_CONN.set(f"{task_id}-cancel", "x")
@@ -352,6 +361,7 @@ def cancel(task_id):
 @manager.route('/reset', methods=['POST'])  # noqa: F821
 @validate_request("id")
 @login_required
+@require_permission(Permission.AGENT_UPDATE)
 async def reset():
     req = await get_request_json()
     if not UserCanvasService.accessible(req["id"], current_user.id):
@@ -373,6 +383,8 @@ async def reset():
 
 
 @manager.route("/upload/<canvas_id>", methods=["POST"])  # noqa: F821
+@login_required  # RBAC: was missing upstream
+@require_permission(Permission.CHAT_USE)
 async def upload(canvas_id):
     e, cvs = UserCanvasService.get_by_canvas_id(canvas_id)
     if not e:
@@ -392,6 +404,7 @@ async def upload(canvas_id):
 
 @manager.route('/input_form', methods=['GET'])  # noqa: F821
 @login_required
+@require_permission(Permission.AGENT_READ)
 def input_form():
     cvs_id = request.args.get("id")
     cpn_id = request.args.get("component_id")
@@ -413,6 +426,7 @@ def input_form():
 @manager.route('/debug', methods=['POST'])  # noqa: F821
 @validate_request("id", "component_id", "params")
 @login_required
+@require_permission(Permission.AGENT_UPDATE)
 async def debug():
     req = await get_request_json()
     if not UserCanvasService.accessible(req["id"], current_user.id):
@@ -450,6 +464,7 @@ async def debug():
 @manager.route('/test_db_connect', methods=['POST'])  # noqa: F821
 @validate_request("db_type", "database", "username", "host", "port", "password")
 @login_required
+@require_permission(Permission.AGENT_CREATE)
 async def test_db_connect():
     req = await get_request_json()
     try:
@@ -555,6 +570,7 @@ async def test_db_connect():
 #api get list version dsl of canvas
 @manager.route('/getlistversion/<canvas_id>', methods=['GET'])  # noqa: F821
 @login_required
+@require_permission(Permission.AGENT_READ)
 def getlistversion(canvas_id):
     try:
         versions =sorted([c.to_dict() for c in UserCanvasVersionService.list_by_canvas_id(canvas_id)], key=lambda x: x["update_time"]*-1)
@@ -566,6 +582,7 @@ def getlistversion(canvas_id):
 #api get version dsl of canvas
 @manager.route('/getversion/<version_id>', methods=['GET'])  # noqa: F821
 @login_required
+@require_permission(Permission.AGENT_READ)
 def getversion( version_id):
     try:
         e, version = UserCanvasVersionService.get_by_id(version_id)
@@ -577,6 +594,7 @@ def getversion( version_id):
 
 @manager.route('/list', methods=['GET'])  # noqa: F821
 @login_required
+@require_permission(Permission.AGENT_READ)
 def list_canvas():
     keywords = request.args.get("keywords", "")
     page_number = int(request.args.get("page", 0))
@@ -606,6 +624,7 @@ def list_canvas():
 @manager.route('/setting', methods=['POST'])  # noqa: F821
 @validate_request("id", "title", "permission")
 @login_required
+@require_permission(Permission.AGENT_UPDATE)
 async def setting():
     req = await get_request_json()
     req["user_id"] = current_user.id
@@ -630,7 +649,9 @@ async def setting():
 
 
 @manager.route('/trace', methods=['GET'])  # noqa: F821
-def trace():
+@login_required  # RBAC: was missing upstream
+@require_permission(Permission.AGENT_READ)
+async def trace():
     cvs_id = request.args.get("canvas_id")
     msg_id = request.args.get("message_id")
     try:
@@ -645,6 +666,7 @@ def trace():
 
 @manager.route('/<canvas_id>/sessions', methods=['GET'])  # noqa: F821
 @login_required
+@require_permission(Permission.AGENT_READ)
 def sessions(canvas_id):
     tenant_id = current_user.id
     if not UserCanvasService.accessible(canvas_id, tenant_id):
@@ -681,6 +703,7 @@ def sessions(canvas_id):
 
 @manager.route('/<canvas_id>/sessions', methods=['PUT'])  # noqa: F821
 @login_required
+@require_permission(Permission.CHAT_USE)
 async def set_session(canvas_id):
     req = await get_request_json()
     tenant_id = current_user.id
@@ -711,6 +734,7 @@ async def set_session(canvas_id):
 
 @manager.route('/<canvas_id>/sessions/<session_id>', methods=['GET'])  # noqa: F821
 @login_required
+@require_permission(Permission.AGENT_READ)
 def get_session(canvas_id, session_id):
     tenant_id = current_user.id
     if not UserCanvasService.accessible(canvas_id, tenant_id):
@@ -723,6 +747,7 @@ def get_session(canvas_id, session_id):
 
 @manager.route('/<canvas_id>/sessions/<session_id>', methods=['DELETE'])  # noqa: F821
 @login_required
+@require_permission(Permission.CHAT_DELETE)
 def del_session(canvas_id, session_id):
     tenant_id = current_user.id
     if not UserCanvasService.accessible(canvas_id, tenant_id):
@@ -734,6 +759,7 @@ def del_session(canvas_id, session_id):
 
 @manager.route('/prompts', methods=['GET'])  # noqa: F821
 @login_required
+@require_permission(Permission.AGENT_READ)
 def prompts():
     from rag.prompts.generator import ANALYZE_TASK_SYSTEM, ANALYZE_TASK_USER, NEXT_STEP, REFLECT, CITATION_PROMPT_TEMPLATE
 

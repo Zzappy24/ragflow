@@ -1333,6 +1333,128 @@ class SystemSettings(DataBaseModel):
     class Meta:
         db_table = "system_settings"
 
+# ============================================================
+# RBAC Multi-Tenant Models
+# ============================================================
+
+class Organisation(DataBaseModel):
+    id = CharField(max_length=32, primary_key=True)
+    name = CharField(max_length=255, null=False, index=True)
+    slug = CharField(max_length=255, null=False, unique=True, index=True)
+    logo = TextField(null=True)
+    status = CharField(max_length=1, null=True, default="1", index=True)
+    max_users = IntegerField(default=50)
+    max_workspaces = IntegerField(default=10)
+    max_datasets = IntegerField(default=100)
+    max_documents = IntegerField(default=10000)
+    max_storage_gb = IntegerField(default=100)
+    llm_config = JSONField(null=True)
+    settings_json = JSONField(null=True)
+    created_by = CharField(max_length=32, null=False, index=True)
+
+    class Meta:
+        db_table = "organisation"
+
+
+class OrgMember(DataBaseModel):
+    id = CharField(max_length=32, primary_key=True)
+    org_id = CharField(max_length=32, null=False, index=True)
+    user_id = CharField(max_length=32, null=False, index=True)
+    role = CharField(max_length=16, null=False, default="member", index=True)
+    status = CharField(max_length=1, null=True, default="1", index=True)
+    invited_by = CharField(max_length=32, null=True, index=True)
+
+    class Meta:
+        db_table = "org_member"
+
+
+class Workspace(DataBaseModel):
+    id = CharField(max_length=32, primary_key=True)
+    org_id = CharField(max_length=32, null=False, index=True)
+    tenant_id = CharField(max_length=32, null=False, unique=True, index=True)
+    name = CharField(max_length=255, null=False, index=True)
+    description = TextField(null=True)
+    status = CharField(max_length=1, null=True, default="1", index=True)
+    settings_json = JSONField(null=True)
+    created_by = CharField(max_length=32, null=False, index=True)
+
+    class Meta:
+        db_table = "workspace"
+
+
+class WsMember(DataBaseModel):
+    id = CharField(max_length=32, primary_key=True)
+    workspace_id = CharField(max_length=32, null=False, index=True)
+    user_id = CharField(max_length=32, null=False, index=True)
+    role = CharField(max_length=16, null=False, default="viewer", index=True)
+    status = CharField(max_length=1, null=True, default="1", index=True)
+    invited_by = CharField(max_length=32, null=True, index=True)
+
+    class Meta:
+        db_table = "ws_member"
+
+
+class WsGroup(DataBaseModel):
+    id = CharField(max_length=32, primary_key=True)
+    workspace_id = CharField(max_length=32, null=False, index=True)
+    name = CharField(max_length=64, null=False, index=True)
+    description = CharField(max_length=255, null=True)
+    status = CharField(max_length=1, null=True, default="1", index=True)
+    created_by = CharField(max_length=32, null=False, index=True)
+
+    class Meta:
+        db_table = "ws_group"
+
+
+class WsGroupMember(DataBaseModel):
+    id = CharField(max_length=32, primary_key=True)
+    group_id = CharField(max_length=32, null=False, index=True)
+    user_id = CharField(max_length=32, null=False, index=True)
+
+    class Meta:
+        db_table = "ws_group_member"
+
+
+class WsGroupDataset(DataBaseModel):
+    id = CharField(max_length=32, primary_key=True)
+    group_id = CharField(max_length=32, null=False, index=True)
+    dataset_id = CharField(max_length=32, null=False, index=True)
+
+    class Meta:
+        db_table = "ws_group_dataset"
+
+
+class AuditLog(DataBaseModel):
+    id = CharField(max_length=32, primary_key=True)
+    org_id = CharField(max_length=32, null=True, index=True)
+    workspace_id = CharField(max_length=32, null=True, index=True)
+    user_id = CharField(max_length=32, null=False, index=True)
+    action = CharField(max_length=64, null=False, index=True)
+    resource_type = CharField(max_length=32, null=True, index=True)
+    resource_id = CharField(max_length=32, null=True, index=True)
+    details = JSONField(null=True)
+    ip_address = CharField(max_length=45, null=True)
+    user_agent = CharField(max_length=512, null=True)
+
+    class Meta:
+        db_table = "audit_log"
+
+
+class ApiKeyScope(DataBaseModel):
+    id = CharField(max_length=32, primary_key=True)
+    token = CharField(max_length=255, null=False, unique=True, index=True)
+    workspace_id = CharField(max_length=32, null=False, index=True)
+    permissions = JSONField(null=False)
+    name = CharField(max_length=255, null=True)
+    expires_at = DateTimeField(null=True)
+    last_used_at = DateTimeField(null=True)
+    status = CharField(max_length=1, null=True, default="1", index=True)
+    created_by = CharField(max_length=32, null=False, index=True)
+
+    class Meta:
+        db_table = "api_key_scope"
+
+
 def alter_db_add_column(migrator, table_name, column_name, column_type):
     try:
         migrate(migrator.add_column(table_name, column_name, column_type))
@@ -1649,3 +1771,22 @@ def migrate_db():
     logging.disable(logging.NOTSET)
     # this is after re-enabling logging to allow logging changed user emails
     migrate_add_unique_email(migrator)
+
+    # RBAC Multi-Tenant: composite unique indexes
+    _add_rbac_unique_indexes(migrator)
+
+
+def _add_rbac_unique_indexes(migrator):
+    """Add composite unique indexes for RBAC tables. Safe to call multiple times."""
+    indexes = [
+        ("org_member", ("org_id", "user_id"), True),
+        ("ws_member", ("workspace_id", "user_id"), True),
+        ("ws_group", ("workspace_id", "name"), True),
+        ("ws_group_member", ("group_id", "user_id"), True),
+        ("ws_group_dataset", ("group_id", "dataset_id"), True),
+    ]
+    for table, columns, unique in indexes:
+        try:
+            migrate(migrator.add_index(table, columns, unique=unique))
+        except Exception:
+            pass  # index already exists

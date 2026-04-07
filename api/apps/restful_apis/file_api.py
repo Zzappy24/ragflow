@@ -38,11 +38,13 @@ from api.utils.web_utils import CONTENT_TYPE_MAP, apply_safe_file_response_heade
 from common import settings
 from common.misc_utils import thread_pool_exec
 from api.apps.services import file_api_service
+from api.apps.extensions.rbac import require_permission, Permission
 
 
 @manager.route("/files", methods=["POST"])  # noqa: F821
 @login_required
 @add_tenant_id_to_kwargs
+@require_permission(Permission.DOCUMENT_CREATE)
 async def create_or_upload(tenant_id: str = None):
     """
     Upload files or create a folder.
@@ -99,6 +101,7 @@ async def create_or_upload(tenant_id: str = None):
 @manager.route("/files", methods=["GET"])  # noqa: F821
 @login_required
 @add_tenant_id_to_kwargs
+@require_permission(Permission.DOCUMENT_READ)
 def list_files(tenant_id: str = None):
     """
     List files under a folder.
@@ -154,6 +157,7 @@ def list_files(tenant_id: str = None):
 @manager.route("/files", methods=["DELETE"])  # noqa: F821
 @login_required
 @add_tenant_id_to_kwargs
+@require_permission(Permission.DOCUMENT_DELETE)
 async def delete(tenant_id: str = None):
     """
     Delete files.
@@ -199,6 +203,7 @@ async def delete(tenant_id: str = None):
 @manager.route("/files/move", methods=["POST"])  # noqa: F821
 @login_required
 @add_tenant_id_to_kwargs
+@require_permission(Permission.DOCUMENT_CREATE)
 async def move(tenant_id: str = None):
     """
     Move and/or rename files. Follows Linux mv semantics:
@@ -255,6 +260,7 @@ async def move(tenant_id: str = None):
 @manager.route("/files/<file_id>", methods=["GET"])  # noqa: F821
 @login_required
 @add_tenant_id_to_kwargs
+@require_permission(Permission.DOCUMENT_READ)
 async def download(tenant_id: str = None, file_id: str = None):
     """
     Download a file.
@@ -303,6 +309,7 @@ async def download(tenant_id: str = None, file_id: str = None):
 @manager.route("/files/<file_id>/parent", methods=["GET"])  # noqa: F821
 @login_required
 @add_tenant_id_to_kwargs
+@require_permission(Permission.DOCUMENT_READ)
 def parent_folder(tenant_id: str = None, file_id: str = None):
     """
     Get parent folder of a file.
@@ -334,6 +341,7 @@ def parent_folder(tenant_id: str = None, file_id: str = None):
 @manager.route("/files/<file_id>/ancestors", methods=["GET"])  # noqa: F821
 @login_required
 @add_tenant_id_to_kwargs
+@require_permission(Permission.DOCUMENT_READ)
 def ancestors(tenant_id: str = None, file_id: str = None):
     """
     Get all ancestor folders of a file.

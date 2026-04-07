@@ -47,6 +47,7 @@ from api.utils.tenant_utils import ensure_tenant_model_id_for_params
 from common.constants import LLMType, RetCode, StatusEnum
 from common.misc_utils import get_uuid
 from rag.prompts.generator import chunks_format
+from api.apps.extensions.rbac import require_permission, Permission
 from rag.prompts.template import load_prompt
 
 _DEFAULT_PROMPT_CONFIG = {
@@ -206,6 +207,7 @@ def _apply_prompt_defaults(req):
 
 @manager.route("/chats", methods=["POST"])  # noqa: F821
 @login_required
+@require_permission(Permission.CHAT_CREATE)
 async def create():
     try:
         req = await get_request_json()
@@ -291,6 +293,7 @@ async def create():
 
 @manager.route("/chats", methods=["GET"])  # noqa: F821
 @login_required
+@require_permission(Permission.CHAT_READ)
 def list_chats():
     chat_id = request.args.get("id")
     name = request.args.get("name")
@@ -329,6 +332,7 @@ def list_chats():
 
 @manager.route("/chats/<chat_id>", methods=["GET"])  # noqa: F821
 @login_required
+@require_permission(Permission.CHAT_READ)
 def get_chat(chat_id):
     try:
         tenants = UserTenantService.query(user_id=current_user.id)
@@ -354,6 +358,7 @@ def get_chat(chat_id):
 
 @manager.route("/chats/<chat_id>", methods=["PUT"])  # noqa: F821
 @login_required
+@require_permission(Permission.CHAT_UPDATE)
 async def update_chat(chat_id):
     if not _ensure_owned_chat(chat_id):
         return get_json_result(
@@ -440,6 +445,7 @@ async def update_chat(chat_id):
 
 @manager.route("/chats/<chat_id>", methods=["PATCH"])  # noqa: F821
 @login_required
+@require_permission(Permission.CHAT_UPDATE)
 async def patch_chat(chat_id):
     if not _ensure_owned_chat(chat_id):
         return get_json_result(
@@ -534,6 +540,7 @@ async def patch_chat(chat_id):
 
 @manager.route("/chats/<chat_id>", methods=["DELETE"])  # noqa: F821
 @login_required
+@require_permission(Permission.CHAT_DELETE)
 def delete_chat(chat_id):
     if not _ensure_owned_chat(chat_id):
         return get_json_result(
@@ -550,6 +557,7 @@ def delete_chat(chat_id):
 
 @manager.route("/chats", methods=["DELETE"])  # noqa: F821
 @login_required
+@require_permission(Permission.CHAT_DELETE)
 async def bulk_delete_chats():
     req = await get_request_json()
     if not req:
@@ -593,6 +601,7 @@ async def bulk_delete_chats():
 
 @manager.route("/chats/<chat_id>/sessions", methods=["POST"])  # noqa: F821
 @login_required
+@require_permission(Permission.CHAT_USE)
 async def create_session(chat_id):
     if not _ensure_owned_chat(chat_id):
         return get_json_result(data=False, message="No authorization.", code=RetCode.AUTHENTICATION_ERROR)
@@ -624,6 +633,7 @@ async def create_session(chat_id):
 
 @manager.route("/chats/<chat_id>/sessions", methods=["GET"])  # noqa: F821
 @login_required
+@require_permission(Permission.CHAT_USE)
 def list_sessions(chat_id):
     try:
         if not _ensure_owned_chat(chat_id):
@@ -651,6 +661,7 @@ def list_sessions(chat_id):
 
 @manager.route("/chats/<chat_id>/sessions/<session_id>", methods=["GET"])  # noqa: F821
 @login_required
+@require_permission(Permission.CHAT_USE)
 async def get_session(chat_id, session_id):
     if not _ensure_owned_chat(chat_id):
         return get_json_result(data=False, message="No authorization.", code=RetCode.AUTHENTICATION_ERROR)

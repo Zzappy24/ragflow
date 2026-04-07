@@ -680,7 +680,7 @@ wheels = [
 
 [[package]]
 name = "azure-identity"
-version = "1.17.1"
+version = "1.25.3"
 source = { registry = "https://mirrors.aliyun.com/pypi/simple" }
 dependencies = [
     { name = "azure-core" },
@@ -689,9 +689,9 @@ dependencies = [
     { name = "msal-extensions" },
     { name = "typing-extensions" },
 ]
-sdist = { url = "https://mirrors.aliyun.com/pypi/packages/51/c9/f7e3926686a89670ce641b360bd2da9a2d7a12b3e532403462d99f81e9d5/azure-identity-1.17.1.tar.gz", hash = "sha256:32ecc67cc73f4bd0595e4f64b1ca65cd05186f4fe6f98ed2ae9f1aa32646efea" }
+sdist = { url = "https://mirrors.aliyun.com/pypi/packages/c5/0e/3a63efb48aa4a5ae2cfca61ee152fbcb668092134d3eb8bfda472dd5c617/azure_identity-1.25.3.tar.gz", hash = "sha256:ab23c0d63015f50b630ef6c6cf395e7262f439ce06e5d07a64e874c724f8d9e6" }
 wheels = [
-    { url = "https://mirrors.aliyun.com/pypi/packages/49/83/a777861351e7b99e7c84ff3b36bab35e87b6e5d36e50b6905e148c696515/azure_identity-1.17.1-py3-none-any.whl", hash = "sha256:db8d59c183b680e763722bfe8ebc45930e6c57df510620985939f7f3191e0382" },
+    { url = "https://mirrors.aliyun.com/pypi/packages/49/9a/417b3a533e01953a7c618884df2cb05a71e7b68bdbce4fbdb62349d2a2e8/azure_identity-1.25.3-py3-none-any.whl", hash = "sha256:f4d0b956a8146f30333e071374171f3cfa7bdb8073adb8c3814b65567aa7447c" },
 ]
 
 [[package]]
@@ -6452,7 +6452,7 @@ requires-dist = [
     { name = "arxiv", specifier = "==2.1.3" },
     { name = "asana", specifier = ">=5.2.2" },
     { name = "atlassian-python-api", specifier = "==4.0.7" },
-    { name = "azure-identity", specifier = "==1.17.1" },
+    { name = "azure-identity", specifier = "==1.25.3" },
     { name = "azure-storage-file-datalake", specifier = "==12.16.0" },
     { name = "beartype", specifier = ">=0.20.0,<1.0.0" },
     { name = "bio", specifier = "==1.7.1" },

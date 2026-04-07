@@ -46,9 +46,11 @@ from common.string_utils import remove_redundant_spaces
 from common.constants import RetCode, LLMType, ParserType, PAGERANK_FLD
 from common import settings
 from api.apps import login_required, current_user
+from api.apps.extensions.rbac import require_permission, Permission
 
 @manager.route('/list', methods=['POST'])  # noqa: F821
 @login_required
+@require_permission(Permission.DOCUMENT_READ)
 @validate_request("doc_id")
 async def list_chunk():
     req = await get_request_json()
@@ -99,6 +101,7 @@ async def list_chunk():
 
 @manager.route('/get', methods=['GET'])  # noqa: F821
 @login_required
+@require_permission(Permission.DOCUMENT_READ)
 def get():
     chunk_id = request.args["chunk_id"]
     try:
@@ -131,6 +134,7 @@ def get():
 
 @manager.route('/set', methods=['POST'])  # noqa: F821
 @login_required
+@require_permission(Permission.DOCUMENT_CREATE)
 @validate_request("doc_id", "chunk_id", "content_with_weight")
 async def set():
     req = await get_request_json()
@@ -217,6 +221,7 @@ async def set():
 
 @manager.route('/switch', methods=['POST'])  # noqa: F821
 @login_required
+@require_permission(Permission.DOCUMENT_CREATE)
 @validate_request("chunk_ids", "available_int", "doc_id")
 async def switch():
     req = await get_request_json()
@@ -240,6 +245,7 @@ async def switch():
 
 @manager.route('/rm', methods=['POST'])  # noqa: F821
 @login_required
+@require_permission(Permission.DOCUMENT_DELETE)
 @validate_request("doc_id")
 async def rm():
     req = await get_request_json()
@@ -303,6 +309,7 @@ async def rm():
 
 @manager.route('/create', methods=['POST'])  # noqa: F821
 @login_required
+@require_permission(Permission.DOCUMENT_CREATE)
 @validate_request("doc_id", "content_with_weight")
 async def create():
     req = await get_request_json()
@@ -403,6 +410,7 @@ async def create():
 
 @manager.route('/retrieval_test', methods=['POST'])  # noqa: F821
 @login_required
+@require_permission(Permission.DOCUMENT_READ)
 @validate_request("kb_id", "question")
 async def retrieval_test():
     req = await get_request_json()
@@ -532,6 +540,7 @@ async def retrieval_test():
 
 @manager.route('/knowledge_graph', methods=['GET'])  # noqa: F821
 @login_required
+@require_permission(Permission.DOCUMENT_READ)
 async def knowledge_graph():
     doc_id = request.args["doc_id"]
     tenant_id = DocumentService.get_tenant_id(doc_id)

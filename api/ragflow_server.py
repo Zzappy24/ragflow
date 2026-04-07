@@ -28,7 +28,7 @@ import threading
 import uuid
 import faulthandler
 
-from api.apps import app
+from api.apps import app, current_user
 from api.db.runtime_config import RuntimeConfig
 from api.db.services.document_service import DocumentService
 from common.file_utils import get_project_base_directory
@@ -100,6 +100,39 @@ if __name__ == '__main__':
     # init db
     init_web_db()
     init_web_data()
+
+    # RBAC: install retriever proxy + inject user_id into request context
+    from api.apps.extensions.rbac_retriever import install_rbac_proxy
+    install_rbac_proxy()
+
+    @app.before_request
+    async def _rbac_resolve_tenant():
+        from quart import g, request
+        try:
+            if not current_user or not hasattr(current_user, "id"):
+                g.rbac_user_id = None
+                g.active_tenant_id = None
+                return
+
+            g.rbac_user_id = current_user.id
+
+            # Workspace-aware tenant resolution
+            ws_id = request.headers.get("X-Workspace-Id")
+            if ws_id:
+                from api.db.services.workspace_service import WorkspaceService, WsMemberService
+                ws = WorkspaceService.get_by_id(ws_id)
+                membership = WsMemberService.get_membership(ws_id, current_user.id) if ws else None
+                if ws and membership:
+                    g.active_tenant_id = ws.tenant_id
+                else:
+                    # Invalid workspace or not a member — deny, don't fallback
+                    g.active_tenant_id = None
+            else:
+                # No workspace header — legacy personal tenant
+                g.active_tenant_id = current_user.id
+        except Exception:
+            g.rbac_user_id = None
+            g.active_tenant_id = None
     # init runtime config
     import argparse
 

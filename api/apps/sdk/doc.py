@@ -47,6 +47,7 @@ from common.string_utils import remove_redundant_spaces
 from rag.app.qa import beAdoc, rmPrefix
 from rag.app.tag import label_question
 from rag.nlp import rag_tokenizer, search
+from api.apps.extensions.rbac import require_permission, Permission
 from rag.prompts.generator import cross_languages, keyword_extraction
 
 MAXIMUM_OF_UPLOADING_FILES = 256
@@ -75,6 +76,7 @@ class Chunk(BaseModel):
 
 @manager.route("/datasets/<dataset_id>/documents", methods=["POST"])  # noqa: F821
 @token_required
+@require_permission(Permission.DOCUMENT_CREATE)
 async def upload(dataset_id, tenant_id):
     """
     Upload documents to a dataset.
@@ -187,6 +189,7 @@ async def upload(dataset_id, tenant_id):
 
 @manager.route("/datasets/<dataset_id>/documents/<document_id>", methods=["PUT"])  # noqa: F821
 @token_required
+@require_permission(Permission.DOCUMENT_CREATE)
 async def update_doc(tenant_id, dataset_id, document_id):
     """
     Update a document within a dataset.
@@ -366,6 +369,7 @@ async def update_doc(tenant_id, dataset_id, document_id):
 
 @manager.route("/datasets/<dataset_id>/documents/<document_id>", methods=["GET"])  # noqa: F821
 @token_required
+@require_permission(Permission.DOCUMENT_READ)
 async def download(tenant_id, dataset_id, document_id):
     """
     Download a document from a dataset.
@@ -456,6 +460,7 @@ async def download_doc(document_id):
 
 @manager.route("/datasets/<dataset_id>/documents", methods=["GET"])  # noqa: F821
 @token_required
+@require_permission(Permission.DOCUMENT_READ)
 def list_docs(dataset_id, tenant_id):
     """
     List documents in a dataset.
@@ -637,6 +642,7 @@ def list_docs(dataset_id, tenant_id):
 
 @manager.route("/datasets/<dataset_id>/metadata/summary", methods=["GET"])  # noqa: F821
 @token_required
+@require_permission(Permission.DOCUMENT_READ)
 async def metadata_summary(dataset_id, tenant_id):
     if not KnowledgebaseService.accessible(kb_id=dataset_id, user_id=tenant_id):
         return get_error_data_result(message=f"You don't own the dataset {dataset_id}. ")
@@ -650,6 +656,7 @@ async def metadata_summary(dataset_id, tenant_id):
 
 @manager.route("/datasets/<dataset_id>/metadata/update", methods=["POST"])  # noqa: F821
 @token_required
+@require_permission(Permission.DOCUMENT_CREATE)
 async def metadata_batch_update(dataset_id, tenant_id):
     if not KnowledgebaseService.accessible(kb_id=dataset_id, user_id=tenant_id):
         return get_error_data_result(message=f"You don't own the dataset {dataset_id}. ")
@@ -701,6 +708,7 @@ async def metadata_batch_update(dataset_id, tenant_id):
 
 @manager.route("/datasets/<dataset_id>/documents", methods=["DELETE"])  # noqa: F821
 @token_required
+@require_permission(Permission.DOCUMENT_DELETE)
 async def delete(tenant_id, dataset_id):
     """
     Delete documents from a dataset.
@@ -819,6 +827,7 @@ DOC_STOP_PARSING_INVALID_STATE_ERROR_CODE = "DOC_STOP_PARSING_INVALID_STATE"
 
 @manager.route("/datasets/<dataset_id>/chunks", methods=["POST"])  # noqa: F821
 @token_required
+@require_permission(Permission.DOCUMENT_CREATE)
 async def parse(tenant_id, dataset_id):
     """
     Start parsing documents into chunks.
@@ -910,6 +919,7 @@ async def parse(tenant_id, dataset_id):
 
 @manager.route("/datasets/<dataset_id>/chunks", methods=["DELETE"])  # noqa: F821
 @token_required
+@require_permission(Permission.DOCUMENT_DELETE)
 async def stop_parsing(tenant_id, dataset_id):
     """
     Stop parsing documents into chunks.
@@ -987,6 +997,7 @@ async def stop_parsing(tenant_id, dataset_id):
 
 @manager.route("/datasets/<dataset_id>/documents/<document_id>/chunks", methods=["GET"])  # noqa: F821
 @token_required
+@require_permission(Permission.DOCUMENT_READ)
 async def list_chunks(tenant_id, dataset_id, document_id):
     """
     List chunks of a document.

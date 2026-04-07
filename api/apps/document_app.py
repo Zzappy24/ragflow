@@ -22,6 +22,7 @@ from pathlib import Path, PurePosixPath, PureWindowsPath
 from quart import make_response, request
 
 from api.apps import current_user, login_required
+from api.apps.extensions.rbac import require_permission, Permission
 from api.common.check_team_permission import check_kb_team_permission
 from api.constants import FILE_NAME_LEN_LIMIT, IMG_BASE64_PREFIX
 from api.db import VALID_FILE_TYPES, FileType
@@ -66,6 +67,7 @@ def _is_safe_download_filename(name: str) -> bool:
 
 @manager.route("/upload", methods=["POST"])  # noqa: F821
 @login_required
+@require_permission(Permission.DOCUMENT_CREATE)
 @validate_request("kb_id")
 async def upload():
     form = await request.form
@@ -116,6 +118,7 @@ async def upload():
 
 @manager.route("/web_crawl", methods=["POST"])  # noqa: F821
 @login_required
+@require_permission(Permission.DOCUMENT_CREATE)
 @validate_request("kb_id", "name", "url")
 async def web_crawl():
     form = await request.form
@@ -182,6 +185,7 @@ async def web_crawl():
 
 @manager.route("/create", methods=["POST"])  # noqa: F821
 @login_required
+@require_permission(Permission.DOCUMENT_CREATE)
 @validate_request("name", "kb_id")
 async def create():
     req = await get_request_json()
@@ -239,6 +243,7 @@ async def create():
 
 @manager.route("/list", methods=["POST"])  # noqa: F821
 @login_required
+@require_permission(Permission.DOCUMENT_READ)
 async def list_docs():
     kb_id = request.args.get("kb_id")
     if not kb_id:
@@ -372,6 +377,7 @@ async def list_docs():
 
 @manager.route("/filter", methods=["POST"])  # noqa: F821
 @login_required
+@require_permission(Permission.DOCUMENT_READ)
 async def get_filter():
     req = await get_request_json()
 
@@ -410,6 +416,7 @@ async def get_filter():
 
 @manager.route("/infos", methods=["POST"])  # noqa: F821
 @login_required
+@require_permission(Permission.DOCUMENT_READ)
 async def doc_infos():
     req = await get_request_json()
     doc_ids = req["doc_ids"]
@@ -426,6 +433,7 @@ async def doc_infos():
 
 @manager.route("/metadata/summary", methods=["POST"])  # noqa: F821
 @login_required
+@require_permission(Permission.DOCUMENT_READ)
 async def metadata_summary():
     req = await get_request_json()
     kb_id = req.get("kb_id")
@@ -449,6 +457,7 @@ async def metadata_summary():
 
 @manager.route("/metadata/update", methods=["POST"])  # noqa: F821
 @login_required
+@require_permission(Permission.DOCUMENT_CREATE)
 @validate_request("doc_ids")
 async def metadata_update():
     req = await get_request_json()
@@ -476,6 +485,7 @@ async def metadata_update():
 
 @manager.route("/update_metadata_setting", methods=["POST"])  # noqa: F821
 @login_required
+@require_permission(Permission.DOCUMENT_CREATE)
 @validate_request("doc_id", "metadata")
 async def update_metadata_setting():
     req = await get_request_json()
@@ -496,6 +506,7 @@ async def update_metadata_setting():
 
 @manager.route("/thumbnails", methods=["GET"])  # noqa: F821
 # @login_required
+@require_permission(Permission.DOCUMENT_READ)
 def thumbnails():
     doc_ids = request.args.getlist("doc_ids")
     if not doc_ids:
@@ -515,6 +526,7 @@ def thumbnails():
 
 @manager.route("/change_status", methods=["POST"])  # noqa: F821
 @login_required
+@require_permission(Permission.DOCUMENT_CREATE)
 @validate_request("doc_ids", "status")
 async def change_status():
     req = await get_request_json()
@@ -585,6 +597,7 @@ async def change_status():
 
 @manager.route("/rm", methods=["POST"])  # noqa: F821
 @login_required
+@require_permission(Permission.DOCUMENT_DELETE)
 @validate_request("doc_id")
 async def rm():
     req = await get_request_json()
@@ -606,6 +619,7 @@ async def rm():
 
 @manager.route("/run", methods=["POST"])  # noqa: F821
 @login_required
+@require_permission(Permission.DOCUMENT_CREATE)
 @validate_request("doc_ids", "run")
 async def run():
     req = await get_request_json()
@@ -669,6 +683,7 @@ async def run():
 
 @manager.route("/rename", methods=["POST"])  # noqa: F821
 @login_required
+@require_permission(Permission.DOCUMENT_CREATE)
 @validate_request("doc_id", "name")
 async def rename():
     req = await get_request_json()
@@ -723,6 +738,7 @@ async def rename():
 
 @manager.route("/get/<doc_id>", methods=["GET"])  # noqa: F821
 @login_required
+@require_permission(Permission.DOCUMENT_READ)
 async def get(doc_id):
     try:
         e, doc = DocumentService.get_by_id(doc_id)
@@ -747,6 +763,7 @@ async def get(doc_id):
 
 @manager.route("/download/<attachment_id>", methods=["GET"])  # noqa: F821
 @login_required
+@require_permission(Permission.DOCUMENT_READ)
 async def download_attachment(attachment_id):
     try:
         ext = request.args.get("ext", "markdown")
@@ -763,6 +780,7 @@ async def download_attachment(attachment_id):
 
 @manager.route("/change_parser", methods=["POST"])  # noqa: F821
 @login_required
+@require_permission(Permission.DOCUMENT_CREATE)
 @validate_request("doc_id")
 async def change_parser():
     req = await get_request_json()
@@ -816,7 +834,8 @@ async def change_parser():
 
 
 @manager.route("/image/<image_id>", methods=["GET"])  # noqa: F821
-# @login_required
+@login_required  # RBAC: re-enabled (was commented out upstream)
+@require_permission(Permission.DOCUMENT_READ)
 async def get_image(image_id):
     try:
         arr = image_id.split("-")
@@ -845,6 +864,7 @@ ARTIFACT_CONTENT_TYPES = {
 
 @manager.route("/artifact/<filename>", methods=["GET"])  # noqa: F821
 @login_required
+@require_permission(Permission.DOCUMENT_READ)
 async def get_artifact(filename):
     try:
         bucket = SANDBOX_ARTIFACT_BUCKET
@@ -871,6 +891,7 @@ async def get_artifact(filename):
 
 @manager.route("/upload_and_parse", methods=["POST"])  # noqa: F821
 @login_required
+@require_permission(Permission.DOCUMENT_CREATE)
 @validate_request("conversation_id")
 async def upload_and_parse():
     files = await request.files
@@ -889,6 +910,7 @@ async def upload_and_parse():
 
 @manager.route("/parse", methods=["POST"])  # noqa: F821
 @login_required
+@require_permission(Permission.DOCUMENT_CREATE)
 async def parse():
     req = await get_request_json()
     url = req.get("url", "")
@@ -948,6 +970,7 @@ async def parse():
 
 @manager.route("/set_meta", methods=["POST"])  # noqa: F821
 @login_required
+@require_permission(Permission.DOCUMENT_CREATE)
 @validate_request("doc_id", "meta")
 async def set_meta():
     req = await get_request_json()
@@ -983,6 +1006,7 @@ async def set_meta():
 
 @manager.route("/upload_info", methods=["POST"])  # noqa: F821
 @login_required
+@require_permission(Permission.DOCUMENT_CREATE)
 async def upload_info():
     files = await request.files
     file_objs = files.getlist("file") if files and files.get("file") else []

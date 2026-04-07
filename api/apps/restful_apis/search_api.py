@@ -25,10 +25,12 @@ from api.db.services.user_service import TenantService, UserTenantService
 from common.misc_utils import get_uuid
 from common.constants import RetCode, StatusEnum
 from api.utils.api_utils import get_data_error_result, get_json_result, get_request_json, server_error_response, validate_request
+from api.apps.extensions.rbac import require_permission, Permission
 
 
 @manager.route("/searches", methods=["POST"])  # noqa: F821
 @login_required
+@require_permission(Permission.DATASET_READ)
 @validate_request("name")
 async def create():
     req = await get_request_json()
@@ -63,6 +65,7 @@ async def create():
 
 @manager.route("/searches", methods=["GET"])  # noqa: F821
 @login_required
+@require_permission(Permission.DATASET_READ)
 def list_searches():
     keywords = request.args.get("keywords", "")
     page_number = int(request.args.get("page", 0))
@@ -88,6 +91,7 @@ def list_searches():
 
 @manager.route("/searches/<search_id>", methods=["GET"])  # noqa: F821
 @login_required
+@require_permission(Permission.DATASET_READ)
 def detail(search_id):
     try:
         tenants = UserTenantService.query(user_id=current_user.id)
@@ -107,6 +111,7 @@ def detail(search_id):
 
 @manager.route("/searches/<search_id>", methods=["PUT"])  # noqa: F821
 @login_required
+@require_permission(Permission.DATASET_UPDATE)
 @validate_request("name", "search_config")
 async def update(search_id):
     req = await get_request_json()
@@ -158,6 +163,7 @@ async def update(search_id):
 
 @manager.route("/searches/<search_id>", methods=["DELETE"])  # noqa: F821
 @login_required
+@require_permission(Permission.DATASET_DELETE)
 def delete_search(search_id):
     if not SearchService.accessible4deletion(search_id, current_user.id):
         return get_json_result(data=False, message="No authorization.", code=RetCode.AUTHENTICATION_ERROR)
