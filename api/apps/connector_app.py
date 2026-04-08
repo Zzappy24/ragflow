@@ -33,6 +33,7 @@ from common.data_source.google_util.constant import WEB_OAUTH_POPUP_TEMPLATE, GO
 from common.misc_utils import get_uuid
 from rag.utils.redis_conn import REDIS_CONN
 from api.apps import login_required, current_user
+from api.utils.tenant_context import active_tenant_id
 from box_sdk_gen import BoxOAuth, OAuthConfig, GetAuthorizeUrlOptions
 
 
@@ -47,7 +48,7 @@ async def set_connector():
         req["id"] = get_uuid()
         conn = {
             "id": req["id"],
-            "tenant_id": current_user.id,
+            "tenant_id": active_tenant_id(),
             "name": req["name"],
             "source": req["source"],
             "input_type": InputType.POLL,
@@ -68,7 +69,7 @@ async def set_connector():
 @manager.route("/list", methods=["GET"])  # noqa: F821
 @login_required
 def list_connector():
-    return get_json_result(data=ConnectorService.list(current_user.id))
+    return get_json_result(data=ConnectorService.list(active_tenant_id()))
 
 
 @manager.route("/<connector_id>", methods=["GET"])  # noqa: F821
@@ -104,7 +105,7 @@ async def resume(connector_id):
 @validate_request("kb_id")
 async def rebuild(connector_id):
     req = await get_request_json()
-    err = ConnectorService.rebuild(req["kb_id"], connector_id, current_user.id)
+    err = ConnectorService.rebuild(req["kb_id"], connector_id, active_tenant_id())
     if err:
         return get_json_result(data=False, message=err, code=RetCode.SERVER_ERROR)
     return get_json_result(data=True)

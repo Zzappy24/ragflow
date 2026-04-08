@@ -1,6 +1,7 @@
 """
 JWT token creation and verification.
 """
+import uuid
 from datetime import datetime, timedelta, timezone
 
 import jwt
@@ -31,3 +32,22 @@ def decode_token(token: str, expected_type: str = "access") -> str | None:
         return None
     except jwt.InvalidTokenError:
         return None
+
+
+def create_bridge_token(user_id: str, workspace_id: str) -> str:
+    """
+    Short-lived single-use token for the admin-panel → RAGFlow auth handoff.
+
+    Carries a fresh ``jti`` so the consumer (RAGFlow) can enforce single-use
+    via Redis SETNX. ``ws_id`` binds the token to a specific workspace; the
+    consumer must re-verify membership at consumption time.
+    """
+    expire = datetime.now(timezone.utc) + timedelta(seconds=settings.BRIDGE_TOKEN_EXPIRE_SECONDS)
+    payload = {
+        "sub": user_id,
+        "ws_id": workspace_id,
+        "exp": expire,
+        "type": "bridge",
+        "jti": uuid.uuid4().hex,
+    }
+    return jwt.encode(payload, settings.JWT_SECRET, algorithm=settings.JWT_ALGORITHM)

@@ -17,12 +17,12 @@ import logging
 from datetime import datetime
 import json
 
-from api.apps import login_required, current_user
+from api.apps import login_required
+from api.utils.tenant_context import active_tenant_id
 
 from api.db.db_models import APIToken
 from api.db.services.api_service import APITokenService
 from api.db.services.knowledgebase_service import KnowledgebaseService
-from api.db.services.user_service import UserTenantService
 from api.utils.api_utils import (
     get_json_result,
     get_data_error_result,
@@ -246,11 +246,8 @@ def new_token():
               description: The generated API token.
     """
     try:
-        tenants = UserTenantService.query(user_id=current_user.id)
-        if not tenants:
-            return get_data_error_result(message="Tenant not found!")
-
-        tenant_id = [tenant for tenant in tenants if tenant.role == "owner"][0].tenant_id
+        # API tokens belong to the active workspace, not the user's first owned tenant.
+        tenant_id = active_tenant_id()
         obj = {
             "tenant_id": tenant_id,
             "token": generate_confirmation_token(),
@@ -301,11 +298,8 @@ def token_list():
                     description: Token creation time.
     """
     try:
-        tenants = UserTenantService.query(user_id=current_user.id)
-        if not tenants:
-            return get_data_error_result(message="Tenant not found!")
-
-        tenant_id = [tenant for tenant in tenants if tenant.role == "owner"][0].tenant_id
+        # API tokens belong to the active workspace.
+        tenant_id = active_tenant_id()
         objs = APITokenService.query(tenant_id=tenant_id)
         objs = [o.to_dict() for o in objs]
         for o in objs:
@@ -344,11 +338,8 @@ def rm(token):
               description: Deletion status.
     """
     try:
-        tenants = UserTenantService.query(user_id=current_user.id)
-        if not tenants:
-            return get_data_error_result(message="Tenant not found!")
-
-        tenant_id = tenants[0].tenant_id
+        # API tokens belong to the active workspace.
+        tenant_id = active_tenant_id()
         APITokenService.filter_delete([APIToken.tenant_id == tenant_id, APIToken.token == token])
         return get_json_result(data=True)
     except Exception as e:

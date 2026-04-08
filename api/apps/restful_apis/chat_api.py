@@ -24,6 +24,7 @@ from copy import deepcopy
 from quart import Response, request
 
 from api.apps import current_user, login_required
+from api.utils.tenant_context import active_tenant_id
 from api.db.joint_services.tenant_model_service import (
     get_model_config_by_type_and_name,
     get_tenant_default_model_by_type,
@@ -34,7 +35,7 @@ from api.db.services.knowledgebase_service import KnowledgebaseService
 from api.db.services.llm_service import LLMBundle
 from api.db.services.search_service import SearchService
 from api.db.services.tenant_llm_service import TenantLLMService
-from api.db.services.user_service import TenantService, UserTenantService
+from api.db.services.user_service import TenantService
 from api.utils.api_utils import (
     check_duplicate_ids,
     get_data_error_result,
@@ -120,7 +121,7 @@ def _build_session_response(conv: dict) -> dict:
 
 def _ensure_owned_chat(chat_id):
     return DialogService.query(
-        tenant_id=current_user.id, id=chat_id, status=StatusEnum.VALID.value
+        tenant_id=active_tenant_id(), id=chat_id, status=StatusEnum.VALID.value
     )
 
 
@@ -211,7 +212,7 @@ def _apply_prompt_defaults(req):
 async def create():
     try:
         req = await get_request_json()
-        ok, tenant = TenantService.get_by_id(current_user.id)
+        ok, tenant = TenantService.get_by_id(active_tenant_id())
         if not ok:
             return get_data_error_result(message="Tenant not found!")
 
@@ -226,19 +227,19 @@ async def create():
         req["name"] = name
 
         if "dataset_ids" in req:
-            kb_ids = _validate_dataset_ids(req.get("dataset_ids"), current_user.id)
+            kb_ids = _validate_dataset_ids(req.get("dataset_ids"), active_tenant_id())
             if isinstance(kb_ids, str):
                 return get_data_error_result(message=kb_ids)
             req["kb_ids"] = kb_ids
             req.pop("dataset_ids", None)
 
         if "llm_id" in req:
-            err = _validate_llm_id(req.get("llm_id"), current_user.id, req.get("llm_setting"))
+            err = _validate_llm_id(req.get("llm_id"), active_tenant_id(), req.get("llm_setting"))
             if err:
                 return get_data_error_result(message=err)
 
         if "rerank_id" in req:
-            err = _validate_rerank_id(req.get("rerank_id"), current_user.id)
+            err = _validate_rerank_id(req.get("rerank_id"), active_tenant_id())
             if err:
                 return get_data_error_result(message=err)
 
@@ -266,20 +267,20 @@ async def create():
         # if err:
         #     return get_data_error_result(message=err)
 
-        req = ensure_tenant_model_id_for_params(current_user.id, req)
+        req = ensure_tenant_model_id_for_params(active_tenant_id(), req)
         req = {field: value for field, value in req.items() if field in _PERSISTED_FIELDS}
         for field in _READONLY_FIELDS:
             req.pop(field, None)
 
         if DialogService.query(
             name=req["name"],
-            tenant_id=current_user.id,
+            tenant_id=active_tenant_id(),
             status=StatusEnum.VALID.value,
         ):
             return get_data_error_result(message="Duplicated chat name in creating chat.")
 
         req["id"] = get_uuid()
-        req["tenant_id"] = current_user.id
+        req["tenant_id"] = active_tenant_id()
         if not DialogService.save(**req):
             return get_data_error_result(message="Failed to create chat.")
 
@@ -311,7 +312,7 @@ def list_chats():
 
         if owner_ids:
             chats, total = DialogService.get_by_tenant_ids(
-                owner_ids, current_user.id, 0, 0, orderby, desc, keywords, **exact_filters
+                owner_ids, active_tenant_id(), 0, 0, orderby, desc, keywords, **exact_filters
             )
             chats = [chat for chat in chats if chat["tenant_id"] in owner_ids]
             total = len(chats)
@@ -320,7 +321,7 @@ def list_chats():
                 chats = chats[start : start + items_per_page]
         else:
             chats, total = DialogService.get_by_tenant_ids(
-                [], current_user.id, page_number, items_per_page, orderby, desc, keywords, **exact_filters
+                [], active_tenant_id(), page_number, items_per_page, orderby, desc, keywords, **exact_filters
             )
 
         return get_json_result(
@@ -335,13 +336,11 @@ def list_chats():
 @require_permission(Permission.CHAT_READ)
 def get_chat(chat_id):
     try:
-        tenants = UserTenantService.query(user_id=current_user.id)
-        for tenant in tenants:
-            if DialogService.query(
-                tenant_id=tenant.tenant_id, id=chat_id, status=StatusEnum.VALID.value
-            ):
-                break
-        else:
+        # Restrict to the active workspace only — prevents cross-workspace
+        # disclosure of chats even when the user is a member of multiple tenants.
+        if not DialogService.query(
+            tenant_id=active_tenant_id(), id=chat_id, status=StatusEnum.VALID.value
+        ):
             return get_json_result(
                 data=False,
                 message="No authorization.",
@@ -367,7 +366,7 @@ async def update_chat(chat_id):
 
     try:
         req = await get_request_json()
-        ok, tenant = TenantService.get_by_id(current_user.id)
+        ok, tenant = TenantService.get_by_id(active_tenant_id())
         if not ok:
             return get_data_error_result(message="Tenant not found!")
 
@@ -386,19 +385,19 @@ async def update_chat(chat_id):
             req["name"] = name
 
         if "dataset_ids" in req:
-            kb_ids = _validate_dataset_ids(req.get("dataset_ids"), current_user.id)
+            kb_ids = _validate_dataset_ids(req.get("dataset_ids"), active_tenant_id())
             if isinstance(kb_ids, str):
                 return get_data_error_result(message=kb_ids)
             req["kb_ids"] = kb_ids
             req.pop("dataset_ids", None)
 
         if "llm_id" in req:
-            err = _validate_llm_id(req.get("llm_id"), current_user.id, req.get("llm_setting"))
+            err = _validate_llm_id(req.get("llm_id"), active_tenant_id(), req.get("llm_setting"))
             if err:
                 return get_data_error_result(message=err)
 
         if "rerank_id" in req:
-            err = _validate_rerank_id(req.get("rerank_id"), current_user.id)
+            err = _validate_rerank_id(req.get("rerank_id"), active_tenant_id())
             if err:
                 return get_data_error_result(message=err)
 
@@ -416,7 +415,7 @@ async def update_chat(chat_id):
         # if not kb_ids and not prompt_config.get("tavily_api_key") and _has_knowledge_placeholder(prompt_config):
         #     return get_data_error_result(message="Please remove `{knowledge}` in system prompt since no dataset / Tavily used here.")
 
-        req = ensure_tenant_model_id_for_params(current_user.id, req)
+        req = ensure_tenant_model_id_for_params(active_tenant_id(), req)
         req = {field: value for field, value in req.items() if field in _PERSISTED_FIELDS}
         for field in _READONLY_FIELDS:
             req.pop(field, None)
@@ -426,7 +425,7 @@ async def update_chat(chat_id):
             and req["name"].lower() != current_chat["name"].lower()
             and DialogService.query(
                 name=req["name"],
-                tenant_id=current_user.id,
+                tenant_id=active_tenant_id(),
                 status=StatusEnum.VALID.value,
             )
         ):
@@ -454,7 +453,7 @@ async def patch_chat(chat_id):
 
     try:
         req = await get_request_json()
-        ok, tenant = TenantService.get_by_id(current_user.id)
+        ok, tenant = TenantService.get_by_id(active_tenant_id())
         if not ok:
             return get_data_error_result(message="Tenant not found!")
 
@@ -474,19 +473,19 @@ async def patch_chat(chat_id):
                 req["name"] = name
 
         if "dataset_ids" in req:
-            kb_ids = _validate_dataset_ids(req.get("dataset_ids"), current_user.id)
+            kb_ids = _validate_dataset_ids(req.get("dataset_ids"), active_tenant_id())
             if isinstance(kb_ids, str):
                 return get_data_error_result(message=kb_ids)
             req["kb_ids"] = kb_ids
             req.pop("dataset_ids", None)
 
         if "llm_id" in req:
-            err = _validate_llm_id(req.get("llm_id"), current_user.id, req.get("llm_setting"))
+            err = _validate_llm_id(req.get("llm_id"), active_tenant_id(), req.get("llm_setting"))
             if err:
                 return get_data_error_result(message=err)
 
         if "rerank_id" in req:
-            err = _validate_rerank_id(req.get("rerank_id"), current_user.id)
+            err = _validate_rerank_id(req.get("rerank_id"), active_tenant_id())
             if err:
                 return get_data_error_result(message=err)
 
@@ -511,7 +510,7 @@ async def patch_chat(chat_id):
         #     if not kb_ids and not prompt_config.get("tavily_api_key") and _has_knowledge_placeholder(prompt_config):
         #         return get_data_error_result(message="Please remove `{knowledge}` in system prompt since no dataset / Tavily used here.")
 
-        req = ensure_tenant_model_id_for_params(current_user.id, req)
+        req = ensure_tenant_model_id_for_params(active_tenant_id(), req)
         req = {field: value for field, value in req.items() if field in _PERSISTED_FIELDS}
         for field in _READONLY_FIELDS:
             req.pop(field, None)
@@ -521,7 +520,7 @@ async def patch_chat(chat_id):
             and req["name"].lower() != current_chat["name"].lower()
             and DialogService.query(
                 name=req["name"],
-                tenant_id=current_user.id,
+                tenant_id=active_tenant_id(),
                 status=StatusEnum.VALID.value,
             )
         ):
@@ -569,7 +568,7 @@ async def bulk_delete_chats():
             ids = [
                 chat.id
                 for chat in DialogService.query(
-                    tenant_id=current_user.id, status=StatusEnum.VALID.value
+                    tenant_id=active_tenant_id(), status=StatusEnum.VALID.value
                 )
             ]
             if not ids:
@@ -619,6 +618,7 @@ async def create_session(chat_id):
             "dialog_id": chat_id,
             "name": name,
             "message": [{"role": "assistant", "content": dia.prompt_config.get("prologue", "")}],
+            # user_id here is the conversation creator (user identity), not tenant context.
             "user_id": req.get("user_id", current_user.id),
             "reference": [],
         }
@@ -813,11 +813,11 @@ async def tts():
     text = req["text"]
 
     try:
-        default_tts_model_config = get_tenant_default_model_by_type(current_user.id, LLMType.TTS)
+        default_tts_model_config = get_tenant_default_model_by_type(active_tenant_id(), LLMType.TTS)
     except Exception as e:
         return get_data_error_result(message=str(e))
 
-    tts_mdl = LLMBundle(current_user.id, default_tts_model_config)
+    tts_mdl = LLMBundle(active_tenant_id(), default_tts_model_config)
 
     def stream_audio():
         try:
@@ -863,11 +863,11 @@ async def transcriptions():
     await uploaded.save(temp_audio_path)
 
     try:
-        default_asr_model_config = get_tenant_default_model_by_type(current_user.id, LLMType.SPEECH2TEXT)
+        default_asr_model_config = get_tenant_default_model_by_type(active_tenant_id(), LLMType.SPEECH2TEXT)
     except Exception as e:
         return get_data_error_result(message=str(e))
 
-    asr_mdl = LLMBundle(current_user.id, default_asr_model_config)
+    asr_mdl = LLMBundle(active_tenant_id(), default_asr_model_config)
     if not stream_mode:
         text = asr_mdl.transcription(temp_audio_path)
         try:
@@ -904,7 +904,7 @@ async def mindmap():
     kb_ids.extend(req["kb_ids"])
     kb_ids = list(set(kb_ids))
 
-    mind_map = await gen_mindmap(req["question"], kb_ids, search_app.get("tenant_id", current_user.id), search_config)
+    mind_map = await gen_mindmap(req["question"], kb_ids, search_app.get("tenant_id", active_tenant_id()), search_config)
     if "error" in mind_map:
         return server_error_response(Exception(mind_map["error"]))
     return get_json_result(data=mind_map)
@@ -926,10 +926,10 @@ async def related_questions():
 
     chat_id = search_config.get("chat_id", "")
     if chat_id:
-        chat_model_config = get_model_config_by_type_and_name(current_user.id, LLMType.CHAT, chat_id)
+        chat_model_config = get_model_config_by_type_and_name(active_tenant_id(), LLMType.CHAT, chat_id)
     else:
-        chat_model_config = get_tenant_default_model_by_type(current_user.id, LLMType.CHAT)
-    chat_mdl = LLMBundle(current_user.id, chat_model_config)
+        chat_model_config = get_tenant_default_model_by_type(active_tenant_id(), LLMType.CHAT)
+    chat_mdl = LLMBundle(active_tenant_id(), chat_model_config)
 
     gen_conf = search_config.get("llm_setting", {"temperature": 0.9})
     if "parameter" in gen_conf:
@@ -1032,7 +1032,7 @@ async def session_completion(chat_id, session_id):
 @validate_request("question", "kb_ids")
 async def ask():
     req = await get_request_json()
-    uid = current_user.id
+    uid = active_tenant_id()
 
     search_id = req.get("search_id", "")
     search_config = {}

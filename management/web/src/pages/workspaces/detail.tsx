@@ -1,7 +1,7 @@
 import { useEffect, useState } from 'react';
 import { useParams, Link, useNavigate } from 'react-router-dom';
-import { Card, Tabs, Spin, Statistic, Row, Col, Tag, Breadcrumb, Typography, Skeleton, Button, Popconfirm, App } from 'antd';
-import { TeamOutlined, DatabaseOutlined, KeyOutlined, AuditOutlined, GroupOutlined, HomeOutlined, DeleteOutlined } from '@ant-design/icons';
+import { Card, Tabs, Spin, Statistic, Row, Col, Tag, Breadcrumb, Typography, Skeleton, Button, Popconfirm, App, Space } from 'antd';
+import { TeamOutlined, DatabaseOutlined, KeyOutlined, AuditOutlined, GroupOutlined, HomeOutlined, DeleteOutlined, ExportOutlined } from '@ant-design/icons';
 import api from '@/lib/api';
 import MembersPage from '@/pages/members';
 import GroupsPage from '@/pages/groups';
@@ -38,6 +38,26 @@ export default function WorkspaceDetailPage() {
   const [org, setOrg] = useState<OrgInfo | null>(null);
   const [loading, setLoading] = useState(true);
   const [deleting, setDeleting] = useState(false);
+  const [launching, setLaunching] = useState(false);
+
+  const onLaunch = async () => {
+    if (!wsId) return;
+    setLaunching(true);
+    try {
+      const res = await api.post(`/workspaces/${wsId}/launch`);
+      const url = res.data?.bridge_url;
+      if (!url) {
+        message.error('Launch failed: no bridge URL returned');
+        return;
+      }
+      window.open(url, '_blank', 'noopener,noreferrer');
+    } catch (err: unknown) {
+      const msg = (err as { response?: { data?: { detail?: string } } })?.response?.data?.detail;
+      message.error(msg || 'Launch failed');
+    } finally {
+      setLaunching(false);
+    }
+  };
 
   const isEmpty = (stats?.members_count ?? 0) <= 1 && (stats?.datasets_count ?? 0) === 0;
 
@@ -103,21 +123,28 @@ export default function WorkspaceDetailPage() {
             </Text>
           </div>
         </div>
-        <Popconfirm
-          title="Delete this workspace?"
-          description={
-            isEmpty
-              ? 'This action cannot be undone.'
-              : `This workspace has ${stats?.members_count ?? 0} member(s) and ${stats?.datasets_count ?? 0} dataset(s). Delete anyway?`
-          }
-          okText="Delete"
-          okButtonProps={{ danger: true }}
-          onConfirm={onDelete}
-        >
-          <Button danger icon={<DeleteOutlined />} loading={deleting}>
-            Delete workspace
-          </Button>
-        </Popconfirm>
+        <Space>
+          {ws.status === '1' && (
+            <Button type="primary" icon={<ExportOutlined />} loading={launching} onClick={onLaunch}>
+              Open Workspace
+            </Button>
+          )}
+          <Popconfirm
+            title="Delete this workspace?"
+            description={
+              isEmpty
+                ? 'This action cannot be undone.'
+                : `This workspace has ${stats?.members_count ?? 0} member(s) and ${stats?.datasets_count ?? 0} dataset(s). Delete anyway?`
+            }
+            okText="Delete"
+            okButtonProps={{ danger: true }}
+            onConfirm={onDelete}
+          >
+            <Button danger icon={<DeleteOutlined />} loading={deleting}>
+              Delete workspace
+            </Button>
+          </Popconfirm>
+        </Space>
       </div>
 
       <Row gutter={16} className="mb-6">

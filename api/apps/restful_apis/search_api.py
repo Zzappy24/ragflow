@@ -16,12 +16,13 @@
 
 from quart import request
 from api.apps import current_user, login_required
+from api.utils.tenant_context import active_tenant_id
 
 from api.constants import DATASET_NAME_LIMIT
 from api.db.db_models import DB
 from api.db.services import duplicate_name
 from api.db.services.search_service import SearchService
-from api.db.services.user_service import TenantService, UserTenantService
+from api.db.services.user_service import TenantService
 from common.misc_utils import get_uuid
 from common.constants import RetCode, StatusEnum
 from api.utils.api_utils import get_data_error_result, get_json_result, get_request_json, server_error_response, validate_request
@@ -42,17 +43,18 @@ async def create():
         return get_data_error_result(message="Search name can't be empty.")
     if len(search_name.encode("utf-8")) > 255:
         return get_data_error_result(message=f"Search name length is {len(search_name)} which is large than 255.")
-    e, _ = TenantService.get_by_id(current_user.id)
+    e, _ = TenantService.get_by_id(active_tenant_id())
     if not e:
         return get_data_error_result(message="Authorized identity.")
 
     search_name = search_name.strip()
-    search_name = duplicate_name(SearchService.query, name=search_name, tenant_id=current_user.id, status=StatusEnum.VALID.value)
+    search_name = duplicate_name(SearchService.query, name=search_name, tenant_id=active_tenant_id(), status=StatusEnum.VALID.value)
 
     req["id"] = get_uuid()
     req["name"] = search_name
     req["description"] = description
-    req["tenant_id"] = current_user.id
+    req["tenant_id"] = active_tenant_id()
+    # created_by is uploader identity, not tenant context — keep current_user.id.
     req["created_by"] = current_user.id
     with DB.atomic():
         try:
@@ -77,9 +79,9 @@ def list_searches():
     try:
         if not owner_ids:
             tenants = []
-            search_apps, total = SearchService.get_by_tenant_ids(tenants, current_user.id, page_number, items_per_page, orderby, desc, keywords)
+            search_apps, total = SearchService.get_by_tenant_ids(tenants, active_tenant_id(), page_number, items_per_page, orderby, desc, keywords)
         else:
-            search_apps, total = SearchService.get_by_tenant_ids(owner_ids, current_user.id, 0, 0, orderby, desc, keywords)
+            search_apps, total = SearchService.get_by_tenant_ids(owner_ids, active_tenant_id(), 0, 0, orderby, desc, keywords)
             search_apps = [s for s in search_apps if s["tenant_id"] in owner_ids]
             total = len(search_apps)
             if page_number and items_per_page:
@@ -94,11 +96,9 @@ def list_searches():
 @require_permission(Permission.DATASET_READ)
 def detail(search_id):
     try:
-        tenants = UserTenantService.query(user_id=current_user.id)
-        for tenant in tenants:
-            if SearchService.query(tenant_id=tenant.tenant_id, id=search_id):
-                break
-        else:
+        # Restrict to the active workspace only — prevents cross-workspace
+        # disclosure of search apps.
+        if not SearchService.query(tenant_id=active_tenant_id(), id=search_id):
             return get_json_result(data=False, message="Has no permission for this operation.", code=RetCode.OPERATING_ERROR)
 
         search = SearchService.get_detail(search_id)
@@ -123,19 +123,20 @@ async def update(search_id):
         return get_data_error_result(message=f"Search name length is {len(req['name'])} which is large than {DATASET_NAME_LIMIT}")
     req["name"] = req["name"].strip()
 
-    e, _ = TenantService.get_by_id(current_user.id)
+    e, _ = TenantService.get_by_id(active_tenant_id())
     if not e:
         return get_data_error_result(message="Authorized identity.")
 
+    # accessible4deletion checks created_by — that's user identity, not tenant.
     if not SearchService.accessible4deletion(search_id, current_user.id):
         return get_json_result(data=False, message="No authorization.", code=RetCode.AUTHENTICATION_ERROR)
 
     try:
-        search_app = SearchService.query(tenant_id=current_user.id, id=search_id)[0]
+        search_app = SearchService.query(tenant_id=active_tenant_id(), id=search_id)[0]
         if not search_app:
             return get_json_result(data=False, message=f"Cannot find search {search_id}", code=RetCode.DATA_ERROR)
 
-        if req["name"].lower() != search_app.name.lower() and len(SearchService.query(name=req["name"], tenant_id=current_user.id, status=StatusEnum.VALID.value)) >= 1:
+        if req["name"].lower() != search_app.name.lower() and len(SearchService.query(name=req["name"], tenant_id=active_tenant_id(), status=StatusEnum.VALID.value)) >= 1:
             return get_data_error_result(message="Duplicated search name.")
 
         current_config = search_app.search_config or {}
@@ -165,6 +166,7 @@ async def update(search_id):
 @login_required
 @require_permission(Permission.DATASET_DELETE)
 def delete_search(search_id):
+    # accessible4deletion checks created_by — that's user identity, not tenant.
     if not SearchService.accessible4deletion(search_id, current_user.id):
         return get_json_result(data=False, message="No authorization.", code=RetCode.AUTHENTICATION_ERROR)
 

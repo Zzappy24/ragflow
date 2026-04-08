@@ -148,6 +148,26 @@ def get_workspace_direct(ws_id: str, user_id: str = Depends(get_current_user_id)
     return _ws_to_response(ws)
 
 
+@router.post("/workspaces/{ws_id}/launch")
+def launch_workspace(ws_id: str, user_id: str = Depends(get_current_user_id)):
+    """Issue a single-use bridge token and return the RAGFlow launch URL.
+
+    Any member of the workspace (or org_admin / superuser) can launch. The
+    bridge token is short-lived (60s by default) and bound to ``ws_id``; the
+    consumer (RAGFlow) enforces single-use via Redis SETNX on ``jti``.
+    """
+    from management.server.auth.dependencies import require_ws_member
+    from management.server.auth.jwt import create_bridge_token
+    from management.server.config import settings
+
+    require_ws_member(ws_id, user_id)
+    token = create_bridge_token(user_id, ws_id)
+    return {
+        "bridge_url": f"{settings.RAGFLOW_BASE_URL}/?bridge_token={token}",
+        "expires_in": settings.BRIDGE_TOKEN_EXPIRE_SECONDS,
+    }
+
+
 @router.get("/workspaces/{ws_id}/stats")
 def workspace_stats(ws_id: str, user_id: str = Depends(get_current_user_id)):
     """Get workspace resource stats."""

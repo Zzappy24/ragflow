@@ -14,7 +14,8 @@
 #  limitations under the License.
 #
 from quart import Response, request
-from api.apps import current_user, login_required
+from api.apps import login_required
+from api.utils.tenant_context import active_tenant_id
 
 from api.db.db_models import MCPServer
 from api.db.services.mcp_server_service import MCPServerService
@@ -41,7 +42,7 @@ async def list_mcp() -> Response:
     req = await get_request_json()
     mcp_ids = req.get("mcp_ids", [])
     try:
-        servers = MCPServerService.get_servers(current_user.id, mcp_ids, 0, 0, orderby, desc, keywords) or []
+        servers = MCPServerService.get_servers(active_tenant_id(), mcp_ids, 0, 0, orderby, desc, keywords) or []
         total = len(servers)
 
         if page_number and items_per_page:
@@ -57,7 +58,7 @@ async def list_mcp() -> Response:
 def detail() -> Response:
     mcp_id = request.args["mcp_id"]
     try:
-        mcp_server = MCPServerService.get_or_none(id=mcp_id, tenant_id=current_user.id)
+        mcp_server = MCPServerService.get_or_none(id=mcp_id, tenant_id=active_tenant_id())
 
         if mcp_server is None:
             return get_json_result(code=RetCode.NOT_FOUND, data=None)
@@ -81,7 +82,7 @@ async def create() -> Response:
     if not server_name or len(server_name.encode("utf-8")) > 255:
         return get_data_error_result(message=f"Invalid MCP name or length is {len(server_name)} which is large than 255.")
 
-    e, _ = MCPServerService.get_by_name_and_tenant(name=server_name, tenant_id=current_user.id)
+    e, _ = MCPServerService.get_by_name_and_tenant(name=server_name, tenant_id=active_tenant_id())
     if e:
         return get_data_error_result(message="Duplicated MCP server name.")
 
@@ -98,9 +99,9 @@ async def create() -> Response:
 
     try:
         req["id"] = get_uuid()
-        req["tenant_id"] = current_user.id
+        req["tenant_id"] = active_tenant_id()
 
-        e, _ = TenantService.get_by_id(current_user.id)
+        e, _ = TenantService.get_by_id(active_tenant_id())
         if not e:
             return get_data_error_result(message="Tenant not found.")
 
@@ -130,8 +131,8 @@ async def update() -> Response:
 
     mcp_id = req.get("mcp_id", "")
     e, mcp_server = MCPServerService.get_by_id(mcp_id)
-    if not e or mcp_server.tenant_id != current_user.id:
-        return get_data_error_result(message=f"Cannot find MCP server {mcp_id} for user {current_user.id}")
+    if not e or mcp_server.tenant_id != active_tenant_id():
+        return get_data_error_result(message=f"Cannot find MCP server {mcp_id} for user {active_tenant_id()}")
 
     server_type = req.get("server_type", mcp_server.server_type)
     if server_type and server_type not in VALID_MCP_SERVER_TYPES:
@@ -152,7 +153,7 @@ async def update() -> Response:
     timeout = get_float(req, "timeout", 10)
 
     try:
-        req["tenant_id"] = current_user.id
+        req["tenant_id"] = active_tenant_id()
         req.pop("mcp_id", None)
         req["id"] = mcp_id
 
@@ -166,7 +167,7 @@ async def update() -> Response:
         variables["tools"] = tools
         req["variables"] = variables
 
-        if not MCPServerService.filter_update([MCPServer.id == mcp_id, MCPServer.tenant_id == current_user.id], req):
+        if not MCPServerService.filter_update([MCPServer.id == mcp_id, MCPServer.tenant_id == active_tenant_id()], req):
             return get_data_error_result(message="Failed to updated MCP server.")
 
         e, updated_mcp = MCPServerService.get_by_id(req["id"])
@@ -186,7 +187,7 @@ async def rm() -> Response:
     mcp_ids = req.get("mcp_ids", [])
 
     try:
-        req["tenant_id"] = current_user.id
+        req["tenant_id"] = active_tenant_id()
 
         if not MCPServerService.delete_by_ids(mcp_ids):
             return get_data_error_result(message=f"Failed to delete MCP servers {mcp_ids}")
@@ -223,7 +224,7 @@ async def import_multiple() -> Response:
             counter = 0
 
             while True:
-                e, _ = MCPServerService.get_by_name_and_tenant(name=new_name, tenant_id=current_user.id)
+                e, _ = MCPServerService.get_by_name_and_tenant(name=new_name, tenant_id=active_tenant_id())
                 if not e:
                     break
                 new_name = f"{base_name}_{counter}"
@@ -231,7 +232,7 @@ async def import_multiple() -> Response:
 
             create_data = {
                 "id": get_uuid(),
-                "tenant_id": current_user.id,
+                "tenant_id": active_tenant_id(),
                 "name": new_name,
                 "url": config["url"],
                 "server_type": config["type"],
@@ -279,7 +280,7 @@ async def export_multiple() -> Response:
         for mcp_id in mcp_ids:
             e, mcp_server = MCPServerService.get_by_id(mcp_id)
 
-            if e and mcp_server.tenant_id == current_user.id:
+            if e and mcp_server.tenant_id == active_tenant_id():
                 server_key = mcp_server.name
 
                 exported_servers[server_key] = {
@@ -312,7 +313,7 @@ async def list_tools() -> Response:
         for mcp_id in mcp_ids:
             e, mcp_server = MCPServerService.get_by_id(mcp_id)
 
-            if e and mcp_server.tenant_id == current_user.id:
+            if e and mcp_server.tenant_id == active_tenant_id():
                 server_key = mcp_server.id
 
                 cached_tools = mcp_server.variables.get("tools", {})
@@ -360,8 +361,8 @@ async def test_tool() -> Response:
     tool_call_sessions = []
     try:
         e, mcp_server = MCPServerService.get_by_id(mcp_id)
-        if not e or mcp_server.tenant_id != current_user.id:
-            return get_data_error_result(message=f"Cannot find MCP server {mcp_id} for user {current_user.id}")
+        if not e or mcp_server.tenant_id != active_tenant_id():
+            return get_data_error_result(message=f"Cannot find MCP server {mcp_id} for user {active_tenant_id()}")
 
         tool_call_session = MCPToolCallSession(mcp_server, mcp_server.variables)
         tool_call_sessions.append(tool_call_session)
@@ -385,14 +386,14 @@ async def cache_tool() -> Response:
     tools = req.get("tools", [])
 
     e, mcp_server = MCPServerService.get_by_id(mcp_id)
-    if not e or mcp_server.tenant_id != current_user.id:
-        return get_data_error_result(message=f"Cannot find MCP server {mcp_id} for user {current_user.id}")
+    if not e or mcp_server.tenant_id != active_tenant_id():
+        return get_data_error_result(message=f"Cannot find MCP server {mcp_id} for user {active_tenant_id()}")
 
     variables = mcp_server.variables
     tools = {tool["name"]: tool for tool in tools if isinstance(tool, dict) and "name" in tool}
     variables["tools"] = tools
 
-    if not MCPServerService.filter_update([MCPServer.id == mcp_id, MCPServer.tenant_id == current_user.id], {"variables": variables}):
+    if not MCPServerService.filter_update([MCPServer.id == mcp_id, MCPServer.tenant_id == active_tenant_id()], {"variables": variables}):
         return get_data_error_result(message="Failed to updated MCP server.")
 
     return get_json_result(data=tools)

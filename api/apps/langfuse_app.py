@@ -15,7 +15,8 @@
 #
 
 
-from api.apps import current_user, login_required
+from api.apps import login_required
+from api.utils.tenant_context import active_tenant_id
 from langfuse import Langfuse
 
 from api.db.db_models import DB
@@ -34,7 +35,7 @@ async def set_api_key():
     if not all([secret_key, public_key, host]):
         return get_error_data_result(message="Missing required fields")
 
-    current_user_id = current_user.id
+    current_user_id = active_tenant_id()
     langfuse_keys = dict(
         tenant_id=current_user_id,
         secret_key=secret_key,
@@ -62,7 +63,7 @@ async def set_api_key():
 @login_required
 @validate_request()
 def get_api_key():
-    current_user_id = current_user.id
+    current_user_id = active_tenant_id()
     langfuse_entry = TenantLangfuseService.filter_by_tenant_with_info(tenant_id=current_user_id)
     if not langfuse_entry:
         return get_json_result(message="Have not record any Langfuse keys.")
@@ -86,7 +87,7 @@ def get_api_key():
 @login_required
 @validate_request()
 def delete_api_key():
-    current_user_id = current_user.id
+    current_user_id = active_tenant_id()
     langfuse_entry = TenantLangfuseService.filter_by_tenant(tenant_id=current_user_id)
     if not langfuse_entry:
         return get_json_result(message="Have not record any Langfuse keys.")

@@ -234,10 +234,19 @@ def active_required(func):
 
 
 def add_tenant_id_to_kwargs(func):
+    """Inject ``tenant_id`` into route kwargs.
+
+    Multi-tenant: prefers ``g.active_tenant_id`` (set by the workspace
+    middleware in ``api/ragflow_server.py`` based on the X-Workspace-Id
+    header). Falls back to ``current_user.id`` for legacy single-tenant
+    callers (CLI, SDK without workspace header) so existing flows keep
+    working.
+    """
     @wraps(func)
     async def wrapper(**kwargs):
         from api.apps import current_user
-        kwargs["tenant_id"] = current_user.id
+        from api.utils.tenant_context import maybe_active_tenant_id
+        kwargs["tenant_id"] = maybe_active_tenant_id() or current_user.id
         if inspect.iscoroutinefunction(func):
             return await func(**kwargs)
         return func(**kwargs)

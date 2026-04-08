@@ -27,7 +27,6 @@ from api.db.services.file_service import FileService
 from api.db.services.knowledgebase_service import KnowledgebaseService
 from api.db.services.pipeline_operation_log_service import PipelineOperationLogService
 from api.db.services.task_service import queue_dataflow, CANVAS_DEBUG_DOC_ID, TaskService
-from api.db.services.user_service import TenantService
 from api.db.services.user_canvas_version import UserCanvasVersionService
 from common.constants import RetCode
 from common.misc_utils import get_uuid, thread_pool_exec
@@ -48,6 +47,7 @@ from rag.nlp import search
 from rag.utils.redis_conn import REDIS_CONN
 from common import settings
 from api.apps import login_required, current_user
+from api.utils.tenant_context import active_tenant_id
 from api.apps.extensions.rbac import require_permission, Permission
 from api.apps.services.canvas_replica_service import CanvasReplicaService
 from api.db.services.canvas_service import completion as agent_completion
@@ -67,7 +67,7 @@ def templates():
 async def rm():
     req = await get_request_json()
     for i in req["canvas_ids"]:
-        if not UserCanvasService.accessible(i, current_user.id):
+        if not UserCanvasService.accessible(i, active_tenant_id()):
             return get_json_result(
                 data=False, message='Only owner of canvas authorized for this operation.',
                 code=RetCode.OPERATING_ERROR)
@@ -88,14 +88,14 @@ async def save():
         return get_data_error_result(message=str(e))
     cate = req.get("canvas_category", CanvasCategory.Agent)
     if "id" not in req:
-        req["user_id"] = current_user.id
-        if UserCanvasService.query(user_id=current_user.id, title=req["title"].strip(), canvas_category=cate):
+        req["user_id"] = active_tenant_id()
+        if UserCanvasService.query(user_id=active_tenant_id(), title=req["title"].strip(), canvas_category=cate):
             return get_data_error_result(message=f"{req['title'].strip()} already exists.")
         req["id"] = get_uuid()
         if not UserCanvasService.save(**req):
             return get_data_error_result(message="Fail to save canvas.")
     else:
-        if not UserCanvasService.accessible(req["id"], current_user.id):
+        if not UserCanvasService.accessible(req["id"], active_tenant_id()):
             return get_json_result(
                 data=False, message='Only owner of canvas authorized for this operation.',
                 code=RetCode.OPERATING_ERROR)
@@ -104,13 +104,14 @@ async def save():
     UserCanvasVersionService.save_or_replace_latest(
         user_canvas_id=req["id"],
         dsl=req["dsl"],
+        # nickname is user identity (display only) — keep current_user, not tenant.
         title=UserCanvasVersionService.build_version_title(getattr(current_user, "nickname", current_user.id), req.get("title")),
         release=req.get("release"),
     )
     replica_ok = CanvasReplicaService.replace_for_set(
         canvas_id=req["id"],
-        tenant_id=str(current_user.id),
-        runtime_user_id=str(current_user.id),
+        tenant_id=str(active_tenant_id()),
+        runtime_user_id=str(active_tenant_id()),
         dsl=req["dsl"],
         canvas_category=req.get("canvas_category", cate),
         title=req.get("title", ""),
@@ -124,7 +125,7 @@ async def save():
 @login_required
 @require_permission(Permission.AGENT_READ)
 def get(canvas_id):
-    if not UserCanvasService.accessible(canvas_id, current_user.id):
+    if not UserCanvasService.accessible(canvas_id, active_tenant_id()):
         return get_data_error_result(message="canvas not found.")
     e, c = UserCanvasService.get_by_canvas_id(canvas_id)
     if not e:
@@ -133,8 +134,8 @@ def get(canvas_id):
         # DELETE
         CanvasReplicaService.bootstrap(
             canvas_id=canvas_id,
-            tenant_id=str(current_user.id),
-            runtime_user_id=str(current_user.id),
+            tenant_id=str(active_tenant_id()),
+            runtime_user_id=str(active_tenant_id()),
             dsl=c.get("dsl"),
             canvas_category=c.get("canvas_category", CanvasCategory.Agent),
             title=c.get("title", ""),
@@ -201,7 +202,7 @@ async def run():
     query = req.get("query", "")
     files = req.get("files", [])
     inputs = req.get("inputs", {})
-    tenant_id = str(current_user.id)
+    tenant_id = str(active_tenant_id())
     runtime_user_id = req.get("user_id") or tenant_id
     user_id = str(runtime_user_id)
     if not await thread_pool_exec(UserCanvasService.accessible, req["id"], tenant_id):
@@ -277,7 +278,7 @@ async def run():
 @login_required
 @require_permission(Permission.CHAT_USE)
 async def exp_agent_completion(canvas_id):
-    tenant_id = current_user.id
+    tenant_id = active_tenant_id()
     req = await get_request_json()
     return_trace = bool(req.get("return_trace", False))
     async def generate():
@@ -331,8 +332,8 @@ async def rerun():
     if 0 < doc["progress"] < 1:
         return get_data_error_result(message=f"`{doc['name']}` is processing...")
 
-    if settings.docStoreConn.index_exist(search.index_name(current_user.id), doc["kb_id"]):
-        settings.docStoreConn.delete({"doc_id": doc["id"]}, search.index_name(current_user.id), doc["kb_id"])
+    if settings.docStoreConn.index_exist(search.index_name(active_tenant_id()), doc["kb_id"]):
+        settings.docStoreConn.delete({"doc_id": doc["id"]}, search.index_name(active_tenant_id()), doc["kb_id"])
     doc["progress_msg"] = ""
     doc["chunk_num"] = 0
     doc["token_num"] = 0
@@ -343,7 +344,7 @@ async def rerun():
     dsl = req["dsl"]
     dsl["path"] = [req["component_id"]]
     PipelineOperationLogService.update_by_id(req["id"], {"dsl": dsl})
-    queue_dataflow(tenant_id=current_user.id, flow_id=req["id"], task_id=get_uuid(), doc_id=doc["id"], priority=0, rerun=True)
+    queue_dataflow(tenant_id=active_tenant_id(), flow_id=req["id"], task_id=get_uuid(), doc_id=doc["id"], priority=0, rerun=True)
     return get_json_result(data=True)
 
 
@@ -364,7 +365,7 @@ def cancel(task_id):
 @require_permission(Permission.AGENT_UPDATE)
 async def reset():
     req = await get_request_json()
-    if not UserCanvasService.accessible(req["id"], current_user.id):
+    if not UserCanvasService.accessible(req["id"], active_tenant_id()):
         return get_json_result(
             data=False, message='Only owner of canvas authorized for this operation.',
             code=RetCode.OPERATING_ERROR)
@@ -373,7 +374,7 @@ async def reset():
         if not e:
             return get_data_error_result(message="canvas not found.")
 
-        canvas = Canvas(json.dumps(user_canvas.dsl), current_user.id, canvas_id=user_canvas.id)
+        canvas = Canvas(json.dumps(user_canvas.dsl), active_tenant_id(), canvas_id=user_canvas.id)
         canvas.reset()
         req["dsl"] = json.loads(str(canvas))
         UserCanvasService.update_by_id(req["id"], {"dsl": req["dsl"]})
@@ -412,12 +413,12 @@ def input_form():
         e, user_canvas = UserCanvasService.get_by_id(cvs_id)
         if not e:
             return get_data_error_result(message="canvas not found.")
-        if not UserCanvasService.query(user_id=current_user.id, id=cvs_id):
+        if not UserCanvasService.query(user_id=active_tenant_id(), id=cvs_id):
             return get_json_result(
                 data=False, message='Only owner of canvas authorized for this operation.',
                 code=RetCode.OPERATING_ERROR)
 
-        canvas = Canvas(json.dumps(user_canvas.dsl), current_user.id, canvas_id=user_canvas.id)
+        canvas = Canvas(json.dumps(user_canvas.dsl), active_tenant_id(), canvas_id=user_canvas.id)
         return get_json_result(data=canvas.get_component_input_form(cpn_id))
     except Exception as e:
         return server_error_response(e)
@@ -429,13 +430,13 @@ def input_form():
 @require_permission(Permission.AGENT_UPDATE)
 async def debug():
     req = await get_request_json()
-    if not UserCanvasService.accessible(req["id"], current_user.id):
+    if not UserCanvasService.accessible(req["id"], active_tenant_id()):
         return get_json_result(
             data=False, message='Only owner of canvas authorized for this operation.',
             code=RetCode.OPERATING_ERROR)
     try:
         e, user_canvas = UserCanvasService.get_by_id(req["id"])
-        canvas = Canvas(json.dumps(user_canvas.dsl), current_user.id, canvas_id=user_canvas.id)
+        canvas = Canvas(json.dumps(user_canvas.dsl), active_tenant_id(), canvas_id=user_canvas.id)
         canvas.reset()
         canvas.message_id = get_uuid()
         component = canvas.get_component(req["component_id"])["obj"]
@@ -606,17 +607,17 @@ def list_canvas():
     else:
         desc = True
     owner_ids = [id for id in request.args.get("owner_ids", "").strip().split(",") if id]
+    # Workspace-scoped: only canvases owned by the active tenant.
+    # Drops the legacy fan-out across all of the user's joined tenants
+    # which leaked agents across workspaces.
+    tid = active_tenant_id()
     if not owner_ids:
-        tenants = TenantService.get_joined_tenants_by_user_id(current_user.id)
-        tenants = [m["tenant_id"] for m in tenants]
-        tenants.append(current_user.id)
         canvas, total = UserCanvasService.get_by_tenant_ids(
-            tenants, current_user.id, page_number,
+            [tid], tid, page_number,
             items_per_page, orderby, desc, keywords, canvas_category)
     else:
-        tenants = owner_ids
         canvas, total = UserCanvasService.get_by_tenant_ids(
-            tenants, current_user.id, 0,
+            owner_ids, tid, 0,
             0, orderby, desc, keywords, canvas_category)
     return get_json_result(data={"canvas": canvas, "total": total})
 
@@ -627,9 +628,9 @@ def list_canvas():
 @require_permission(Permission.AGENT_UPDATE)
 async def setting():
     req = await get_request_json()
-    req["user_id"] = current_user.id
+    req["user_id"] = active_tenant_id()
 
-    if not UserCanvasService.accessible(req["id"], current_user.id):
+    if not UserCanvasService.accessible(req["id"], active_tenant_id()):
         return get_json_result(
             data=False, message='Only owner of canvas authorized for this operation.',
             code=RetCode.OPERATING_ERROR)
@@ -668,7 +669,7 @@ async def trace():
 @login_required
 @require_permission(Permission.AGENT_READ)
 def sessions(canvas_id):
-    tenant_id = current_user.id
+    tenant_id = active_tenant_id()
     if not UserCanvasService.accessible(canvas_id, tenant_id):
         return get_json_result(
             data=False, message='Only owner of canvas authorized for this operation.',
@@ -706,7 +707,7 @@ def sessions(canvas_id):
 @require_permission(Permission.CHAT_USE)
 async def set_session(canvas_id):
     req = await get_request_json()
-    tenant_id = current_user.id
+    tenant_id = active_tenant_id()
     e, cvs = UserCanvasService.get_by_id(canvas_id)
     assert e, "Agent not found."
     if not isinstance(cvs.dsl, str):
@@ -736,7 +737,7 @@ async def set_session(canvas_id):
 @login_required
 @require_permission(Permission.AGENT_READ)
 def get_session(canvas_id, session_id):
-    tenant_id = current_user.id
+    tenant_id = active_tenant_id()
     if not UserCanvasService.accessible(canvas_id, tenant_id):
         return get_json_result(
             data=False, message='Only owner of canvas authorized for this operation.',
@@ -749,7 +750,7 @@ def get_session(canvas_id, session_id):
 @login_required
 @require_permission(Permission.CHAT_DELETE)
 def del_session(canvas_id, session_id):
-    tenant_id = current_user.id
+    tenant_id = active_tenant_id()
     if not UserCanvasService.accessible(canvas_id, tenant_id):
         return get_json_result(
             data=False, message='Only owner of canvas authorized for this operation.',

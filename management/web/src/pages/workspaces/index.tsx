@@ -1,7 +1,7 @@
 import { useEffect, useState } from 'react';
 import { useParams, Link } from 'react-router-dom';
 import { Table, Button, Card, Modal, Form, Input, App, Tag, Space, Switch, Popconfirm, Tooltip } from 'antd';
-import { PlusOutlined, UndoOutlined, FireOutlined } from '@ant-design/icons';
+import { PlusOutlined, UndoOutlined, FireOutlined, ExportOutlined } from '@ant-design/icons';
 import type { ColumnsType } from 'antd/es/table';
 import api from '@/lib/api';
 import { useBulkDelete } from '@/components/BulkActions';
@@ -82,6 +82,32 @@ export default function WorkspacesPage({
     }
   };
 
+  const onLaunch = async (id: string) => {
+    // Open the tab SYNCHRONOUSLY in the click handler so the browser keeps
+    // the user-gesture context and doesn't block it as a popup. We'll
+    // navigate it to the bridge URL once the backend issues the token.
+    const tab = window.open('about:blank', '_blank', 'noopener,noreferrer');
+    try {
+      const res = await api.post(`/workspaces/${id}/launch`);
+      const url = res.data?.bridge_url;
+      if (!url) {
+        if (tab) tab.close();
+        message.error('Launch failed: no bridge URL returned');
+        return;
+      }
+      if (tab) {
+        tab.location.href = url;
+      } else {
+        // Popup was blocked despite the sync open — fall back to same-tab nav.
+        window.location.href = url;
+      }
+    } catch (err: unknown) {
+      if (tab) tab.close();
+      const msg = (err as { response?: { data?: { detail?: string } } })?.response?.data?.detail;
+      message.error(msg || 'Launch failed');
+    }
+  };
+
   const onCreate = async () => {
     if (creating) return;
     let values: { name: string; description?: string };
@@ -128,7 +154,16 @@ export default function WorkspacesPage({
       title: '',
       width: 110,
       render: (_: unknown, record: Workspace) =>
-        record.status === '0' ? (
+        record.status === '1' ? (
+          <Tooltip title="Open workspace in RAGFlow">
+            <Button
+              type="text"
+              icon={<ExportOutlined />}
+              size="small"
+              onClick={() => onLaunch(record.id)}
+            />
+          </Tooltip>
+        ) : (
           <Space size="small">
             <Tooltip title="Restore">
               <Button
@@ -152,7 +187,7 @@ export default function WorkspacesPage({
               </Tooltip>
             )}
           </Space>
-        ) : null,
+        ),
     },
   ];
 

@@ -140,6 +140,124 @@ async def login():
         )
 
 
+@manager.route("/bridge", methods=["POST"])  # noqa: F821
+async def bridge_login():
+    """
+    Single-use auth handoff from the admin panel.
+
+    Accepts a short-lived ``bridge`` JWT (signed with the shared
+    ``ADMIN_JWT_SECRET``) carrying ``sub`` (user_id), ``ws_id``, and a unique
+    ``jti``. Verifies signature/expiry/type, enforces single-use via Redis
+    SETNX on the jti, re-checks workspace membership, then logs the user in
+    and returns the active workspace_id so the frontend can pin
+    ``X-Workspace-Id``.
+    """
+    import jwt as _jwt
+
+    json_body = await get_request_json() or {}
+    token = (json_body.get("token") or "").strip()
+    if not token:
+        return get_json_result(
+            data=False, code=RetCode.AUTHENTICATION_ERROR, message="Missing bridge token"
+        )
+
+    admin_secret = os.getenv("ADMIN_JWT_SECRET")
+    if not admin_secret:
+        logging.error("ADMIN_JWT_SECRET not configured; bridge login disabled")
+        return get_json_result(
+            data=False, code=RetCode.SERVER_ERROR, message="Bridge login not configured"
+        )
+
+    try:
+        payload = _jwt.decode(token, admin_secret, algorithms=["HS256"])
+    except _jwt.ExpiredSignatureError:
+        return get_json_result(
+            data=False, code=RetCode.AUTHENTICATION_ERROR, message="Bridge token expired"
+        )
+    except _jwt.InvalidTokenError:
+        return get_json_result(
+            data=False, code=RetCode.AUTHENTICATION_ERROR, message="Invalid bridge token"
+        )
+
+    if payload.get("type") != "bridge":
+        return get_json_result(
+            data=False, code=RetCode.AUTHENTICATION_ERROR, message="Wrong token type"
+        )
+
+    user_id = payload.get("sub")
+    ws_id = payload.get("ws_id")
+    jti = payload.get("jti")
+    if not (user_id and ws_id and jti):
+        return get_json_result(
+            data=False, code=RetCode.AUTHENTICATION_ERROR, message="Malformed bridge token"
+        )
+
+    # Single-use enforcement: SETNX with TTL slightly longer than token TTL
+    # so a replayed token is rejected even before it would naturally expire.
+    redis_key = f"bridge:jti:{jti}"
+    try:
+        first_use = REDIS_CONN.REDIS.set(redis_key, "1", ex=300, nx=True)
+    except Exception as e:
+        logging.exception("Redis SETNX failed for bridge token: %s", e)
+        return get_json_result(
+            data=False, code=RetCode.SERVER_ERROR, message="Bridge replay check failed"
+        )
+    if not first_use:
+        return get_json_result(
+            data=False, code=RetCode.AUTHENTICATION_ERROR, message="Bridge token already used"
+        )
+
+    # Re-verify workspace membership at consumption time — admin panel state
+    # could have changed between issuance and use.
+    from api.db.services.workspace_service import WorkspaceService, WsMemberService
+    ok, ws = WorkspaceService.get_by_id(ws_id)
+    if not ok or not ws or ws.status != "1":
+        return get_json_result(
+            data=False, code=RetCode.AUTHENTICATION_ERROR, message="Workspace not available"
+        )
+
+    membership = WsMemberService.get_membership(ws_id, user_id)
+    if not membership:
+        # Allow superusers / org admins through too — mirrors require_ws_member
+        ok_user, user_obj = UserService.get_by_id(user_id)
+        is_super = bool(ok_user and getattr(user_obj, "is_superuser", False))
+        is_org_admin = False
+        if not is_super:
+            try:
+                from api.db.services.org_service import OrgMemberService
+                om = OrgMemberService.get_membership(ws.org_id, user_id)
+                is_org_admin = bool(om and om.role == "org_admin")
+            except Exception:
+                is_org_admin = False
+        if not (is_super or is_org_admin):
+            return get_json_result(
+                data=False,
+                code=RetCode.AUTHENTICATION_ERROR,
+                message="Not a member of this workspace",
+            )
+
+    ok_user, user = UserService.get_by_id(user_id)
+    if not ok_user or not user:
+        return get_json_result(
+            data=False, code=RetCode.AUTHENTICATION_ERROR, message="User not found"
+        )
+    if hasattr(user, "is_active") and user.is_active == "0":
+        return get_json_result(
+            data=False, code=RetCode.FORBIDDEN, message="Account disabled"
+        )
+
+    response_data = user.to_json()
+    response_data["active_workspace_id"] = ws_id
+    user.access_token = get_uuid()
+    login_user(user)
+    user.update_time = current_timestamp()
+    user.update_date = datetime_format(datetime.now())
+    user.save()
+    return await construct_response(
+        data=response_data, auth=user.get_id(), message="Bridge login successful"
+    )
+
+
 @manager.route("/login/channels", methods=["GET"])  # noqa: F821
 async def get_login_channels():
     """

@@ -46,6 +46,7 @@ from common import settings
 from common.doc_store.doc_store_base import OrderByExpr
 from api.apps import login_required, current_user
 from api.apps.extensions.rbac import require_permission, Permission
+from api.utils.tenant_context import active_tenant_id
 
 """
 Deprecated, todo delete
@@ -206,12 +207,10 @@ async def update_metadata_setting():
 def detail():
     kb_id = request.args["kb_id"]
     try:
-        tenants = UserTenantService.query(user_id=current_user.id)
-        for tenant in tenants:
-            if KnowledgebaseService.query(
-                    tenant_id=tenant.tenant_id, id=kb_id):
-                break
-        else:
+        # Restrict KB lookup to the active workspace's tenant — prevents
+        # cross-workspace dataset disclosure even if the user has access
+        # to multiple workspaces.
+        if not KnowledgebaseService.query(tenant_id=active_tenant_id(), id=kb_id):
             return get_json_result(
                 data=False, message='Only owner of dataset authorized for this operation.',
                 code=RetCode.OPERATING_ERROR)
@@ -340,10 +339,8 @@ def list_tags(kb_id):
             code=RetCode.AUTHENTICATION_ERROR
         )
 
-    tenants = UserTenantService.get_tenants_by_user_id(current_user.id)
-    tags = []
-    for tenant in tenants:
-        tags += settings.retriever.all_tags(tenant["tenant_id"], [kb_id])
+    # Scope tag lookup to the active workspace's tenant only.
+    tags = settings.retriever.all_tags(active_tenant_id(), [kb_id])
     return get_json_result(data=tags)
 
 
@@ -360,10 +357,8 @@ def list_tags_from_kbs():
                 code=RetCode.AUTHENTICATION_ERROR
             )
 
-    tenants = UserTenantService.get_tenants_by_user_id(current_user.id)
-    tags = []
-    for tenant in tenants:
-        tags += settings.retriever.all_tags(tenant["tenant_id"], kb_ids)
+    # Scope tag lookup to the active workspace's tenant only.
+    tags = settings.retriever.all_tags(active_tenant_id(), kb_ids)
     return get_json_result(data=tags)
 
 

@@ -28,7 +28,6 @@ from api.db.services.knowledgebase_service import KnowledgebaseService
 from api.db.services.llm_service import LLMBundle
 from common.metadata_utils import apply_meta_data_filter
 from api.db.services.search_service import SearchService
-from api.db.services.user_service import UserTenantService
 from api.db.joint_services.tenant_model_service import get_model_config_by_id, get_tenant_default_model_by_type, get_model_config_by_type_and_name
 from api.utils.api_utils import (
     get_data_error_result,
@@ -45,7 +44,8 @@ from rag.prompts.generator import cross_languages, keyword_extraction
 from common.string_utils import remove_redundant_spaces
 from common.constants import RetCode, LLMType, ParserType, PAGERANK_FLD
 from common import settings
-from api.apps import login_required, current_user
+from api.apps import login_required
+from api.utils.tenant_context import active_tenant_id
 from api.apps.extensions.rbac import require_permission, Permission
 
 @manager.route('/list', methods=['POST'])  # noqa: F821
@@ -105,15 +105,10 @@ async def list_chunk():
 def get():
     chunk_id = request.args["chunk_id"]
     try:
-        chunk = None
-        tenants = UserTenantService.query(user_id=current_user.id)
-        if not tenants:
-            return get_data_error_result(message="Tenant not found!")
-        for tenant in tenants:
-            kb_ids = KnowledgebaseService.get_kb_ids(tenant.tenant_id)
-            chunk = settings.docStoreConn.get(chunk_id, search.index_name(tenant.tenant_id), kb_ids)
-            if chunk:
-                break
+        # Workspace-scoped: only look up chunks in the active workspace's index.
+        tid = active_tenant_id()
+        kb_ids = KnowledgebaseService.get_kb_ids(tid)
+        chunk = settings.docStoreConn.get(chunk_id, search.index_name(tid), kb_ids)
         if chunk is None:
             return server_error_response(Exception("Chunk not found"))
 
@@ -428,7 +423,8 @@ async def retrieval_test():
     use_kg = req.get("use_kg", False)
     top = int(req.get("top_k", 1024))
     langs = req.get("cross_languages", [])
-    user_id = current_user.id
+    # Multi-tenant: scope LLM/KB lookups to the active workspace's tenant.
+    user_id = active_tenant_id()
 
     async def _retrieval():
         local_doc_ids = list(doc_ids) if doc_ids else []
@@ -456,17 +452,13 @@ async def retrieval_test():
             metas = DocMetadataService.get_flatted_meta_by_kbs(kb_ids)
             local_doc_ids = await apply_meta_data_filter(meta_data_filter, metas, question, chat_mdl, local_doc_ids)
 
-        tenants = UserTenantService.query(user_id=user_id)
+        # Workspace-scoped: every KB must belong to the active workspace's tenant.
         for kb_id in kb_ids:
-            for tenant in tenants:
-                if KnowledgebaseService.query(
-                        tenant_id=tenant.tenant_id, id=kb_id):
-                    tenant_ids.append(tenant.tenant_id)
-                    break
-            else:
+            if not KnowledgebaseService.query(tenant_id=user_id, id=kb_id):
                 return get_json_result(
                     data=False, message='Only owner of dataset authorized for this operation.',
                     code=RetCode.OPERATING_ERROR)
+            tenant_ids.append(user_id)
 
         e, kb = KnowledgebaseService.get_by_id(kb_ids[0])
         if not e:

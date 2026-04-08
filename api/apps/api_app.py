@@ -17,8 +17,8 @@ from datetime import datetime, timedelta
 from quart import request
 from api.db.db_models import APIToken
 from api.db.services.api_service import APITokenService, API4ConversationService
-from api.db.services.user_service import UserTenantService
 from api.utils.api_utils import generate_confirmation_token, get_data_error_result, get_json_result, get_request_json, server_error_response, validate_request
+from api.utils.tenant_context import active_tenant_id
 from common.time_utils import current_timestamp, datetime_format
 from api.apps import login_required, current_user
 
@@ -35,11 +35,7 @@ async def new_token():
         )
     req = await get_request_json()
     try:
-        tenants = UserTenantService.query(user_id=current_user.id)
-        if not tenants:
-            return get_data_error_result(message="Tenant not found!")
-
-        tenant_id = tenants[0].tenant_id
+        tenant_id = active_tenant_id()
         obj = {"tenant_id": tenant_id, "token": generate_confirmation_token(),
                "create_time": current_timestamp(),
                "create_date": datetime_format(datetime.now()),
@@ -64,12 +60,8 @@ async def new_token():
 @login_required
 def token_list():
     try:
-        tenants = UserTenantService.query(user_id=current_user.id)
-        if not tenants:
-            return get_data_error_result(message="Tenant not found!")
-
         id = request.args["dialog_id"] if "dialog_id" in request.args else request.args["canvas_id"]
-        objs = APITokenService.query(tenant_id=tenants[0].tenant_id, dialog_id=id)
+        objs = APITokenService.query(tenant_id=active_tenant_id(), dialog_id=id)
         return get_json_result(data=[o.to_dict() for o in objs])
     except Exception as e:
         return server_error_response(e)
@@ -93,11 +85,8 @@ async def rm():
 @login_required
 def stats():
     try:
-        tenants = UserTenantService.query(user_id=current_user.id)
-        if not tenants:
-            return get_data_error_result(message="Tenant not found!")
         objs = API4ConversationService.stats(
-            tenants[0].tenant_id,
+            active_tenant_id(),
             request.args.get(
                 "from_date",
                 (datetime.now() -

@@ -27,6 +27,7 @@ Provides REST API for RAG evaluation functionality including:
 
 from quart import request
 from api.apps import login_required, current_user
+from api.utils.tenant_context import active_tenant_id
 from api.db.services.evaluation_service import EvaluationService
 from api.utils.api_utils import (
     get_data_error_result,
@@ -70,13 +71,13 @@ async def create_dataset():
             name=name,
             description=description,
             kb_ids=kb_ids,
-            tenant_id=current_user.id,
+            tenant_id=active_tenant_id(),
             user_id=current_user.id
         )
-        
+
         if not success:
             return get_data_error_result(message=result)
-        
+
         return get_json_result(data={"dataset_id": result})
     except Exception as e:
         return server_error_response(e)
@@ -97,7 +98,7 @@ async def list_datasets():
         page_size = int(request.args.get("page_size", 20))
         
         result = EvaluationService.list_datasets(
-            tenant_id=current_user.id,
+            tenant_id=active_tenant_id(),
             user_id=current_user.id,
             page=page,
             page_size=page_size

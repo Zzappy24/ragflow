@@ -98,7 +98,8 @@ async def create(tenant_id: str=None):
 
     try:
         if not tenant_id:
-            tenant_id = current_user.id
+            from api.utils.tenant_context import maybe_active_tenant_id
+            tenant_id = maybe_active_tenant_id() or current_user.id
         success, result = await dataset_api_service.create_dataset(tenant_id, req)
         if success:
             return get_result(data=result)
