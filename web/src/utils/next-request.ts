@@ -97,6 +97,12 @@ request.interceptors.request.use(
       newConfig.headers.set(Authorization, getAuthorization());
     }
 
+    // RBAC: inject active workspace ID for multi-tenant resolution
+    const activeWorkspaceId = localStorage.getItem('active_workspace_id');
+    if (activeWorkspaceId) {
+      newConfig.headers.set('X-Workspace-Id', activeWorkspaceId);
+    }
+
     return newConfig;
   },
   function (error) {

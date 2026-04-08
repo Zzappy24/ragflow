@@ -14,13 +14,15 @@ class OrgService(CommonService):
     @classmethod
     @DB.connection_context()
     def get_resource_counts(cls, org_id):
-        """Count users, workspaces, datasets, and documents for an org."""
-        workspace_ids = [
-            ws.id for ws in Workspace.select(Workspace.id).where(Workspace.org_id == org_id)
-        ]
-        tenant_ids = [
-            ws.tenant_id for ws in Workspace.select(Workspace.tenant_id).where(Workspace.org_id == org_id)
-        ]
+        """Count users, workspaces, datasets, and documents for an org.
+
+        Only counts active (status='1') workspaces — soft-deleted ones are excluded.
+        """
+        active_ws = Workspace.select().where(
+            (Workspace.org_id == org_id) & (Workspace.status == "1")
+        )
+        workspace_ids = [ws.id for ws in active_ws]
+        tenant_ids = [ws.tenant_id for ws in active_ws]
 
         user_count = (
             WsMember.select(WsMember.user_id)
@@ -37,9 +39,11 @@ class OrgService(CommonService):
             .count()
         ) if tenant_ids else 0
 
+        # Documents link to datasets via kb_id — single JOIN instead of 2 queries
         document_count = (
             Document.select()
-            .where(Document.tenant_id.in_(tenant_ids))
+            .join(Knowledgebase, on=(Document.kb_id == Knowledgebase.id))
+            .where(Knowledgebase.tenant_id.in_(tenant_ids))
             .count()
         ) if tenant_ids else 0
 

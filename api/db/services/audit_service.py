@@ -36,19 +36,25 @@ class AuditService(CommonService):
 
     @classmethod
     @DB.connection_context()
-    def query_by_org(cls, org_id, limit=100, offset=0, action=None):
+    def query_by_org(cls, org_id, page=1, page_size=50, user_id=None, action=None):
         q = cls.model.select().where(cls.model.org_id == org_id)
         if action:
             q = q.where(cls.model.action == action)
-        return list(q.order_by(cls.model.create_time.desc()).offset(offset).limit(limit))
+        if user_id:
+            q = q.where(cls.model.user_id == user_id)
+        offset = (page - 1) * page_size
+        return list(q.order_by(cls.model.create_time.desc()).offset(offset).limit(page_size))
 
     @classmethod
     @DB.connection_context()
-    def query_by_workspace(cls, workspace_id, limit=100, offset=0, action=None):
+    def query_by_workspace(cls, workspace_id, page=1, page_size=50, user_id=None, action=None):
         q = cls.model.select().where(cls.model.workspace_id == workspace_id)
         if action:
             q = q.where(cls.model.action == action)
-        return list(q.order_by(cls.model.create_time.desc()).offset(offset).limit(limit))
+        if user_id:
+            q = q.where(cls.model.user_id == user_id)
+        offset = (page - 1) * page_size
+        return list(q.order_by(cls.model.create_time.desc()).offset(offset).limit(page_size))
 
     @classmethod
     @DB.connection_context()

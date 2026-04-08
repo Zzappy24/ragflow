@@ -14,11 +14,11 @@ class WorkspaceService(CommonService):
 
     @classmethod
     @DB.connection_context()
-    def list_by_org(cls, org_id):
-        return list(
-            cls.model.select()
-            .where((cls.model.org_id == org_id) & (cls.model.status == "1"))
-        )
+    def list_by_org(cls, org_id, include_deleted: bool = False):
+        q = cls.model.select().where(cls.model.org_id == org_id)
+        if not include_deleted:
+            q = q.where(cls.model.status == "1")
+        return list(q)
 
 
 class WsMemberService(CommonService):
