@@ -5,6 +5,7 @@ Only superusers can create/delete orgs. Org admins can update their own org.
 from fastapi import APIRouter, Depends, HTTPException, status
 
 from management.server.auth.dependencies import (
+    get_current_user,
     get_current_user_id,
     require_superuser,
     require_org_admin,
@@ -31,10 +32,22 @@ def _org_to_response(org) -> dict:
 
 
 @router.get("", response_model=list[OrgResponse])
-def list_orgs(user=Depends(require_superuser)):
-    """List all organisations (superuser only)."""
-    from api.db.services.org_service import OrgService
-    orgs = OrgService.query(status="1")
+def list_orgs(user=Depends(get_current_user)):
+    """List organisations visible to the caller.
+
+    Superusers see every active org. Regular users see only the orgs where
+    they hold a membership (any role) — the admin panel dashboard also
+    surfaces ``/auth/me`` memberships, and both views need to agree.
+    """
+    from api.db.services.org_service import OrgService, OrgMemberService
+    if user.is_superuser:
+        orgs = OrgService.query(status="1")
+    else:
+        memberships = OrgMemberService.list_orgs_for_user(user.id)
+        org_ids = {m.org_id for m in memberships}
+        if not org_ids:
+            return []
+        orgs = [o for o in OrgService.query(status="1") if o.id in org_ids]
     return [_org_to_response(o) for o in orgs]
 
 

@@ -13,9 +13,27 @@ router = APIRouter()
 
 @router.post("/login", response_model=TokenResponse)
 def login(body: LoginRequest):
-    """Authenticate with email/password. Only superusers and org_admins can log in."""
+    """Authenticate with email/password. Only superusers and org_admins can log in.
+
+    The password arrives RSA-wrapped by the frontend (``rsaPsw`` helper in
+    ``management/web/src/utils/crypto.ts``), mirroring RAGFlow's ``/v1/user/login``
+    convention. This is obfuscation, not real crypto — the keypair ships with
+    the repo — but it keeps plaintext passwords out of reverse-proxy logs and
+    browser history, and it keeps both login endpoints aligned on the same
+    posture so middleware changes can't accidentally leak one side.
+    """
     from api.db.services.user_service import UserService
-    user = UserService.query_user(body.email, body.password)
+    from api.utils.crypt import decrypt
+
+    try:
+        plaintext_password = decrypt(body.password)
+    except Exception:
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail="Malformed password payload",
+        )
+
+    user = UserService.query_user(body.email, plaintext_password)
     if not user:
         raise HTTPException(
             status_code=status.HTTP_401_UNAUTHORIZED,

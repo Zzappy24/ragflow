@@ -246,7 +246,10 @@ async def bridge_login():
             data=False, code=RetCode.FORBIDDEN, message="Account disabled"
         )
 
-    response_data = user.to_json()
+    # Copy to a new dict — user.to_json() returns peewee's internal __data__
+    # reference, and mutating it would corrupt the model state and cause
+    # user.save() below to try to UPDATE a non-existent column.
+    response_data = dict(user.to_json())
     response_data["active_workspace_id"] = ws_id
     user.access_token = get_uuid()
     login_user(user)
@@ -255,6 +258,119 @@ async def bridge_login():
     user.save()
     return await construct_response(
         data=response_data, auth=user.get_id(), message="Bridge login successful"
+    )
+
+
+@manager.route("/set_initial_password", methods=["POST"])  # noqa: F821
+async def set_initial_password():
+    """
+    Consume an admin-panel ``invite`` JWT: set the user's real password hash,
+    activate the account, and log them in.
+
+    This is the *only* public way a freshly-provisioned user can enter the
+    system once ``REGISTER_ENABLED=0``. The invite token is minted by the
+    admin panel's ``POST /api/admin/users`` and signed with the shared
+    ``ADMIN_JWT_SECRET``. Single-use is enforced via Redis SETNX on the jti
+    — same pattern as the workspace bridge endpoint above.
+
+    Expected body: ``{"token": "<jwt>", "password": "<encrypted>"}`` where
+    ``password`` is RSA-encrypted by the frontend exactly like ``/login``.
+    """
+    import jwt as _jwt
+
+    json_body = await get_request_json() or {}
+    token = (json_body.get("token") or "").strip()
+    raw_password = json_body.get("password")
+    if not token or not raw_password:
+        return get_json_result(
+            data=False, code=RetCode.ARGUMENT_ERROR, message="Missing token or password"
+        )
+
+    admin_secret = os.getenv("ADMIN_JWT_SECRET")
+    if not admin_secret:
+        logging.error("ADMIN_JWT_SECRET not configured; invite flow disabled")
+        return get_json_result(
+            data=False, code=RetCode.SERVER_ERROR, message="Invite flow not configured"
+        )
+
+    try:
+        payload = _jwt.decode(token, admin_secret, algorithms=["HS256"])
+    except _jwt.ExpiredSignatureError:
+        return get_json_result(
+            data=False, code=RetCode.AUTHENTICATION_ERROR, message="Invite token expired"
+        )
+    except _jwt.InvalidTokenError:
+        return get_json_result(
+            data=False, code=RetCode.AUTHENTICATION_ERROR, message="Invalid invite token"
+        )
+
+    if payload.get("type") != "invite":
+        return get_json_result(
+            data=False, code=RetCode.AUTHENTICATION_ERROR, message="Wrong token type"
+        )
+
+    user_id = payload.get("sub")
+    jti = payload.get("jti")
+    if not (user_id and jti):
+        return get_json_result(
+            data=False, code=RetCode.AUTHENTICATION_ERROR, message="Malformed invite token"
+        )
+
+    # Decrypt the password the same way /login does. Note: we decrypt BEFORE
+    # burning the SETNX slot so a broken client can retry without eating its
+    # token.
+    try:
+        password = decrypt(raw_password)
+    except BaseException:
+        return get_json_result(
+            data=False, code=RetCode.SERVER_ERROR, message="Fail to crypt password"
+        )
+
+    if not isinstance(password, str) or len(password) < 8:
+        return get_json_result(
+            data=False,
+            code=RetCode.ARGUMENT_ERROR,
+            message="Password must be at least 8 characters",
+        )
+
+    # Single-use enforcement. TTL slightly longer than token TTL (48h) so a
+    # replayed token is rejected even if it would still verify cryptographically.
+    redis_key = f"invite:jti:{jti}"
+    try:
+        first_use = REDIS_CONN.REDIS.set(redis_key, "1", ex=60 * 60 * 72, nx=True)
+    except Exception as e:
+        logging.exception("Redis SETNX failed for invite token: %s", e)
+        return get_json_result(
+            data=False, code=RetCode.SERVER_ERROR, message="Invite replay check failed"
+        )
+    if not first_use:
+        return get_json_result(
+            data=False, code=RetCode.AUTHENTICATION_ERROR, message="Invite token already used"
+        )
+
+    ok_user, user = UserService.get_by_id(user_id)
+    if not ok_user or not user:
+        return get_json_result(
+            data=False, code=RetCode.AUTHENTICATION_ERROR, message="User not found"
+        )
+
+    # Flip is_active → 1, store the real password hash, mint a fresh session
+    # token, and log the user in. Copy to a new dict before mutating to avoid
+    # clobbering peewee's internal __data__ reference (same gotcha the bridge
+    # endpoint hit — see comment there).
+    user.password = generate_password_hash(password)
+    user.is_active = "1"
+    user.access_token = get_uuid()
+    user.update_time = current_timestamp()
+    user.update_date = datetime_format(datetime.now())
+    user.save()
+
+    response_data = dict(user.to_json())
+    login_user(user)
+    return await construct_response(
+        data=response_data,
+        auth=user.get_id(),
+        message="Password set, welcome aboard!",
     )
 
 

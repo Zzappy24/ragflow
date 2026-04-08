@@ -16,7 +16,6 @@ import {
   LucideServer,
   LucideUnplug,
   LucideUser,
-  LucideUsers,
 } from 'lucide-react';
 import { useEffect } from 'react';
 import { useTranslation } from 'react-i18next';
@@ -38,11 +37,6 @@ const menuItems = (t: TFunction) => [
     icon: <IconFontFill name="mcp" className="size-[1em]" />,
     label: 'MCP',
     key: Routes.Mcp,
-  },
-  {
-    icon: <LucideUsers className="size-[1em]" />,
-    label: t('setting.team'),
-    key: Routes.Team,
   },
   {
     icon: <LucideUser className="size-[1em]" />,

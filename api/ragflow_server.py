@@ -120,13 +120,36 @@ if __name__ == '__main__':
             ws_id = request.headers.get("X-Workspace-Id")
             if ws_id:
                 from api.db.services.workspace_service import WorkspaceService, WsMemberService
-                ws = WorkspaceService.get_by_id(ws_id)
-                membership = WsMemberService.get_membership(ws_id, current_user.id) if ws else None
-                if ws and membership:
-                    g.active_tenant_id = ws.tenant_id
-                else:
-                    # Invalid workspace or not a member — deny, don't fallback
+                # CommonService.get_by_id returns (success, obj) — unpack it.
+                ok, ws = WorkspaceService.get_by_id(ws_id)
+                if not ok or not ws or ws.status != "1":
                     g.active_tenant_id = None
+                else:
+                    membership = WsMemberService.get_membership(ws_id, current_user.id)
+                    if membership:
+                        g.active_tenant_id = ws.tenant_id
+                    elif getattr(current_user, "is_superuser", False):
+                        # Superusers can access any workspace.
+                        g.active_tenant_id = ws.tenant_id
+                    else:
+                        # Org admins of the workspace's parent org can also
+                        # access the workspace without an explicit WsMember
+                        # row. This mirrors the bridge login check and keeps
+                        # org_admins out of the client-visible member lists
+                        # (no "ghost" WsMember pollution), while still letting
+                        # them use the workspace they manage.
+                        is_org_admin = False
+                        try:
+                            from api.db.services.org_service import OrgMemberService
+                            om = OrgMemberService.get_membership(ws.org_id, current_user.id)
+                            is_org_admin = bool(om and om.role == "org_admin")
+                        except Exception:
+                            is_org_admin = False
+                        if is_org_admin:
+                            g.active_tenant_id = ws.tenant_id
+                        else:
+                            # Not a member — deny, don't fallback
+                            g.active_tenant_id = None
             else:
                 # No workspace header — legacy personal tenant
                 g.active_tenant_id = current_user.id

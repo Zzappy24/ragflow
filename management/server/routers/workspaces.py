@@ -42,7 +42,7 @@ def create_workspace(org_id: str, body: WsCreate, user_id: str = Depends(get_cur
     user = require_org_admin(org_id, user_id)
 
     from management.server.services.provisioning import provision_workspace
-    from api.apps.extensions.quotas import check_quota
+    from api.db.services.quota_service import check_quota
 
     allowed, msg = check_quota(org_id, "workspace")
     if not allowed:

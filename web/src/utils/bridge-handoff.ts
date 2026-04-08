@@ -35,11 +35,18 @@ export async function consumeBridgeToken(): Promise<void> {
   window.history.replaceState({}, '', url.toString());
 
   try {
+    // NOTE: ``credentials: 'same-origin'`` (fetch's default) is required here.
+    // Using ``'include'`` would make Safari treat this as a CORS request and
+    // then reject the response because ``construct_response`` sets
+    // ``Access-Control-Allow-Origin: *``, which is forbidden with credentials.
+    // The bridge endpoint is always same-origin (we land on :9222 and POST to
+    // :9222/v1/user/bridge through Vite's proxy), so no cookies need crossing
+    // origins — same-origin is both correct and browser-safe.
     const res = await fetch('/v1/user/bridge', {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify({ token }),
-      credentials: 'include',
+      credentials: 'same-origin',
     });
 
     if (!res.ok) {

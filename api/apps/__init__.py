@@ -57,7 +57,15 @@ def _unauthorized_message(error):
         return UNAUTHORIZED_MESSAGE
 
 app = Quart(__name__)
-app = cors(app, allow_origin="*")
+# expose_headers is critical: without it, quart_cors's after-request hook
+# overwrites Access-Control-Expose-Headers to an empty string, which prevents
+# browser JS from reading the Authorization header on the login/bridge
+# responses — login appears to succeed at the HTTP layer but the frontend can
+# never capture the session token, so the user silently bounces back to the
+# login page. Chrome is permissive on localhost and masked this bug; Safari
+# enforces the spec and surfaces it as "Fetch API cannot load ... due to
+# access control checks". See construct_response in common/connection_utils.py.
+app = cors(app, allow_origin="*", expose_headers=["Authorization"])
 
 # openapi supported
 QuartSchema(app)

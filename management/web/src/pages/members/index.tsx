@@ -1,7 +1,7 @@
 import { useEffect, useState } from 'react';
 import { useSearchParams, useParams } from 'react-router-dom';
-import { Table, Button, Card, Modal, Form, Input, Select, App, Popconfirm, Space } from 'antd';
-import { PlusOutlined, DeleteOutlined } from '@ant-design/icons';
+import { Table, Button, Card, Modal, Form, Input, Select, App, Popconfirm, Space, Typography } from 'antd';
+import { PlusOutlined, DeleteOutlined, UserAddOutlined, CopyOutlined } from '@ant-design/icons';
 import type { ColumnsType } from 'antd/es/table';
 import api from '@/lib/api';
 import { useBulkDelete } from '@/components/BulkActions';
@@ -28,6 +28,13 @@ export default function MembersPage({
   const [modalOpen, setModalOpen] = useState(false);
   const [form] = Form.useForm();
   const { message } = App.useApp();
+
+  // Invite-user (org-scope only): creates a brand-new user atomically through
+  // /api/admin/users and returns a single-use invite URL the admin can copy.
+  const [inviteOpen, setInviteOpen] = useState(false);
+  const [inviteForm] = Form.useForm();
+  const [inviteBusy, setInviteBusy] = useState(false);
+  const [inviteResult, setInviteResult] = useState<{ email: string; invite_url: string } | null>(null);
 
   const scope = wsId ? 'ws' : 'org';
   const scopeId = wsId || orgId || '';
@@ -86,6 +93,44 @@ export default function MembersPage({
     fetchMembers();
   };
 
+  const onInvite = async () => {
+    if (inviteBusy) return;
+    let values: { email: string; nickname: string; org_role: string };
+    try {
+      values = await inviteForm.validateFields();
+    } catch {
+      return;
+    }
+    setInviteBusy(true);
+    try {
+      const res = await api.post('/users', {
+        email: values.email,
+        nickname: values.nickname,
+        org_id: scopeId,
+        org_role: values.org_role,
+      });
+      setInviteResult({ email: res.data.email, invite_url: res.data.invite_url });
+      setInviteOpen(false);
+      inviteForm.resetFields();
+      refresh();
+    } catch (err: unknown) {
+      const msg = (err as { response?: { data?: { detail?: string } } })?.response?.data?.detail;
+      message.error(msg || 'Failed to invite user');
+    } finally {
+      setInviteBusy(false);
+    }
+  };
+
+  const copyInvite = async () => {
+    if (!inviteResult) return;
+    try {
+      await navigator.clipboard.writeText(inviteResult.invite_url);
+      message.success('Invite URL copied');
+    } catch {
+      message.error('Clipboard unavailable — copy manually');
+    }
+  };
+
   const roleOptions = scope === 'ws'
     ? [{ value: 'ws_admin', label: 'WS Admin' }, { value: 'editor', label: 'Editor' }, { value: 'viewer', label: 'Viewer' }]
     : [{ value: 'org_admin', label: 'Org Admin' }, { value: 'member', label: 'Member' }];
@@ -136,9 +181,16 @@ export default function MembersPage({
         </h2>
         <Space>
           <BulkDeleteButton />
-          <Button type="primary" icon={<PlusOutlined />} onClick={() => setModalOpen(true)}>
-            Add Member
-          </Button>
+          {scope === 'ws' && (
+            <Button type="primary" icon={<PlusOutlined />} onClick={() => setModalOpen(true)}>
+              Add Member
+            </Button>
+          )}
+          {scope === 'org' && (
+            <Button type="primary" icon={<UserAddOutlined />} onClick={() => setInviteOpen(true)}>
+              Invite User
+            </Button>
+          )}
         </Space>
       </div>
 
@@ -162,6 +214,67 @@ export default function MembersPage({
             <Select options={roleOptions} />
           </Form.Item>
         </Form>
+      </Modal>
+
+      <Modal
+        title="Invite User"
+        open={inviteOpen}
+        onOk={onInvite}
+        onCancel={() => !inviteBusy && setInviteOpen(false)}
+        okText="Send Invite"
+        confirmLoading={inviteBusy}
+        maskClosable={!inviteBusy}
+        closable={!inviteBusy}
+      >
+        <p className="text-gray-500 mb-3">
+          Creates a new user and returns a single-use invite link the recipient can
+          use to set their password. The user is inactive until they consume the link.
+        </p>
+        <Form form={inviteForm} layout="vertical">
+          <Form.Item name="email" label="Email" rules={[{ required: true, type: 'email' }]}>
+            <Input placeholder="user@example.com" />
+          </Form.Item>
+          <Form.Item name="nickname" label="Name" rules={[{ required: true }]}>
+            <Input placeholder="Jane Doe" />
+          </Form.Item>
+          <Form.Item name="org_role" label="Org Role" initialValue="member" rules={[{ required: true }]}>
+            <Select
+              options={[
+                { value: 'org_admin', label: 'Org Admin' },
+                { value: 'member', label: 'Member' },
+              ]}
+            />
+          </Form.Item>
+        </Form>
+      </Modal>
+
+      <Modal
+        title="Invite Link Generated"
+        open={!!inviteResult}
+        onCancel={() => setInviteResult(null)}
+        footer={[
+          <Button key="copy" type="primary" icon={<CopyOutlined />} onClick={copyInvite}>
+            Copy Link
+          </Button>,
+          <Button key="close" onClick={() => setInviteResult(null)}>
+            Done
+          </Button>,
+        ]}
+      >
+        <p className="text-gray-500 mb-2">
+          Send this single-use link to <b>{inviteResult?.email}</b>. They will set their
+          password and be logged into RAGFlow automatically.
+        </p>
+        <Typography.Paragraph
+          code
+          copyable={{ text: inviteResult?.invite_url }}
+          style={{ wordBreak: 'break-all', marginTop: 12 }}
+        >
+          {inviteResult?.invite_url}
+        </Typography.Paragraph>
+        <p className="text-xs text-gray-400">
+          The link expires in 48 hours and can only be used once.
+        </p>
       </Modal>
     </div>
   );

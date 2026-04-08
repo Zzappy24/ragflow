@@ -4,7 +4,6 @@ import {
   ModelProviderIcon,
   PasswordIcon,
   ProfileIcon,
-  TeamIcon,
 } from '@/assets/icon/next-icon';
 import { IconFont } from '@/components/icon-font';
 import { LLMFactory } from '@/constants/llm';
@@ -16,7 +15,6 @@ export const UserSettingIconMap = {
   [UserSettingRouteKey.Password]: <PasswordIcon />,
   [UserSettingRouteKey.Model]: <ModelProviderIcon />,
   [UserSettingRouteKey.System]: <MonitorOutlined style={{ fontSize: 24 }} />,
-  [UserSettingRouteKey.Team]: <TeamIcon />,
   [UserSettingRouteKey.Logout]: <LogOutIcon />,
   [UserSettingRouteKey.Api]: <ApiIcon />,
   [UserSettingRouteKey.MCP]: (

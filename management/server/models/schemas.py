@@ -112,6 +112,29 @@ class MemberResponse(BaseModel):
     create_time: datetime | None = None
 
 
+# -- User provisioning -------------------------------------------------------
+
+class UserProvision(BaseModel):
+    """Top-down user creation from the admin panel.
+
+    Org is mandatory (no ghost users floating outside an org). Workspace is
+    optional (org-billing admins may not belong to any workspace yet).
+    """
+    email: str = Field(min_length=3, max_length=255)
+    nickname: str = Field(min_length=1, max_length=255)
+    org_id: str
+    org_role: str = Field(pattern=r"^(org_admin|member)$")
+    ws_id: str | None = None
+    ws_role: str | None = Field(default=None, pattern=r"^(ws_admin|editor|viewer)$")
+
+
+class UserProvisionResponse(BaseModel):
+    user_id: str
+    email: str
+    invite_url: str
+    expires_in: int
+
+
 # -- Groups ------------------------------------------------------------------
 
 class GroupCreate(BaseModel):

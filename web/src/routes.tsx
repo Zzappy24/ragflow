@@ -115,6 +115,11 @@ const routeConfigOptions = [
     layout: false,
   },
   {
+    path: '/set-password',
+    Component: () => import('@/pages/set-password'),
+    layout: false,
+  },
+  {
     path: Routes.ChatShare,
     Component: () => import('@/pages/next-chats/share'),
     layout: false,
@@ -270,10 +275,6 @@ const routeConfigOptions = [
           {
             path: `${Routes.UserSetting}/model`,
             Component: () => import('@/pages/user-setting/setting-model'),
-          },
-          {
-            path: `${Routes.UserSetting}/team`,
-            Component: () => import('@/pages/user-setting/setting-team'),
           },
           {
             path: `${Routes.UserSetting}${Routes.Api}`,

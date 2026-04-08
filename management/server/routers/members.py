@@ -61,7 +61,7 @@ def add_org_member(org_id: str, body: MemberAdd, user_id: str = Depends(get_curr
         raise HTTPException(status_code=409, detail="User is already a member of this organisation")
 
     from common.misc_utils import get_uuid
-    from api.apps.extensions.quotas import check_quota
+    from api.db.services.quota_service import check_quota
     allowed, msg = check_quota(org_id, "user")
     if not allowed:
         raise HTTPException(status_code=409, detail=msg)

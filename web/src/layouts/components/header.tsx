@@ -8,17 +8,12 @@ import {
   DropdownMenuTrigger,
 } from '@/components/ui/dropdown-menu';
 import { useChangeLanguage } from '@/hooks/logic-hooks';
-import {
-  useFetchUserInfo,
-  useListTenant,
-} from '@/hooks/use-user-setting-request';
+import { useFetchUserInfo } from '@/hooks/use-user-setting-request';
 import { cn } from '@/lib/utils';
-import { TenantRole } from '@/pages/user-setting/constants';
 import { Routes } from '@/routes';
 import { LucideChevronDown, LucideCircleHelp } from 'lucide-react';
-import React, { useMemo } from 'react';
+import React from 'react';
 import { Link, useLocation } from 'react-router';
-import { BellButton } from './bell-button';
 import GlobalNavbar from './global-navbar';
 import ThemeButton from './theme-button';
 
@@ -35,12 +30,6 @@ export function Header({
   const {
     data: { language = 'en', avatar, nickname },
   } = useFetchUserInfo();
-
-  const { data: tenantData } = useListTenant();
-  const hasNotification = useMemo(
-    () => tenantData?.some((x) => x.role === TenantRole.Invite),
-    [tenantData],
-  );
 
   const currentLanguage = supportedLanguages.find((x) => x.code === language);
 
@@ -123,8 +112,6 @@ export function Header({
         </Button>
 
         <ThemeButton />
-
-        {hasNotification && <BellButton />}
 
         <Link
           to={Routes.UserSetting}

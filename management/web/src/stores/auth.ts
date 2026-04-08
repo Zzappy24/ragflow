@@ -1,5 +1,6 @@
 import { create } from 'zustand';
 import api from '@/lib/api';
+import { rsaPsw } from '@/utils/crypto';
 
 interface UserInfo {
   id: string;
@@ -23,7 +24,12 @@ export const useAuthStore = create<AuthState>((set, get) => ({
   loading: false,
 
   login: async (email: string, password: string) => {
-    const res = await api.post('/auth/login', { email, password });
+    // RSA-wrap the password before sending — matches RAGFlow's /v1/user/login
+    // convention so both panels handle secrets with the same posture.
+    const res = await api.post('/auth/login', {
+      email,
+      password: rsaPsw(password),
+    });
     localStorage.setItem('admin_token', res.data.access_token);
     localStorage.setItem('admin_refresh_token', res.data.refresh_token);
     await get().fetchMe();
