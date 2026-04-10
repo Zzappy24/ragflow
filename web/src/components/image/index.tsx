@@ -1,6 +1,8 @@
+import { Authorization } from '@/constants/authorization';
 import { api_host } from '@/utils/api';
+import { getAuthorization } from '@/utils/authorization-util';
 import classNames from 'classnames';
-import React from 'react';
+import React, { useEffect, useState } from 'react';
 import { Popover, PopoverContent, PopoverTrigger } from '../ui/popover';
 
 interface IImage extends React.ImgHTMLAttributes<HTMLImageElement> {
@@ -10,10 +12,41 @@ interface IImage extends React.ImgHTMLAttributes<HTMLImageElement> {
 }
 
 const Image = ({ id, t, label, className, ...props }: IImage) => {
+  const [blobUrl, setBlobUrl] = useState<string>();
+
+  useEffect(() => {
+    let revoked = false;
+    const url = `${api_host}/document/image/${id}${t ? `?_t=${t}` : ''}`;
+    const activeWorkspaceId = localStorage.getItem('active_workspace_id');
+    const headers: Record<string, string> = {
+      [Authorization]: getAuthorization(),
+    };
+    if (activeWorkspaceId) {
+      headers['X-Workspace-Id'] = activeWorkspaceId;
+    }
+
+    fetch(url, { headers })
+      .then((res) => {
+        if (res.ok) return res.blob();
+        return null;
+      })
+      .then((blob) => {
+        if (blob && !revoked) {
+          setBlobUrl(URL.createObjectURL(blob));
+        }
+      })
+      .catch(() => {});
+
+    return () => {
+      revoked = true;
+      if (blobUrl) URL.revokeObjectURL(blobUrl);
+    };
+  }, [id, t]);
+
   const imageElement = (
     <img
       {...props}
-      src={`${api_host}/document/image/${id}${t ? `?_t=${t}` : ''}`}
+      src={blobUrl}
       className={classNames('max-w-[45vw] max-h-[40wh] block', className)}
     />
   );

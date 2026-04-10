@@ -27,9 +27,33 @@ def check_kb_team_permission(kb: dict | Knowledgebase, other: str) -> bool:
 
     kb_tenant_id = kb["tenant_id"]
 
+    # Owner check (legacy single-tenant: user_id == tenant_id)
     if kb_tenant_id == other:
         return True
 
+    # Workspace membership check (modern multi-tenant path)
+    # Any member of the workspace that owns this KB can access it,
+    # regardless of the legacy "permission" field.
+    try:
+        from api.db.services.workspace_service import WorkspaceService, WsMemberService
+
+        workspace = WorkspaceService.get_by_tenant_id(kb_tenant_id)
+        if workspace:
+            membership = WsMemberService.get_membership(workspace.id, other)
+            if membership:
+                return True
+            try:
+                from api.db.services.org_service import OrgMemberService
+
+                om = OrgMemberService.get_membership(workspace.org_id, other)
+                if om and om.role == "org_admin":
+                    return True
+            except Exception:
+                pass
+    except Exception:
+        pass
+
+    # Legacy team permission check
     if kb["permission"] != TenantPermission.TEAM:
         return False
 

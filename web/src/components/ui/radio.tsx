@@ -62,6 +62,7 @@ function Radio({
         type="radio"
         value={value}
         checked={isChecked}
+        readOnly
         onClick={handleClick}
         disabled={mergedDisabled}
         className={cn('peer absolute size-[1px] opacity-0', className)}
