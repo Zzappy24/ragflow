@@ -167,19 +167,17 @@ class KnowledgebaseService(CommonService):
             User.avatar.alias('tenant_avatar'),
             cls.model.update_time
         ]
+        # Workspace isolation — see ``get_list`` docstring above for the
+        # rationale behind dropping the legacy ``permission='team'`` OR clause.
         if keywords:
             kbs = cls.model.select(*fields).join(User, on=(cls.model.tenant_id == User.id)).where(
-                ((cls.model.tenant_id.in_(joined_tenant_ids) & (cls.model.permission ==
-                                                                TenantPermission.TEAM.value)) | (
-                    cls.model.tenant_id == user_id))
+                cls.model.tenant_id.in_(joined_tenant_ids)
                 & (cls.model.status == StatusEnum.VALID.value),
                 (fn.LOWER(cls.model.name).contains(keywords.lower()))
             )
         else:
             kbs = cls.model.select(*fields).join(User, on=(cls.model.tenant_id == User.id)).where(
-                ((cls.model.tenant_id.in_(joined_tenant_ids) & (cls.model.permission ==
-                                                                TenantPermission.TEAM.value)) | (
-                    cls.model.tenant_id == user_id))
+                cls.model.tenant_id.in_(joined_tenant_ids)
                 & (cls.model.status == StatusEnum.VALID.value)
             )
         if parser_id:
@@ -212,11 +210,11 @@ class KnowledgebaseService(CommonService):
             cls.model.create_date,
             cls.model.update_date
         ]
-        # find team kb and owned kb
+        # Workspace isolation — strict tenant_id filter, no legacy
+        # permission='team' OR clause (see get_list / get_by_tenant_ids).
         kbs = cls.model.select(*fields).where(
-            (cls.model.tenant_id.in_(tenant_ids) & (cls.model.permission ==TenantPermission.TEAM.value)) | (
-                cls.model.tenant_id == user_id
-            )
+            cls.model.tenant_id.in_(tenant_ids)
+            & (cls.model.status == StatusEnum.VALID.value)
         )
         # sort by create_time asc
         kbs.order_by(cls.model.create_time.asc())
@@ -459,10 +457,14 @@ class KnowledgebaseService(CommonService):
         if parser_id:
             kbs = kbs.where(cls.model.parser_id == parser_id)
 
+        # Workspace isolation: filter strictly on the provided tenant ids.
+        # The legacy ``permission='team'`` OR clause leaked datasets between
+        # every tenant a user was a member of — incompatible with the B2B
+        # model where each workspace must be a hard silo. ``user_id`` is
+        # kept here only for the rare legacy single-tenant call path
+        # (CLI/SDK without X-Workspace-Id) that passes ``user_id == tenant_id``.
         kbs = kbs.where(
-            ((cls.model.tenant_id.in_(joined_tenant_ids) & (cls.model.permission ==
-                                                            TenantPermission.TEAM.value)) | (
-                cls.model.tenant_id == user_id))
+            cls.model.tenant_id.in_(joined_tenant_ids)
             & (cls.model.status == StatusEnum.VALID.value)
         )
 

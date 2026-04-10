@@ -16,7 +16,12 @@ import { useGetSharedChatSearchParams } from '@/pages/next-chats/hooks/use-send-
 import chatService from '@/services/next-chat-service';
 import api from '@/utils/api';
 import { buildMessageListWithUuid } from '@/utils/chat';
-import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
+import {
+  keepPreviousData,
+  useMutation,
+  useQuery,
+  useQueryClient,
+} from '@tanstack/react-query';
 import { useDebounce } from 'ahooks';
 import { has } from 'lodash';
 import { useCallback, useRef } from 'react';
@@ -79,7 +84,7 @@ export const useFetchChatList = () => {
       },
     ],
     initialData: { chats: [], total: 0 },
-    gcTime: 0,
+    placeholderData: keepPreviousData,
     refetchOnWindowFocus: false,
     queryFn: async () => {
       const { data } = await chatService.listChats(

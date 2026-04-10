@@ -1,10 +1,11 @@
 import { useEffect, useState } from 'react';
 import { useSearchParams, useParams } from 'react-router-dom';
-import { Table, Button, Card, Modal, Form, Input, Select, App, Popconfirm, Space, Typography } from 'antd';
-import { PlusOutlined, DeleteOutlined, UserAddOutlined, CopyOutlined } from '@ant-design/icons';
+import { Table, Button, Card, Modal, Form, Input, Select, App, Popconfirm, Space, Typography, Tooltip } from 'antd';
+import { PlusOutlined, DeleteOutlined, UserAddOutlined, CopyOutlined, UserDeleteOutlined } from '@ant-design/icons';
 import type { ColumnsType } from 'antd/es/table';
 import api from '@/lib/api';
 import { useBulkDelete } from '@/components/BulkActions';
+import { useAuthStore } from '@/stores/auth';
 
 interface Member {
   id: string;
@@ -35,6 +36,8 @@ export default function MembersPage({
   const [inviteForm] = Form.useForm();
   const [inviteBusy, setInviteBusy] = useState(false);
   const [inviteResult, setInviteResult] = useState<{ email: string; invite_url: string } | null>(null);
+
+  const isSuperuser = useAuthStore((s) => s.user?.is_superuser ?? false);
 
   const scope = wsId ? 'ws' : 'org';
   const scopeId = wsId || orgId || '';
@@ -84,6 +87,17 @@ export default function MembersPage({
     await api.delete(url);
     message.success('Member removed');
     refresh();
+  };
+
+  const onDeleteUser = async (uid: string) => {
+    try {
+      await api.delete(`/users/${uid}`);
+      message.success('User deleted (tombstone)');
+      refresh();
+    } catch (err: unknown) {
+      const msg = (err as { response?: { data?: { detail?: string } } })?.response?.data?.detail;
+      message.error(msg || 'Failed to delete user');
+    }
   };
 
   const onRoleChange = async (uid: string, role: string) => {
@@ -152,14 +166,35 @@ export default function MembersPage({
       ),
     },
     {
-      title: '',
-      width: 50,
+      title: 'Membership',
+      width: 80,
+      align: 'center' as const,
       render: (_: unknown, record: Member) => (
-        <Popconfirm title="Remove this member?" onConfirm={() => onRemove(record.user_id)}>
-          <Button type="text" danger icon={<DeleteOutlined />} size="small" />
-        </Popconfirm>
+        <Tooltip title="Remove from this scope only">
+          <Popconfirm title="Remove this member from the group?" onConfirm={() => onRemove(record.user_id)}>
+            <Button type="text" icon={<DeleteOutlined />} size="small">Remove</Button>
+          </Popconfirm>
+        </Tooltip>
       ),
     },
+    ...(isSuperuser ? [{
+      title: 'Account',
+      width: 80,
+      align: 'center' as const,
+      render: (_: unknown, record: Member) => (
+        <Tooltip title="GDPR: erase PII and revoke all access permanently">
+          <Popconfirm
+            title="Permanently delete this user account?"
+            description="All PII will be erased. Enterprise data will show 'Utilisateur Supprimé'. This cannot be undone."
+            onConfirm={() => onDeleteUser(record.user_id)}
+            okText="Delete Account"
+            okButtonProps={{ danger: true }}
+          >
+            <Button type="text" danger icon={<UserDeleteOutlined />} size="small">Delete</Button>
+          </Popconfirm>
+        </Tooltip>
+      ),
+    }] as ColumnsType<Member> : []),
   ];
 
   if (!scopeId) {

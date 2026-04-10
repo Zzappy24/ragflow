@@ -5,6 +5,7 @@ import ListFilterBar from '@/components/list-filter-bar';
 import { Button } from '@/components/ui/button';
 import { RAGFlowPagination } from '@/components/ui/ragflow-pagination';
 import { useTranslate } from '@/hooks/common-hooks';
+import { useInitialLoading } from '@/hooks/use-has-loaded';
 import { pick } from 'lodash';
 import { Plus } from 'lucide-react';
 import { useCallback, useEffect, useState } from 'react';
@@ -22,6 +23,7 @@ export default function MemoryList() {
   // const [isEdit, setIsEdit] = useState(false);
   const {
     data: list,
+    isLoading: loading,
     pagination,
     searchString,
     handleInputChange,
@@ -30,6 +32,7 @@ export default function MemoryList() {
     filterValue,
     handleFilterSubmit,
   } = useFetchMemoryList();
+  const initialLoading = useInitialLoading(loading);
 
   const {
     openCreateModal,
@@ -70,7 +73,7 @@ export default function MemoryList() {
 
   return (
     <>
-      {list?.data?.memory_list?.length || searchString ? (
+      {list?.data?.memory_list?.length || searchString || initialLoading ? (
         <article className="size-full flex flex-col" data-testid="memory-list">
           <header className="px-5 pt-8 mb-4">
             <ListFilterBar
@@ -112,6 +115,8 @@ export default function MemoryList() {
                 />
               </footer>
             </>
+          ) : initialLoading ? (
+            <div className="flex-1" />
           ) : (
             <div className="flex-1 flex items-center justify-center">
               <EmptyAppCard

@@ -7,7 +7,12 @@ import {
 import { IConnectRequestBody } from '@/interfaces/request/file-manager';
 import fileManagerService from '@/services/file-manager-service';
 import { downloadFileFromBlob } from '@/utils/file-util';
-import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
+import {
+  keepPreviousData,
+  useMutation,
+  useQuery,
+  useQueryClient,
+} from '@tanstack/react-query';
 import { useDebounce } from 'ahooks';
 import { useCallback } from 'react';
 import { useTranslation } from 'react-i18next';
@@ -181,7 +186,7 @@ export const useFetchFileList = () => {
       },
     ],
     initialData: { files: [], parent_folder: {} as IFolder, total: 0 },
-    gcTime: 0,
+    placeholderData: keepPreviousData,
     queryFn: async () => {
       const { data } = await fileManagerService.listFile({
         parent_id: id,

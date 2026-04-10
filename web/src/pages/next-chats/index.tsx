@@ -6,6 +6,7 @@ import { RenameDialog } from '@/components/rename-dialog';
 import { Button } from '@/components/ui/button';
 import { RAGFlowPagination } from '@/components/ui/ragflow-pagination';
 import { useFetchChatList } from '@/hooks/use-chat-request';
+import { useInitialLoading } from '@/hooks/use-has-loaded';
 import { pick } from 'lodash';
 import { Plus } from 'lucide-react';
 import { useCallback, useEffect } from 'react';
@@ -15,8 +16,15 @@ import { ChatCard } from './chat-card';
 import { useRenameChat } from './hooks/use-rename-chat';
 
 export default function ChatList() {
-  const { data, setPagination, pagination, handleInputChange, searchString } =
-    useFetchChatList();
+  const {
+    data,
+    loading,
+    setPagination,
+    pagination,
+    handleInputChange,
+    searchString,
+  } = useFetchChatList();
+  const initialLoading = useInitialLoading(loading);
   const { t } = useTranslation();
   const {
     initialChatName,
@@ -50,7 +58,7 @@ export default function ChatList() {
 
   return (
     <>
-      {data.chats?.length || searchString ? (
+      {data.chats?.length || searchString || initialLoading ? (
         <article className="size-full flex flex-col" data-testid="chats-list">
           <header className="px-5 pt-8 mb-4">
             <ListFilterBar
@@ -86,6 +94,8 @@ export default function ChatList() {
                 />
               </footer>
             </>
+          ) : initialLoading ? (
+            <div className="flex-1" />
           ) : (
             <div className="flex-1 flex items-center justify-center">
               <EmptyAppCard

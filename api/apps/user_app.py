@@ -836,7 +836,78 @@ async def user_profile():
               type: string
               description: User email.
     """
-    return get_json_result(data=current_user.to_dict())
+    # Enrich with RBAC context so the frontend can role-gate menu items and
+    # render the workspace switcher without making N extra requests.
+    data = current_user.to_dict()
+    try:
+        from quart import request as _req
+        from api.db.services.workspace_service import WorkspaceService, WsMemberService
+        from api.db.services.org_service import OrgMemberService
+
+        active_ws_id = _req.headers.get("X-Workspace-Id") or None
+        data["active_workspace_id"] = active_ws_id
+
+        # ws_role for the active workspace (None if no workspace header)
+        ws_role = None
+        if active_ws_id:
+            m = WsMemberService.get_membership(active_ws_id, current_user.id)
+            if m:
+                ws_role = m.role
+        data["ws_role"] = ws_role
+
+        # org_role: primary org membership (the user's first org)
+        org_role = None
+        org_id = None
+        try:
+            oms = OrgMemberService.query(user_id=current_user.id, status="1")
+            if oms:
+                org_role = oms[0].role
+                org_id = oms[0].org_id
+        except Exception:
+            pass
+        data["org_role"] = org_role
+        data["org_id"] = org_id
+
+        # workspaces the user can access (member of) — used by the switcher.
+        workspaces = []
+        try:
+            memberships = WsMemberService.list_workspaces_for_user(current_user.id)
+            for m in memberships:
+                ok_ws, ws = WorkspaceService.get_by_id(m.workspace_id)
+                if ok_ws and ws and ws.status == "1":
+                    workspaces.append({
+                        "id": ws.id,
+                        "name": ws.name,
+                        "org_id": ws.org_id,
+                        "role": m.role,
+                        "tenant_id": ws.tenant_id,
+                    })
+        except Exception:
+            pass
+
+        # Org admins implicitly have access to every workspace in their org,
+        # even without an explicit WsMember row — surface those too so the
+        # switcher dropdown matches what the bridge / RBAC middleware will
+        # actually let them open.
+        if org_role == "org_admin" and org_id:
+            try:
+                seen = {w["id"] for w in workspaces}
+                for ws in WorkspaceService.list_by_org(org_id):
+                    if ws.id in seen:
+                        continue
+                    workspaces.append({
+                        "id": ws.id,
+                        "name": ws.name,
+                        "org_id": ws.org_id,
+                        "role": "ws_admin",  # implicit
+                        "tenant_id": ws.tenant_id,
+                    })
+            except Exception:
+                pass
+        data["workspaces"] = workspaces
+    except Exception:
+        logging.exception("user_profile RBAC enrichment failed")
+    return get_json_result(data=data)
 
 
 def rollback_user_registration(user_id):

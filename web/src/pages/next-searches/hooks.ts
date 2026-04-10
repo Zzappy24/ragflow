@@ -5,7 +5,12 @@ import { useSetModalState } from '@/hooks/common-hooks';
 import { useHandleSearchChange } from '@/hooks/logic-hooks';
 import { useNavigatePage } from '@/hooks/logic-hooks/navigate-hooks';
 import searchService from '@/services/search-service';
-import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
+import {
+  keepPreviousData,
+  useMutation,
+  useQuery,
+  useQueryClient,
+} from '@tanstack/react-query';
 import { useDebounce } from 'ahooks';
 import { useCallback, useState } from 'react';
 import { useTranslation } from 'react-i18next';
@@ -102,6 +107,7 @@ export const useFetchSearchList = () => {
         ...pagination,
       },
     ],
+    placeholderData: keepPreviousData,
     queryFn: async () => {
       const { data: response } = await searchService.getSearchList(
         {

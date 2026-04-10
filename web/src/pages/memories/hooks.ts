@@ -12,7 +12,12 @@ import {
   groupListByArray,
   groupListByType,
 } from '@/utils/list-filter-util';
-import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
+import {
+  keepPreviousData,
+  useMutation,
+  useQuery,
+  useQueryClient,
+} from '@tanstack/react-query';
 import { useDebounce } from 'ahooks';
 import { omit } from 'lodash';
 import { useCallback, useMemo, useState } from 'react';
@@ -85,6 +90,7 @@ export const useFetchMemoryList = () => {
       },
       filterValue,
     ],
+    placeholderData: keepPreviousData,
     queryFn: async () => {
       const { data: response } = await memoryService.getMemoryList(
         {

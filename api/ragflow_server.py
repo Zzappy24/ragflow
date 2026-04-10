@@ -107,55 +107,24 @@ if __name__ == '__main__':
 
     @app.before_request
     async def _rbac_resolve_tenant():
+        """
+        Resolve the active tenant for this request.
+
+        ``current_user`` is a Flask-Login lazy proxy that may not be
+        authenticated yet at ``before_request`` time (the ``@login_required``
+        decorator on each route does the actual auth check later). So we
+        stash the raw X-Workspace-Id header now, and defer the full
+        resolution to ``active_tenant_id()`` when it is first called inside
+        the route handler — at which point ``current_user`` is guaranteed to
+        be available.
+        """
         from quart import g, request
-        try:
-            if not current_user or not hasattr(current_user, "id"):
-                g.rbac_user_id = None
-                g.active_tenant_id = None
-                return
-
-            g.rbac_user_id = current_user.id
-
-            # Workspace-aware tenant resolution
-            ws_id = request.headers.get("X-Workspace-Id")
-            if ws_id:
-                from api.db.services.workspace_service import WorkspaceService, WsMemberService
-                # CommonService.get_by_id returns (success, obj) — unpack it.
-                ok, ws = WorkspaceService.get_by_id(ws_id)
-                if not ok or not ws or ws.status != "1":
-                    g.active_tenant_id = None
-                else:
-                    membership = WsMemberService.get_membership(ws_id, current_user.id)
-                    if membership:
-                        g.active_tenant_id = ws.tenant_id
-                    elif getattr(current_user, "is_superuser", False):
-                        # Superusers can access any workspace.
-                        g.active_tenant_id = ws.tenant_id
-                    else:
-                        # Org admins of the workspace's parent org can also
-                        # access the workspace without an explicit WsMember
-                        # row. This mirrors the bridge login check and keeps
-                        # org_admins out of the client-visible member lists
-                        # (no "ghost" WsMember pollution), while still letting
-                        # them use the workspace they manage.
-                        is_org_admin = False
-                        try:
-                            from api.db.services.org_service import OrgMemberService
-                            om = OrgMemberService.get_membership(ws.org_id, current_user.id)
-                            is_org_admin = bool(om and om.role == "org_admin")
-                        except Exception:
-                            is_org_admin = False
-                        if is_org_admin:
-                            g.active_tenant_id = ws.tenant_id
-                        else:
-                            # Not a member — deny, don't fallback
-                            g.active_tenant_id = None
-            else:
-                # No workspace header — legacy personal tenant
-                g.active_tenant_id = current_user.id
-        except Exception:
-            g.rbac_user_id = None
-            g.active_tenant_id = None
+        # Stash the raw header — resolution happens lazily in
+        # ``tenant_context.active_tenant_id()`` via ``_resolve_tenant()``.
+        g._ws_header = request.headers.get("X-Workspace-Id") or None
+        g._tenant_resolved = False
+        g.active_tenant_id = None
+        g.rbac_user_id = None
     # init runtime config
     import argparse
 

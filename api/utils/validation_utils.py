@@ -396,6 +396,11 @@ class CreateDatasetReq(Base):
     avatar: Annotated[str | None, Field(default=None, max_length=65535)]
     description: Annotated[str | None, Field(default=None, max_length=65535)]
     embedding_model: Annotated[str | None, Field(default=None, max_length=255, serialization_alias="embd_id")]
+    # ``permission`` is a vestige of the legacy "Me/Team" sharing model. In
+    # the B2B workspace model the active workspace tenant is the only
+    # sharing scope, so the field is no longer read by the listing path.
+    # Default to "me" so any leftover client sending the field still
+    # produces a private-by-default row that won't leak via legacy code.
     permission: Annotated[Literal["me", "team"], Field(default="me", min_length=1, max_length=16)]
     parse_type: Annotated[int | None, Field(default=None, ge=0, le=64)]
     pipeline_id: Annotated[str | None, Field(default=None, min_length=32, max_length=32, serialization_alias="pipeline_id")]

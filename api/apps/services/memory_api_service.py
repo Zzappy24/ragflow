@@ -17,6 +17,7 @@ from api.apps import current_user
 from api.db import TenantPermission
 from api.db.services.memory_service import MemoryService
 from api.db.services.user_service import UserTenantService
+from api.utils.tenant_context import active_tenant_id
 from api.db.services.canvas_service import UserCanvasService
 from api.db.services.task_service import TaskService
 from api.db.joint_services.memory_message_service import get_memory_size_cache, judge_system_prompt_is_default, queue_save_to_memory_task, query_message
@@ -56,7 +57,7 @@ async def create_memory(memory_info: dict):
         raise ArgumentException(f"Memory type '{invalid_type}' is not supported.")
     memory_type = list(memory_type)
     success, res = MemoryService.create_memory(
-        tenant_id=current_user.id,
+        tenant_id=active_tenant_id(),
         name=memory_name,
         memory_type=memory_type,
         embd_id=memory_info["embd_id"],
@@ -189,15 +190,8 @@ async def list_memory(filter_params: dict, keywords: str, page: int=1, page_size
     :param page_size: int
     """
     filter_dict: dict = {"storage_type": filter_params.get("storage_type")}
-    tenant_ids = filter_params.get("tenant_id")
-    if not filter_params.get("tenant_id"):
-        # restrict to current user's tenants
-        user_tenants = UserTenantService.get_user_tenant_relation_by_user_id(current_user.id)
-        filter_dict["tenant_id"] = [tenant["tenant_id"] for tenant in user_tenants]
-    else:
-        if len(tenant_ids) == 1 and ',' in tenant_ids[0]:
-            tenant_ids = tenant_ids[0].split(',')
-        filter_dict["tenant_id"] = tenant_ids
+    # Workspace isolation: scope to active workspace tenant only.
+    filter_dict["tenant_id"] = [active_tenant_id()]
     memory_types = filter_params.get("memory_type")
     if memory_types and len(memory_types) == 1 and ',' in memory_types[0]:
         memory_types = memory_types[0].split(',')

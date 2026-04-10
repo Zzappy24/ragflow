@@ -21,6 +21,7 @@ import kbService, {
   updateKb,
 } from '@/services/knowledge-service';
 import {
+  keepPreviousData,
   useIsMutating,
   useMutation,
   useMutationState,
@@ -156,11 +157,8 @@ export const useFetchNextKnowledgeListByPage = () => {
         filterValue,
       },
     ],
-    initialData: {
-      kbs: [],
-      total_datasets: 0,
-    },
-    gcTime: 0,
+    initialData: { kbs: [], total_datasets: 0 },
+    placeholderData: keepPreviousData,
     queryFn: async () => {
       const { data } = await listDataset({
         page_size: pagination.pageSize,
@@ -185,6 +183,7 @@ export const useFetchNextKnowledgeListByPage = () => {
 
   return {
     ...data,
+    loading,
     searchString,
     handleInputChange: onInputChange,
     pagination: { ...pagination, total: data?.total_datasets },

@@ -5,6 +5,7 @@ import ListFilterBar from '@/components/list-filter-bar';
 import { RenameDialog } from '@/components/rename-dialog';
 import { Button } from '@/components/ui/button';
 import { RAGFlowPagination } from '@/components/ui/ragflow-pagination';
+import { useInitialLoading } from '@/hooks/use-has-loaded';
 import { useFetchNextKnowledgeListByPage } from '@/hooks/use-knowledge-request';
 import { useQueryClient } from '@tanstack/react-query';
 import { pick } from 'lodash';
@@ -31,6 +32,7 @@ export default function Datasets() {
   const {
     kbs,
     total_datasets,
+    loading,
     pagination,
     setPagination,
     handleInputChange,
@@ -38,6 +40,7 @@ export default function Datasets() {
     filterValue,
     handleFilterSubmit,
   } = useFetchNextKnowledgeListByPage();
+  const initialLoading = useInitialLoading(loading);
 
   const owners = useSelectOwners();
 
@@ -70,7 +73,7 @@ export default function Datasets() {
 
   return (
     <>
-      {kbs?.length || searchString ? (
+      {kbs?.length || searchString || initialLoading ? (
         <article
           className="size-full flex flex-col"
           data-testid="datasets-list"
@@ -112,6 +115,8 @@ export default function Datasets() {
                 />
               </footer>
             </>
+          ) : initialLoading ? (
+            <div className="flex-1" />
           ) : (
             <div className="flex-1 flex items-center justify-center">
               <EmptyAppCard

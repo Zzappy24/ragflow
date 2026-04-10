@@ -22,6 +22,7 @@ from fastapi import APIRouter, Depends, HTTPException, status
 from management.server.auth.dependencies import (
     get_current_user_id,
     require_org_admin,
+    require_superuser,
 )
 from management.server.auth.jwt import create_invite_token
 from management.server.config import settings
@@ -77,3 +78,58 @@ def provision_user_route(
         invite_url=invite_url,
         expires_in=settings.INVITE_TOKEN_EXPIRE_SECONDS,
     )
+
+
+@router.delete("/users/{uid}", status_code=status.HTTP_204_NO_CONTENT)
+def delete_user(uid: str, user=Depends(require_superuser)):
+    """
+    GDPR hard-delete via the Tombstone pattern (superuser only).
+
+    Instead of deleting the ``User`` row (which would break INNER JOINs on
+    ``tenant_id`` / ``created_by`` throughout RAGFlow and make enterprise
+    datasets, chats, and agents vanish from the UI), we:
+
+    1. **Revoke all access** — physically delete WsMember, WsGroupMember,
+       OrgMember, the personal Tenant, and UserTenant rows.
+    2. **Anonymise PII** — overwrite email, nickname, avatar, password on the
+       User row so no personal data remains.
+    3. **Deactivate** — set ``is_active='0'`` so the login flow rejects the
+       account, and ``status='0'`` for good measure.
+
+    The User row stays as a tombstone. INNER JOINs resolve to
+    "Utilisateur Supprimé" in the UI, enterprise data is preserved, and the
+    RGPD right-to-erasure is satisfied.
+    """
+    from api.db.services.user_service import UserService
+
+    ok, target = UserService.get_by_id(uid)
+    if not ok or not target:
+        raise HTTPException(status_code=404, detail="User not found")
+
+    if target.is_superuser:
+        raise HTTPException(status_code=400, detail="Cannot delete a superuser account")
+
+    if uid == user.id:
+        raise HTTPException(status_code=400, detail="Cannot delete yourself")
+
+    from api.db.db_models import DB, User, Tenant, UserTenant, WsGroupMember
+    from api.db.services.workspace_service import WsMember
+    from api.db.services.org_service import OrgMember
+
+    with DB.connection_context():
+        # 1. Revoke all access
+        WsGroupMember.delete().where(WsGroupMember.user_id == uid).execute()
+        WsMember.delete().where(WsMember.user_id == uid).execute()
+        OrgMember.delete().where(OrgMember.user_id == uid).execute()
+        UserTenant.delete().where(UserTenant.user_id == uid).execute()
+        Tenant.delete().where(Tenant.id == uid).execute()
+
+        # 2. Anonymise PII + 3. Deactivate
+        User.update({
+            User.email: f"deleted_{uid}@anonymized.local",
+            User.nickname: "Utilisateur Supprimé",
+            User.password: "",
+            User.avatar: None,
+            User.is_active: "0",
+            User.status: "0",
+        }).where(User.id == uid).execute()

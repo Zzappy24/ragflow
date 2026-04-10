@@ -302,13 +302,16 @@ def list_datasets(tenant_id: str, args: dict):
         kbs = KnowledgebaseService.get_kb_by_name(name, tenant_id)
         if not kbs:
             return False, f"User '{tenant_id}' lacks permission for dataset '{name}'"
-    if ext_fields.get("owner_ids", []):
-        tenant_ids = ext_fields["owner_ids"]
-    else:
-        tenants = TenantService.get_joined_tenants_by_user_id(tenant_id)
-        tenant_ids = [m["tenant_id"] for m in tenants]
+    # Workspace isolation: ``tenant_id`` here is already the *active workspace
+    # tenant* (resolved from X-Workspace-Id by add_tenant_id_to_kwargs). We
+    # filter strictly on it — datasets never leak across workspaces. The
+    # legacy ``joined_tenant_ids`` + ``permission='team'`` mechanism is
+    # incompatible with the B2B model: it was designed for solo users with a
+    # single personal tenant, and silently shared datasets between every
+    # tenant a user happened to be a member of. See module docstring of
+    # provisioning.py for the personal-tenant-shell rationale.
     kbs, total = KnowledgebaseService.get_list(
-        tenant_ids,
+        [tenant_id],
         tenant_id,
         page,
         page_size,

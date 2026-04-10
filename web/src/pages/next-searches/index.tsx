@@ -6,6 +6,7 @@ import { RenameDialog } from '@/components/rename-dialog';
 import { Button } from '@/components/ui/button';
 import { RAGFlowPagination } from '@/components/ui/ragflow-pagination';
 import { useTranslate } from '@/hooks/common-hooks';
+import { useInitialLoading } from '@/hooks/use-has-loaded';
 import { pick } from 'lodash';
 import { Plus } from 'lucide-react';
 import { useCallback, useEffect } from 'react';
@@ -19,12 +20,14 @@ export default function SearchList() {
   // const [isEdit, setIsEdit] = useState(false);
   const {
     data: list,
+    isLoading: loading,
     pagination,
     searchString,
     handleInputChange,
     setPagination,
     refetch: refetchList,
   } = useFetchSearchList();
+  const initialLoading = useInitialLoading(loading);
 
   const {
     openCreateModal,
@@ -66,7 +69,7 @@ export default function SearchList() {
 
   return (
     <>
-      {list?.data?.search_apps?.length || searchString ? (
+      {list?.data?.search_apps?.length || searchString || initialLoading ? (
         <article className="size-full flex flex-col" data-testid="search-list">
           <header className="px-5 pt-8 mb-4">
             <ListFilterBar
@@ -110,6 +113,8 @@ export default function SearchList() {
                 />
               </footer>
             </>
+          ) : initialLoading ? (
+            <div className="flex-1" />
           ) : (
             <div className="flex-1 flex items-center justify-center">
               <EmptyAppCard

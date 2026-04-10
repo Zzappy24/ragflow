@@ -31,7 +31,12 @@ import agentService, {
 } from '@/services/agent-service';
 import api from '@/utils/api';
 import { buildMessageListWithUuid } from '@/utils/chat';
-import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
+import {
+  keepPreviousData,
+  useMutation,
+  useQuery,
+  useQueryClient,
+} from '@tanstack/react-query';
 import { useDebounce } from 'ahooks';
 import { get, isEmpty, set } from 'lodash';
 import { useCallback, useState } from 'react';
@@ -123,13 +128,7 @@ export const useFetchAgentListByPage = () => {
         filterValue,
       },
     ],
-    placeholderData: (previousData) => {
-      if (previousData === undefined) {
-        return { canvas: [], total: 0 };
-      }
-      return previousData;
-    },
-    gcTime: 0,
+    placeholderData: keepPreviousData,
     queryFn: async () => {
       const { data } = await agentService.listCanvas(
         {
@@ -729,7 +728,7 @@ export const useFetchAgentList = ({
   }>({
     queryKey: [AgentApiAction.FetchAgentList],
     initialData: { canvas: [], total: 0 },
-    gcTime: 0,
+    placeholderData: keepPreviousData,
     queryFn: async () => {
       const { data } = await fetchPipeLineList({ canvas_category });
 

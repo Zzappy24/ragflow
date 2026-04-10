@@ -209,14 +209,13 @@ def _extract_user_id(kwargs):
 
 
 def _extract_tenant_id(kwargs):
-    """Extract tenant_id from kwargs or from the middleware-resolved active tenant."""
+    """Extract tenant_id from kwargs or from the lazy-resolved active tenant."""
     tenant_id = kwargs.get("tenant_id")
     if tenant_id:
         return tenant_id
-    # Read from before_request middleware (workspace-aware, membership-validated)
     try:
-        from quart import g
-        return getattr(g, "active_tenant_id", None)
+        from api.utils.tenant_context import maybe_active_tenant_id
+        return maybe_active_tenant_id()
     except Exception:
         return None
 

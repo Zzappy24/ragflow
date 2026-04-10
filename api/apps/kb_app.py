@@ -249,9 +249,13 @@ async def list_kbs():
     req = await get_request_json()
     owner_ids = req.get("owner_ids", [])
     try:
+        # Workspace isolation: scope listing to the active workspace tenant
+        # instead of every tenant the user has ever joined.  ``owner_ids``
+        # may still be supplied by callers that need a custom scope (e.g.
+        # canvas / agent retrieval nodes), but the default path now uses
+        # the single active workspace tenant.
         if not owner_ids:
-            tenants = TenantService.get_joined_tenants_by_user_id(current_user.id)
-            tenants = [m["tenant_id"] for m in tenants]
+            tenants = [active_tenant_id()]
             kbs, total = KnowledgebaseService.get_by_tenant_ids(
                 tenants, current_user.id, page_number,
                 items_per_page, orderby, desc, keywords, parser_id)

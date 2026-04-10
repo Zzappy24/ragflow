@@ -19,6 +19,20 @@ export interface IUserInfo {
   timezone: string;
   update_date: string;
   update_time: number;
+  // RBAC enrichment from /v1/user/info
+  active_workspace_id?: string | null;
+  ws_role?: 'ws_admin' | 'editor' | 'viewer' | null;
+  org_role?: 'org_admin' | 'member' | null;
+  org_id?: string | null;
+  workspaces?: IUserWorkspace[];
+}
+
+export interface IUserWorkspace {
+  id: string;
+  name: string;
+  org_id: string;
+  role: string;
+  tenant_id: string;
 }
 
 export type TaskExecutorElapsed = Record<string, number[]>;

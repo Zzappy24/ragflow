@@ -19,7 +19,12 @@ import kbService, { listDocument } from '@/services/knowledge-service';
 import api, { api_host, ExternalApi } from '@/utils/api';
 import { getSearchValue } from '@/utils/common-util';
 import { buildChunkHighlights } from '@/utils/document-util';
-import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
+import {
+  keepPreviousData,
+  useMutation,
+  useQuery,
+  useQueryClient,
+} from '@tanstack/react-query';
 import { useDebounce } from 'ahooks';
 import { get } from 'lodash';
 import { useCallback, useMemo, useState } from 'react';
@@ -115,6 +120,7 @@ export const useFetchDocumentList = () => {
       filterValue,
     ],
     initialData: { docs: [], total: 0 },
+    placeholderData: keepPreviousData,
     refetchInterval: isLoop ? 5000 : false,
     enabled: !!knowledgeId || !!id,
     queryFn: async () => {

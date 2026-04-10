@@ -16,6 +16,7 @@ import React from 'react';
 import { Link, useLocation } from 'react-router';
 import GlobalNavbar from './global-navbar';
 import ThemeButton from './theme-button';
+import { WorkspaceSwitcher } from './workspace-switcher';
 
 import { supportedLanguages } from '@/locales/config';
 
@@ -112,6 +113,8 @@ export function Header({
         </Button>
 
         <ThemeButton />
+
+        <WorkspaceSwitcher />
 
         <Link
           to={Routes.UserSetting}

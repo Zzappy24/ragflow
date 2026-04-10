@@ -13,6 +13,7 @@ import {
 import { RAGFlowPagination } from '@/components/ui/ragflow-pagination';
 import { useNavigatePage } from '@/hooks/logic-hooks/navigate-hooks';
 import { useFetchAgentListByPage } from '@/hooks/use-agent-request';
+import { useInitialLoading } from '@/hooks/use-has-loaded';
 import { Routes } from '@/routes';
 import { t } from 'i18next';
 import { pick } from 'lodash';
@@ -30,6 +31,7 @@ import { useRenameAgent } from './use-rename-agent';
 export default function Agents() {
   const {
     data,
+    loading,
     pagination,
     setPagination,
     searchString,
@@ -37,6 +39,7 @@ export default function Agents() {
     filterValue,
     handleFilterSubmit,
   } = useFetchAgentListByPage();
+  const initialLoading = useInitialLoading(loading);
 
   const { navigateToAgentTemplates } = useNavigatePage();
 
@@ -53,7 +56,7 @@ export default function Agents() {
     creatingVisible,
     hideCreatingModal,
     showCreatingModal,
-    loading,
+    loading: creatingLoading,
     handleCreateAgentOrPipeline,
   } = useCreateAgentOrPipeline();
 
@@ -85,7 +88,7 @@ export default function Agents() {
 
   return (
     <>
-      {data?.length || searchString ? (
+      {data?.length || searchString || initialLoading ? (
         <article className="size-full flex flex-col" data-testid="agents-list">
           <header className="px-5 pt-8 mb-4">
             <ListFilterBar
@@ -154,6 +157,8 @@ export default function Agents() {
                 />
               </footer>
             </>
+          ) : initialLoading ? (
+            <div className="flex-1" />
           ) : (
             <div className="flex-1 flex items-center justify-center">
               <EmptyAppCard
@@ -225,7 +230,7 @@ export default function Agents() {
       )}
       {creatingVisible && (
         <CreateAgentDialog
-          loading={loading}
+          loading={creatingLoading}
           visible={creatingVisible}
           hideModal={hideCreatingModal}
           shouldChooseAgent

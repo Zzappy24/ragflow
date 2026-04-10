@@ -14,10 +14,19 @@ load_env_file() {
         echo "Loading environment variables from: $env_file"
         # Source the .env file
         set -a
-        source "$env_file" 
+        source "$env_file"
         set +a
     else
         echo "Warning: .env file not found at: $env_file"
+    fi
+
+    # Override with .env.local (gitignored secrets)
+    local env_local="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)/../.env.local"
+    if [ -f "$env_local" ]; then
+        echo "Loading local overrides from: $env_local"
+        set -a
+        source "$env_local"
+        set +a
     fi
 }
 

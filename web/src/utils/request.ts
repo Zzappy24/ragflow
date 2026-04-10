@@ -90,6 +90,9 @@ request.interceptors.request.use((url: string, options: any) => {
   // Add tenant parameters to data
   const dataWithTenantParams = addTenantParams(data, url);
 
+  // RBAC: inject active workspace ID for multi-tenant resolution
+  const activeWorkspaceId = localStorage.getItem('active_workspace_id');
+
   return {
     url,
     options: {
@@ -100,6 +103,9 @@ request.interceptors.request.use((url: string, options: any) => {
         ...(options.skipToken
           ? undefined
           : { [Authorization]: getAuthorization() }),
+        ...(activeWorkspaceId
+          ? { 'X-Workspace-Id': activeWorkspaceId }
+          : undefined),
         ...options.headers,
       },
       interceptors: true,

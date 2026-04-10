@@ -21,48 +21,59 @@ import { useEffect } from 'react';
 import { useTranslation } from 'react-i18next';
 import { useHandleMenuClick } from './hooks';
 
-const menuItems = (t: TFunction) => [
-  {
-    icon: <LucideServer className="size-[1em]" />,
-    label: t('setting.dataSources'),
-    key: Routes.DataSource,
-  },
-  {
-    icon: <LucideBox className="size-[1em]" />,
-    label: t('setting.model'),
-    key: Routes.Model,
-    'data-testid': 'settings-nav-model-providers',
-  },
-  {
-    icon: <IconFontFill name="mcp" className="size-[1em]" />,
-    label: 'MCP',
-    key: Routes.Mcp,
-  },
-  {
-    icon: <LucideUser className="size-[1em]" />,
-    label: t('setting.profile'),
-    key: Routes.Profile,
-  },
-  {
-    icon: <LucideUnplug className="size-[1em]" />,
-    label: t('setting.api'),
-    key: Routes.Api,
-  },
-  // {
-  //   icon: MessageSquareQuote,
-  //   label: 'Prompt Templates',
-  //   key: Routes.Profile,
-  // },
-  // { icon: TextSearch, label: 'Retrieval Templates', key: Routes.Profile },
-  // { icon: Cog, label: t('setting.system'), key: Routes.System },
-  // { icon: Banknote, label: 'Plan', key: Routes.Plan },
-];
+const menuItems = (t: TFunction, isAdmin: boolean) => {
+  const items: Array<{
+    icon: JSX.Element;
+    label: string;
+    key: string;
+    'data-testid'?: string;
+  }> = [
+    {
+      icon: <LucideUser className="size-[1em]" />,
+      label: t('setting.profile'),
+      key: Routes.Profile,
+    },
+  ];
+  // Workspace-admin / org-admin / superuser controls — hidden for plain
+  // members to keep the B2B UX clean. Backend RBAC remains the source of
+  // truth; this is purely a navigation guard.
+  if (isAdmin) {
+    items.push(
+      {
+        icon: <LucideServer className="size-[1em]" />,
+        label: t('setting.dataSources'),
+        key: Routes.DataSource,
+      },
+      {
+        icon: <LucideBox className="size-[1em]" />,
+        label: t('setting.model'),
+        key: Routes.Model,
+        'data-testid': 'settings-nav-model-providers',
+      },
+      {
+        icon: <IconFontFill name="mcp" className="size-[1em]" />,
+        label: 'MCP',
+        key: Routes.Mcp,
+      },
+      {
+        icon: <LucideUnplug className="size-[1em]" />,
+        label: t('setting.api'),
+        key: Routes.Api,
+      },
+    );
+  }
+  return items;
+};
 
 export function SideBar() {
   const { data: userInfo } = useFetchUserInfo();
   const { handleMenuClick, active: activeItemKey } = useHandleMenuClick();
   const { version, fetchSystemVersion } = useFetchSystemVersion();
   const { t } = useTranslation();
+  const isAdmin =
+    !!userInfo?.is_superuser ||
+    userInfo?.org_role === 'org_admin' ||
+    userInfo?.ws_role === 'ws_admin';
   useEffect(() => {
     if (location.host !== Domain) {
       fetchSystemVersion();
@@ -86,7 +97,7 @@ export function SideBar() {
 
       <nav className="flex-1 overflow-auto mt-4 py-1">
         <ul className="px-6 flex flex-col gap-5">
-          {menuItems(t).map((item) => {
+          {menuItems(t, isAdmin).map((item) => {
             const { key, icon, label, ...rest } = item;
 
             return (
