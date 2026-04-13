@@ -13,12 +13,28 @@
 #  See the License for the specific language governing permissions and
 #  limitations under the License.
 #
+import logging
 import os
 import enum
 from common import settings
 from common.constants import LLMType
 from api.db.services.llm_service import LLMService
 from api.db.services.tenant_llm_service import TenantLLMService, TenantService
+
+
+# CUSTOM B2B SaaS – graceful fallback from workspace tenant to creator's personal
+# tenant. See CLAUDE.md "Custom B2B SaaS Multi-Tenant Layer" for merge warnings.
+def _fallback_personal_tenant_id(workspace_tenant_id: str) -> str | None:
+    """If workspace_tenant_id belongs to a Workspace, return the personal
+    tenant_id (== user_id) of the workspace creator. Returns None otherwise."""
+    try:
+        from api.db.services.workspace_service import WorkspaceService
+        ws = WorkspaceService.get_by_tenant_id(workspace_tenant_id)
+        if ws and ws.created_by:
+            return ws.created_by
+    except Exception:
+        pass
+    return None
 
 
 def get_model_config_by_id(tenant_model_id: int) -> dict:
@@ -59,6 +75,15 @@ def get_model_config_by_type_and_name(tenant_id: str, model_type: str, model_nam
             }
         else:
             model_config = TenantLLMService.get_api_key(tenant_id, pure_model_name, model_type_val)
+            if not model_config:
+                # CUSTOM: fallback to workspace creator's personal tenant
+                fb_tid = _fallback_personal_tenant_id(tenant_id)
+                if fb_tid:
+                    model_config = TenantLLMService.get_api_key(fb_tid, model_name, model_type_val)
+                    if not model_config:
+                        model_config = TenantLLMService.get_api_key(fb_tid, pure_model_name, model_type_val)
+                    if model_config:
+                        logging.info("Model %s resolved via fallback to personal tenant %s", model_name, fb_tid)
             if not model_config:
                 raise LookupError(f"Tenant Model with name {model_name} and type {model_type_val} not found")
             config_dict = model_config.to_dict()
@@ -101,5 +126,18 @@ def get_tenant_default_model_by_type(tenant_id: str, model_type: str|enum.Enum):
         case _:
             raise Exception(f"Unknown model type {model_type}")
     if not model_name:
+        # CUSTOM: fallback to workspace creator's personal tenant for default model
+        fb_tid = _fallback_personal_tenant_id(tenant_id)
+        if fb_tid:
+            logging.info("No default %s on workspace tenant %s, falling back to personal tenant %s", model_type_val, tenant_id, fb_tid)
+            return get_tenant_default_model_by_type(fb_tid, model_type)
         raise Exception(f"No default {model_type} model is set.")
-    return get_model_config_by_type_and_name(tenant_id, model_type, model_name)
+    try:
+        return get_model_config_by_type_and_name(tenant_id, model_type, model_name)
+    except LookupError:
+        # CUSTOM: model name set on workspace tenant but config missing → fallback
+        fb_tid = _fallback_personal_tenant_id(tenant_id)
+        if fb_tid:
+            logging.info("Model %s not found on workspace tenant %s, falling back to personal tenant %s", model_name, tenant_id, fb_tid)
+            return get_model_config_by_type_and_name(fb_tid, model_type, model_name)
+        raise

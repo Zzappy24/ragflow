@@ -1,12 +1,13 @@
 import { useEffect, useState } from 'react';
 import { useParams, Link, useNavigate } from 'react-router-dom';
 import { Card, Tabs, Spin, Statistic, Row, Col, Tag, Breadcrumb, Typography, Skeleton, Button, Popconfirm, App, Space } from 'antd';
-import { TeamOutlined, DatabaseOutlined, KeyOutlined, AuditOutlined, GroupOutlined, HomeOutlined, DeleteOutlined, ExportOutlined } from '@ant-design/icons';
+import { TeamOutlined, DatabaseOutlined, KeyOutlined, AuditOutlined, GroupOutlined, HomeOutlined, DeleteOutlined, ExportOutlined, RobotOutlined } from '@ant-design/icons';
 import api from '@/lib/api';
 import MembersPage from '@/pages/members';
 import GroupsPage from '@/pages/groups';
 import ApiKeysPage from '@/pages/api-keys';
 import AuditPage from '@/pages/audit';
+import WorkspaceModelsPage from '@/pages/workspace-models';
 
 const { Title, Text } = Typography;
 
@@ -178,6 +179,11 @@ export default function WorkspaceDetailPage() {
             key: 'api-keys',
             label: <span><KeyOutlined /> API Keys</span>,
             children: <ApiKeysPage wsId={wsId} />,
+          },
+          {
+            key: 'models',
+            label: <span><RobotOutlined /> Models</span>,
+            children: <WorkspaceModelsPage wsId={wsId} />,
           },
           {
             key: 'audit',

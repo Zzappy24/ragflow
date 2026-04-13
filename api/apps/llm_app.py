@@ -21,6 +21,8 @@ from quart import request
 
 from api.apps import login_required
 from api.utils.tenant_context import active_tenant_id
+# CUSTOM B2B SaaS – see CLAUDE.md "Custom B2B SaaS Multi-Tenant Layer"
+from api.apps.extensions.rbac import require_permission, Permission
 from api.db.services.tenant_llm_service import LLMFactoriesService, TenantLLMService
 from api.db.services.llm_service import LLMService
 from api.utils.api_utils import get_allowed_llm_factories, get_data_error_result, get_json_result, get_request_json, server_error_response, validate_request
@@ -59,6 +61,7 @@ def factories():
 
 @manager.route("/set_api_key", methods=["POST"])  # noqa: F821
 @login_required
+@require_permission(Permission.LLM_CONFIGURE)  # CUSTOM B2B SaaS
 @validate_request("llm_factory", "api_key")
 async def set_api_key():
     req = await get_request_json()
@@ -159,6 +162,7 @@ async def set_api_key():
 
 @manager.route("/add_llm", methods=["POST"])  # noqa: F821
 @login_required
+@require_permission(Permission.LLM_CONFIGURE)  # CUSTOM B2B SaaS
 @validate_request("llm_factory")
 async def add_llm():
     req = await get_request_json()
@@ -359,6 +363,7 @@ async def add_llm():
 
 @manager.route("/delete_llm", methods=["POST"])  # noqa: F821
 @login_required
+@require_permission(Permission.LLM_CONFIGURE)  # CUSTOM B2B SaaS
 @validate_request("llm_factory", "llm_name")
 async def delete_llm():
     req = await get_request_json()
@@ -368,6 +373,7 @@ async def delete_llm():
 
 @manager.route("/enable_llm", methods=["POST"])  # noqa: F821
 @login_required
+@require_permission(Permission.LLM_CONFIGURE)  # CUSTOM B2B SaaS
 @validate_request("llm_factory", "llm_name")
 async def enable_llm():
     req = await get_request_json()
@@ -379,6 +385,7 @@ async def enable_llm():
 
 @manager.route("/delete_factory", methods=["POST"])  # noqa: F821
 @login_required
+@require_permission(Permission.LLM_CONFIGURE)  # CUSTOM B2B SaaS
 @validate_request("llm_factory")
 async def delete_factory():
     req = await get_request_json()

@@ -11,12 +11,7 @@ import {
 import { cn } from '@/lib/utils';
 import { Routes } from '@/routes';
 import { TFunction } from 'i18next';
-import {
-  LucideBox,
-  LucideServer,
-  LucideUnplug,
-  LucideUser,
-} from 'lucide-react';
+import { LucideServer, LucideUnplug, LucideUser } from 'lucide-react';
 import { useEffect } from 'react';
 import { useTranslation } from 'react-i18next';
 import { useHandleMenuClick } from './hooks';
@@ -34,21 +29,15 @@ const menuItems = (t: TFunction, isAdmin: boolean) => {
       key: Routes.Profile,
     },
   ];
-  // Workspace-admin / org-admin / superuser controls — hidden for plain
-  // members to keep the B2B UX clean. Backend RBAC remains the source of
-  // truth; this is purely a navigation guard.
+  // CUSTOM B2B SaaS — Model configuration is managed exclusively via the admin
+  // panel; the native Model route is intentionally excluded for all roles.
+  // See CLAUDE.md "Custom B2B SaaS Multi-Tenant Layer" for merge warnings.
   if (isAdmin) {
     items.push(
       {
         icon: <LucideServer className="size-[1em]" />,
         label: t('setting.dataSources'),
         key: Routes.DataSource,
-      },
-      {
-        icon: <LucideBox className="size-[1em]" />,
-        label: t('setting.model'),
-        key: Routes.Model,
-        'data-testid': 'settings-nav-model-providers',
       },
       {
         icon: <IconFontFill name="mcp" className="size-[1em]" />,

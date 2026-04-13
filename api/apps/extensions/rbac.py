@@ -48,6 +48,8 @@ class Permission(str, Enum):
     MEMBER_LIST = "member.list"
     GROUP_MANAGE = "group.manage"
     AUDIT_READ = "audit.read"
+    # CUSTOM B2B SaaS – see CLAUDE.md "Custom B2B SaaS Multi-Tenant Layer"
+    LLM_CONFIGURE = "llm.configure"
 
 
 ROLE_PERMISSIONS = {
@@ -65,6 +67,7 @@ ROLE_PERMISSIONS = {
         Permission.AGENT_CREATE, Permission.AGENT_READ,
         Permission.AGENT_UPDATE, Permission.AGENT_DELETE,
     },
+    # CUSTOM B2B SaaS: LLM_CONFIGURE restricted to ws_admin only (not editor/viewer)
     WsRole.WS_ADMIN: set(Permission),
 }
 

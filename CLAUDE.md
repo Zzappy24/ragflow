@@ -118,3 +118,31 @@ RAGFlow supports switching between Elasticsearch (default) and Infinity:
 - Docker & Docker Compose
 - uv package manager
 - 16GB+ RAM, 50GB+ disk space
+
+## Custom B2B SaaS Multi-Tenant Layer
+
+This fork adds a multi-tenant RBAC system (workspaces, organizations, roles) on top of upstream RAGFlow's single-tenant model.
+
+### Critical upstream assumption: `user_id == tenant_id`
+
+In upstream RAGFlow, `Tenant.id = User.id` (set in `api/db/init_data.py`). Our workspace tenants break this — a workspace has its own `tenant_id` that is NOT a user_id. **If upstream ever changes the user_id == tenant_id mapping, all our workspace logic must be revisited.**
+
+### Custom files to watch on upstream merges
+
+These files contain custom multi-tenant code that will likely conflict with upstream changes:
+
+| File | What's custom |
+|------|--------------|
+| `api/common/check_team_permission.py` | Workspace membership check (WsMemberService) |
+| `api/db/joint_services/tenant_model_service.py` | Workspace → personal tenant model fallback |
+| `api/apps/extensions/rbac.py` | Entire RBAC module (roles, permissions, groups) |
+| `api/utils/tenant_context.py` | Workspace-aware tenant resolution via X-Workspace-Id |
+| `api/db/services/workspace_service.py` | Custom workspace/org DB services |
+| `api/ragflow_server.py` | before_request middleware caching X-Workspace-Id |
+| `web/src/utils/request.ts` | X-Workspace-Id header injection in interceptor |
+| `web/src/components/image/index.tsx` | Authenticated image fetch (blob URL) |
+| `web/src/layouts/components/workspace-switcher.tsx` | Workspace switcher component |
+
+### Merge procedure
+
+On every upstream merge, grep for `_fallback_personal_tenant_id`, `WorkspaceService`, `WsMemberService`, `X-Workspace-Id`, `active_tenant_id`, `OrgMemberService` to identify conflict zones. Review each custom change against upstream diffs before merging.

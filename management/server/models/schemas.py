@@ -188,6 +188,64 @@ class AuditQuery(BaseModel):
     date_to: str | None = None
 
 
+# -- Workspace LLM models ----------------------------------------------------
+
+class WsLlmProviderAdd(BaseModel):
+    llm_factory: str = Field(min_length=1, max_length=128)
+    llm_name: str = Field(min_length=1, max_length=128)
+    model_type: str = Field(min_length=1, max_length=128)
+    api_key: str | None = Field(default=None)
+    api_base: str | None = Field(default=None, max_length=255)
+    max_tokens: int = Field(default=8192, ge=1)
+
+
+class WsLlmProviderResponse(BaseModel):
+    llm_factory: str
+    llm_name: str
+    model_type: str
+    api_base: str = ""
+    max_tokens: int = 8192
+    used_tokens: int = 0
+    status: str = "1"
+
+
+class WsLlmProviderUpdate(BaseModel):
+    api_key: str | None = None
+    api_base: str | None = None
+    max_tokens: int | None = Field(default=None, ge=1)
+
+
+class WsLlmVerifyRequest(BaseModel):
+    llm_factory: str = Field(min_length=1, max_length=128)
+    llm_name: str = Field(min_length=1, max_length=128)
+    model_type: str = Field(min_length=1, max_length=128)
+    api_key: str | None = None
+    api_base: str | None = None
+
+
+class WsLlmVerifyResponse(BaseModel):
+    ok: bool
+    message: str = ""
+
+
+class WsLlmDefaultsSet(BaseModel):
+    llm_id: str | None = None
+    embd_id: str | None = None
+    asr_id: str | None = None
+    img2txt_id: str | None = None
+    rerank_id: str | None = None
+    tts_id: str | None = None
+
+
+class WsLlmDefaultsResponse(BaseModel):
+    llm_id: str = ""
+    embd_id: str = ""
+    asr_id: str = ""
+    img2txt_id: str = ""
+    rerank_id: str = ""
+    tts_id: str = ""
+
+
 # -- System ------------------------------------------------------------------
 
 class SystemStats(BaseModel):

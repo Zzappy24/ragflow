@@ -20,7 +20,7 @@ class Settings(BaseSettings):
 
     # RAGFlow user-facing base URL — used to construct bridge launch URLs.
     # Dev: the RAGFlow frontend (vite/umi). Prod: your customer-facing domain.
-    RAGFLOW_BASE_URL: str = os.getenv("RAGFLOW_BASE_URL", "http://localhost:5173")
+    RAGFLOW_BASE_URL: str = os.getenv("RAGFLOW_BASE_URL", "http://localhost:9222")
 
     # Bridge token (single-use auth handoff from admin panel → RAGFlow).
     # 60s TTL keeps the replay window tight; Redis SETNX enforces single-use.
