@@ -23,7 +23,7 @@ import { useFetchUserInfo } from '@/hooks/use-user-setting-request';
 import { Routes } from '@/routes';
 import { useQueryClient } from '@tanstack/react-query';
 import { LucideBuilding2, LucideCheck, LucideChevronDown } from 'lucide-react';
-import { useCallback, useMemo } from 'react';
+import { useCallback, useEffect, useMemo } from 'react';
 import { useNavigate } from 'react-router';
 
 const ACTIVE_WORKSPACE_KEY = 'active_workspace_id';
@@ -34,14 +34,24 @@ export function WorkspaceSwitcher() {
   const navigate = useNavigate();
 
   const workspaces = userInfo?.workspaces ?? [];
-  const activeId =
-    userInfo?.active_workspace_id ??
-    (typeof window !== 'undefined'
+  const storedId =
+    typeof window !== 'undefined'
       ? localStorage.getItem(ACTIVE_WORKSPACE_KEY)
-      : null);
+      : null;
+  const activeId = userInfo?.active_workspace_id ?? storedId;
+
+  // Auto-select the first workspace on first login (no stored preference yet).
+  // This ensures X-Workspace-Id is sent on all subsequent requests so that
+  // workspace-scoped endpoints (chats, datasets, etc.) don't return 401.
+  useEffect(() => {
+    if (!storedId && workspaces.length > 0) {
+      localStorage.setItem(ACTIVE_WORKSPACE_KEY, workspaces[0].id);
+      queryClient.clear();
+    }
+  }, [storedId, workspaces, queryClient]);
 
   const activeWs = useMemo(
-    () => workspaces.find((w) => w.id === activeId),
+    () => workspaces.find((w) => w.id === activeId) ?? workspaces[0],
     [workspaces, activeId],
   );
 

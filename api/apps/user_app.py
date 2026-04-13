@@ -366,6 +366,23 @@ async def set_initial_password():
     user.save()
 
     response_data = dict(user.to_json())
+
+    # --- CYLLENE CUSTOM CODE ---
+    # Resolve the user's default workspace so the frontend can set
+    # X-Workspace-Id immediately after login (no personal-tenant fallback).
+    try:
+        from api.db.services.workspace_service import WsMemberService, WorkspaceService
+        memberships = WsMemberService.list_workspaces_for_user(user_id)
+        default_ws_id = None
+        if memberships:
+            ok, ws = WorkspaceService.get_by_id(memberships[0].workspace_id)
+            if ok and ws and ws.status == "1":
+                default_ws_id = ws.id
+        response_data["default_workspace_id"] = default_ws_id
+    except Exception:
+        response_data["default_workspace_id"] = None
+    # --- END CYLLENE CUSTOM CODE ---
+
     login_user(user)
     return await construct_response(
         data=response_data,

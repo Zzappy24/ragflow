@@ -299,6 +299,16 @@ def provision_user(
         ok, ws = WorkspaceService.get_by_id(ws_id)
         if not ok or not ws or ws.org_id != org_id:
             raise ValueError("workspace not found or not in this org")
+    else:
+        # No explicit workspace → assign to the org's default workspace.
+        # Every user MUST land in a workspace (B2B rule — no personal-tenant usage).
+        ws = WorkspaceService.get_default_workspace(org_id)
+        if ws is None:
+            raise ValueError(
+                "This organisation has no active workspace. "
+                "Create at least one workspace before inviting users."
+            )
+        ws_role = ws_role or "viewer"
 
     user_id = get_uuid()
     unguessable_password = secrets.token_urlsafe(32)

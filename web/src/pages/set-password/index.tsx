@@ -14,7 +14,7 @@
  * On failure we surface the backend's error message (expired / reused /
  * malformed token) and block submission.
  */
-import { Authorization, UserInfo } from '@/constants/authorization';
+import { Authorization, Token, UserInfo } from '@/constants/authorization';
 import { rsaPsw } from '@/utils';
 import { useEffect, useMemo, useState } from 'react';
 import { useNavigate } from 'react-router';
@@ -67,7 +67,23 @@ export default function SetPasswordPage() {
 
       const auth = res.headers.get(Authorization);
       if (auth) localStorage.setItem(Authorization, auth);
-      if (body.data) localStorage.setItem(UserInfo, JSON.stringify(body.data));
+      if (body.data?.access_token)
+        localStorage.setItem(Token, body.data.access_token);
+      if (body.data) {
+        const userInfo = {
+          avatar: body.data.avatar,
+          name: body.data.nickname,
+          email: body.data.email,
+        };
+        localStorage.setItem(UserInfo, JSON.stringify(userInfo));
+      }
+      // Pin the workspace so X-Workspace-Id is sent on all subsequent requests.
+      if (body.data?.default_workspace_id) {
+        localStorage.setItem(
+          'active_workspace_id',
+          body.data.default_workspace_id,
+        );
+      }
 
       navigate('/');
     } catch (err: unknown) {

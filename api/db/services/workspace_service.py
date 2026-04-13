@@ -20,6 +20,18 @@ class WorkspaceService(CommonService):
             q = q.where(cls.model.status == "1")
         return list(q)
 
+    @classmethod
+    @DB.connection_context()
+    def get_default_workspace(cls, org_id):
+        """Return the default (oldest active) workspace for an org, or None."""
+        return (
+            cls.model
+            .select()
+            .where((cls.model.org_id == org_id) & (cls.model.status == "1"))
+            .order_by(cls.model.create_time.asc())
+            .first()
+        )
+
 
 class WsMemberService(CommonService):
     model = WsMember
