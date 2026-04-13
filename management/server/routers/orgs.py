@@ -84,6 +84,24 @@ def create_org(body: OrgCreate, user=Depends(require_superuser)):
     })
 
     ok, org = OrgService.get_by_id(org_id)
+
+    # --- CYLLENE CUSTOM CODE ---
+    # Auto-create a default "Général" workspace for every new org so that
+    # invited users always have at least one workspace to land in.
+    try:
+        from management.server.services.provisioning import provision_workspace
+        provision_workspace(
+            org_id=org_id,
+            name="Général",
+            description="Workspace par défaut de l'organisation",
+            created_by=user.id,
+        )
+    except Exception as e:
+        # Non-fatal — org is created, admin can create workspace manually.
+        import logging
+        logging.warning(f"Failed to auto-create default workspace for org {org_id}: {e}")
+    # --- END CYLLENE CUSTOM CODE ---
+
     return _org_to_response(org)
 
 
