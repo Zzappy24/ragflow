@@ -16,6 +16,9 @@
 from quart import Response, request
 from api.apps import login_required
 from api.utils.tenant_context import active_tenant_id
+# --- CYLLENE CUSTOM CODE ---
+from api.apps.extensions.rbac import require_permission, Permission
+# --- END CYLLENE CUSTOM CODE ---
 
 from api.db.db_models import MCPServer
 from api.db.services.mcp_server_service import MCPServerService
@@ -70,6 +73,7 @@ def detail() -> Response:
 
 @manager.route("/create", methods=["POST"])  # noqa: F821
 @login_required
+@require_permission(Permission.MCP_CONFIGURE)  # --- CYLLENE CUSTOM CODE ---
 @validate_request("name", "url", "server_type")
 async def create() -> Response:
     req = await get_request_json()
@@ -125,6 +129,7 @@ async def create() -> Response:
 
 @manager.route("/update", methods=["POST"])  # noqa: F821
 @login_required
+@require_permission(Permission.MCP_CONFIGURE)  # --- CYLLENE CUSTOM CODE ---
 @validate_request("mcp_id")
 async def update() -> Response:
     req = await get_request_json()
@@ -181,6 +186,7 @@ async def update() -> Response:
 
 @manager.route("/rm", methods=["POST"])  # noqa: F821
 @login_required
+@require_permission(Permission.MCP_CONFIGURE)  # --- CYLLENE CUSTOM CODE ---
 @validate_request("mcp_ids")
 async def rm() -> Response:
     req = await get_request_json()
@@ -199,6 +205,7 @@ async def rm() -> Response:
 
 @manager.route("/import", methods=["POST"])  # noqa: F821
 @login_required
+@require_permission(Permission.MCP_CONFIGURE)  # --- CYLLENE CUSTOM CODE ---
 @validate_request("mcpServers")
 async def import_multiple() -> Response:
     req = await get_request_json()

@@ -1,3 +1,6 @@
+// --- CYLLENE CUSTOM CODE ---
+import { AdminRequired } from '@/components/admin-required';
+// --- END CYLLENE CUSTOM CODE ---
 import { CardContainer } from '@/components/card-container';
 import {
   ConfirmDeleteDialog,
@@ -28,7 +31,17 @@ import { useBulkOperateMCP } from './use-bulk-operate-mcp';
 import { useEditMcp } from './use-edit-mcp';
 import { useImportMcp } from './use-import-mcp';
 
+// --- CYLLENE CUSTOM CODE ---
 export default function McpServer() {
+  return (
+    <AdminRequired>
+      <McpServerInner />
+    </AdminRequired>
+  );
+}
+
+function McpServerInner() {
+  // --- END CYLLENE CUSTOM CODE ---
   const { data, setPagination, searchString, handleInputChange, pagination } =
     useListMcpServer();
   const { editVisible, showEditModal, hideEditModal, handleOk, id, loading } =

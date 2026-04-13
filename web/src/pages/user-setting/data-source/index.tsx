@@ -1,3 +1,6 @@
+// --- CYLLENE CUSTOM CODE ---
+import { AdminRequired } from '@/components/admin-required';
+// --- END CYLLENE CUSTOM CODE ---
 import { useTranslation } from 'react-i18next';
 
 import { Button } from '@/components/ui/button';
@@ -147,4 +150,11 @@ const DataSource = () => {
   );
 };
 
-export default DataSource;
+// --- CYLLENE CUSTOM CODE ---
+const DataSourcePage = () => (
+  <AdminRequired>
+    <DataSource />
+  </AdminRequired>
+);
+export default DataSourcePage;
+// --- END CYLLENE CUSTOM CODE ---

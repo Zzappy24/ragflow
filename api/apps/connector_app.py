@@ -34,11 +34,15 @@ from common.misc_utils import get_uuid
 from rag.utils.redis_conn import REDIS_CONN
 from api.apps import login_required, current_user
 from api.utils.tenant_context import active_tenant_id
+# --- CYLLENE CUSTOM CODE ---
+from api.apps.extensions.rbac import require_permission, Permission
+# --- END CYLLENE CUSTOM CODE ---
 from box_sdk_gen import BoxOAuth, OAuthConfig, GetAuthorizeUrlOptions
 
 
 @manager.route("/set", methods=["POST"])  # noqa: F821
 @login_required
+@require_permission(Permission.DATASOURCE_CONFIGURE)  # --- CYLLENE CUSTOM CODE ---
 async def set_connector():
     req = await get_request_json()
     if req.get("id"):
@@ -91,6 +95,7 @@ def list_logs(connector_id):
 
 @manager.route("/<connector_id>/resume", methods=["PUT"])  # noqa: F821
 @login_required
+@require_permission(Permission.DATASOURCE_CONFIGURE)  # --- CYLLENE CUSTOM CODE ---
 async def resume(connector_id):
     req = await get_request_json()
     if req.get("resume"):
@@ -102,6 +107,7 @@ async def resume(connector_id):
 
 @manager.route("/<connector_id>/rebuild", methods=["PUT"])  # noqa: F821
 @login_required
+@require_permission(Permission.DATASOURCE_CONFIGURE)  # --- CYLLENE CUSTOM CODE ---
 @validate_request("kb_id")
 async def rebuild(connector_id):
     req = await get_request_json()
@@ -113,6 +119,7 @@ async def rebuild(connector_id):
 
 @manager.route("/<connector_id>/rm", methods=["POST"])  # noqa: F821
 @login_required
+@require_permission(Permission.DATASOURCE_CONFIGURE)  # --- CYLLENE CUSTOM CODE ---
 def rm_connector(connector_id):
     ConnectorService.resume(connector_id, TaskStatus.CANCEL)
     ConnectorService.delete_by_id(connector_id)
@@ -188,6 +195,7 @@ async def _render_web_oauth_popup(flow_id: str, success: bool, message: str, sou
 
 @manager.route("/google/oauth/web/start", methods=["POST"])  # noqa: F821
 @login_required
+@require_permission(Permission.DATASOURCE_CONFIGURE)  # --- CYLLENE CUSTOM CODE ---
 @validate_request("credentials")
 async def start_google_web_oauth():
     source = request.args.get("type", "google-drive")
@@ -389,6 +397,7 @@ async def poll_google_web_result():
 
 @manager.route("/box/oauth/web/start", methods=["POST"])  # noqa: F821
 @login_required
+@require_permission(Permission.DATASOURCE_CONFIGURE)  # --- CYLLENE CUSTOM CODE ---
 async def start_box_web_oauth():
     req = await get_request_json()
 

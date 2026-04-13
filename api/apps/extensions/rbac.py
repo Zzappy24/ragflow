@@ -50,6 +50,8 @@ class Permission(str, Enum):
     AUDIT_READ = "audit.read"
     # CUSTOM B2B SaaS – see CLAUDE.md "Custom B2B SaaS Multi-Tenant Layer"
     LLM_CONFIGURE = "llm.configure"
+    DATASOURCE_CONFIGURE = "datasource.configure"
+    MCP_CONFIGURE = "mcp.configure"
 
 
 ROLE_PERMISSIONS = {
