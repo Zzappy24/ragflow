@@ -28,11 +28,10 @@ class OrgService(CommonService):
         tenant_ids = [ws.tenant_id for ws in active_ws]
 
         user_count = (
-            WsMember.select(WsMember.user_id)
-            .where(WsMember.workspace_id.in_(workspace_ids))
-            .distinct()
+            OrgMember.select()
+            .where((OrgMember.org_id == org_id) & (OrgMember.status == "1"))
             .count()
-        ) if workspace_ids else 0
+        )
 
         workspace_count = len(workspace_ids)
 
