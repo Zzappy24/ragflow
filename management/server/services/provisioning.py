@@ -156,13 +156,18 @@ def provision_workspace(org_id: str, name: str, description: str, created_by: st
     return ws
 
 
-def deprovision_workspace(ws_id: str) -> None:
+def deprovision_workspace(ws_id: str, ts: int | None = None) -> None:
     """
     Soft-delete a workspace and its RAGFlow tenant + technical user.
 
     The workspace name gets a ``___deleted___[timestamp]`` suffix so the
     original name is readable in DB for restore purposes, while being freed
     for immediate reuse in the UI. status → '0'.
+
+    Pass ``ts`` explicitly when called as part of an org cascade so that all
+    related entities share the same timestamp (enables timestamp-matched restore).
+    If omitted, a fresh timestamp is generated (standalone workspace archival).
+
     Use ``restore_workspace`` to undo, or ``purge_workspace`` to hard-delete.
     """
     import time
@@ -173,7 +178,8 @@ def deprovision_workspace(ws_id: str) -> None:
     if not ok or not ws:
         return
     tenant_id = ws.tenant_id
-    ts = int(time.time())
+    if ts is None:
+        ts = int(time.time())
 
     with DB.connection_context():
         WorkspaceService.update_by_id(ws_id, {

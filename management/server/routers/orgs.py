@@ -137,22 +137,72 @@ def update_org(org_id: str, body: OrgUpdate, user_id: str = Depends(get_current_
 
 @router.delete("/{org_id}", status_code=status.HTTP_204_NO_CONTENT)
 def delete_org(org_id: str, user=Depends(require_superuser)):
-    """Soft-delete organisation (superuser only).
+    """Soft-delete organisation and cascade to its workspaces + orphaned users.
 
-    Adds ``___deleted___[timestamp]`` suffix to slug and name so the originals
-    are freed for reuse while remaining readable in DB for restore.
+    All entities share the same timestamp suffix so the entire snapshot can be
+    restored atomically via ``POST /archives/orgs/{id}/restore``.
+
+    Cascade rules:
+    - Every active workspace of the org is soft-deleted (deprovision_workspace).
+    - Human users whose ONLY active org membership was this org are deactivated
+      (email suffixed, status=0, is_active=0). Users with memberships in other
+      active orgs are left untouched.
     """
     import time
-    from api.db.services.org_service import OrgService
+    from api.db.db_models import DB, Organisation, User
+    from api.db.services.org_service import OrgService, OrgMemberService
+    from api.db.services.workspace_service import WorkspaceService, WsMemberService
+    from management.server.services.provisioning import deprovision_workspace
+
     ok, org = OrgService.get_by_id(org_id)
     if not ok or not org:
         raise HTTPException(status_code=404, detail="Organisation not found")
+
     ts = int(time.time())
-    OrgService.update_by_id(org_id, {
-        "status": "0",
-        "slug": f"{org.slug}___deleted___{ts}",
-        "name": f"{org.name}___deleted___{ts}",
-    })
+
+    # Collect all active workspaces before touching anything
+    workspaces = WorkspaceService.list_by_org(org_id, include_deleted=False)
+    ws_ids = [ws.id for ws in workspaces]
+
+    # Collect all human user_ids in this org (via WsMember + OrgMember)
+    user_ids: set[str] = set()
+    for ws_id in ws_ids:
+        for m in WsMemberService.list_by_workspace(ws_id):
+            user_ids.add(m.user_id)
+    for m in OrgMemberService.list_by_org(org_id):
+        user_ids.add(m.user_id)
+
+    # Soft-delete org
+    with DB.connection_context():
+        Organisation.update({
+            Organisation.status: "0",
+            Organisation.slug: f"{org.slug}___deleted___{ts}",
+            Organisation.name: f"{org.name}___deleted___{ts}",
+        }).where(Organisation.id == org_id).execute()
+
+    # Cascade soft-delete to workspaces with the shared ts
+    for ws_id in ws_ids:
+        deprovision_workspace(ws_id, ts=ts)
+
+    # Orphan check: deactivate users with no other active org membership
+    with DB.connection_context():
+        for uid in user_ids:
+            other_active = (
+                OrgMemberService.model
+                .select()
+                .where(
+                    (OrgMemberService.model.user_id == uid) &
+                    (OrgMemberService.model.org_id != org_id) &
+                    (OrgMemberService.model.status == "1")
+                )
+                .count()
+            )
+            if other_active == 0:
+                User.update({
+                    User.email: User.email.concat(f"___deleted___{ts}"),
+                    User.is_active: "0",
+                    User.status: "0",
+                }).where(User.id == uid).execute()
 
 
 @router.delete("/{org_id}/purge", status_code=status.HTTP_204_NO_CONTENT)

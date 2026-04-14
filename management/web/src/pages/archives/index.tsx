@@ -14,6 +14,9 @@ interface ArchivedOrg {
   id: string;
   name: string;
   slug: string;
+  archived_ts: string | null;
+  archived_workspaces: number;
+  archived_users: number;
   create_time: string;
 }
 
@@ -23,6 +26,8 @@ interface ArchivedWorkspace {
   org_name: string | null;
   name: string;
   create_time: string;
+  org_snapshot_id: string | null;
+  org_snapshot_name: string | null;
 }
 
 interface ArchivedUser {
@@ -31,12 +36,15 @@ interface ArchivedUser {
   nickname: string;
   is_superuser: boolean;
   create_time: string;
+  org_snapshot_id: string | null;
+  org_snapshot_name: string | null;
 }
 
 function formatDate(ts: string | number | null) {
   if (!ts) return '—';
-  const d = typeof ts === 'number' ? new Date(ts * 1000) : new Date(ts);
-  return d.toLocaleDateString('fr-FR', { day: '2-digit', month: 'short', year: 'numeric' });
+  // RAGFlow stores create_time in milliseconds — use directly
+  const d = new Date(typeof ts === 'number' && ts < 1e11 ? ts * 1000 : ts);
+  return d.toLocaleString('fr-FR', { day: '2-digit', month: 'short', year: 'numeric', hour: '2-digit', minute: '2-digit' });
 }
 
 interface PurgeState {
@@ -75,8 +83,15 @@ export default function ArchivesPage() {
   const handleRestore = async (type: EntityType, id: string) => {
     setRestoring(id);
     try {
-      await api.post(`/archives/${type}/${id}/restore`);
-      message.success('Entité restaurée avec succès');
+      const res = await api.post(`/archives/${type}/${id}/restore`);
+      if (type === 'orgs' && res.data) {
+        const { restored_workspaces: ws, restored_users: us } = res.data;
+        message.success(
+          `Organisation restaurée — ${ws} workspace${ws !== 1 ? 's' : ''} et ${us} utilisateur${us !== 1 ? 's' : ''} restaurés`
+        );
+      } else {
+        message.success('Entité restaurée avec succès');
+      }
       fetchAll();
     } catch (err: any) {
       message.error(err?.response?.data?.detail ?? 'Échec de la restauration');
@@ -104,37 +119,60 @@ export default function ArchivesPage() {
   const actionCol = (type: EntityType, labelKey: string) => ({
     title: 'Actions',
     key: 'actions',
-    width: 160,
-    render: (_: unknown, record: any) => (
-      <Space>
-        <Tooltip title="Restaurer">
-          <Button
-            icon={<UndoOutlined />}
-            size="small"
-            loading={restoring === record.id}
-            onClick={() => handleRestore(type, record.id)}
-          >
-            Restaurer
-          </Button>
+    width: 220,
+    render: (_: unknown, record: any) => {
+      const isPartOfSnapshot = !!record.org_snapshot_id;
+      const snapshotTip = isPartOfSnapshot
+        ? `Fait partie du snapshot de l'org "${record.org_snapshot_name}". Restaurez l'organisation pour restaurer cet élément.`
+        : undefined;
+
+      return isPartOfSnapshot ? (
+        <Tooltip title={snapshotTip}>
+          <Tag color="orange" className="cursor-default">
+            Snapshot · {record.org_snapshot_name}
+          </Tag>
         </Tooltip>
-        <Tooltip title="Supprimer définitivement">
-          <Button
-            danger
-            icon={<DeleteOutlined />}
-            size="small"
-            onClick={() => {
-              setPurgeTarget({ entityType: type, id: record.id, label: record[labelKey] });
-              setPurgeConfirm('');
-            }}
-          />
-        </Tooltip>
-      </Space>
-    ),
+      ) : (
+        <Space>
+          <Tooltip title="Restaurer">
+            <Button
+              icon={<UndoOutlined />}
+              size="small"
+              loading={restoring === record.id}
+              onClick={() => handleRestore(type, record.id)}
+            >
+              Restaurer
+            </Button>
+          </Tooltip>
+          <Tooltip title="Supprimer définitivement">
+            <Button
+              danger
+              icon={<DeleteOutlined />}
+              size="small"
+              onClick={() => {
+                setPurgeTarget({ entityType: type, id: record.id, label: record[labelKey] });
+                setPurgeConfirm('');
+              }}
+            />
+          </Tooltip>
+        </Space>
+      );
+    },
   });
 
   const orgColumns: ColumnsType<ArchivedOrg> = [
     { title: 'Nom', dataIndex: 'name' },
     { title: 'Slug', dataIndex: 'slug', render: (s: string) => <Tag>{s}</Tag> },
+    {
+      title: 'Contenu archivé',
+      key: 'archived_content',
+      render: (_: unknown, r: ArchivedOrg) => (
+        <Text type="secondary" className="text-xs">
+          {r.archived_workspaces} workspace{r.archived_workspaces !== 1 ? 's' : ''}
+          {r.archived_users > 0 ? ` · ${r.archived_users} user${r.archived_users !== 1 ? 's' : ''}` : ''}
+        </Text>
+      ),
+    },
     { title: 'Archivé le', dataIndex: 'create_time', render: formatDate, width: 130 },
     actionCol('orgs', 'name'),
   ];
