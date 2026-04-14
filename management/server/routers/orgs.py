@@ -137,12 +137,57 @@ def update_org(org_id: str, body: OrgUpdate, user_id: str = Depends(get_current_
 
 @router.delete("/{org_id}", status_code=status.HTTP_204_NO_CONTENT)
 def delete_org(org_id: str, user=Depends(require_superuser)):
-    """Delete organisation (superuser only). Soft-delete."""
+    """Soft-delete organisation (superuser only).
+
+    Adds ``___deleted___[timestamp]`` suffix to slug and name so the originals
+    are freed for reuse while remaining readable in DB for restore.
+    """
+    import time
     from api.db.services.org_service import OrgService
     ok, org = OrgService.get_by_id(org_id)
     if not ok or not org:
         raise HTTPException(status_code=404, detail="Organisation not found")
-    OrgService.update_by_id(org_id, {"status": "0"})
+    ts = int(time.time())
+    OrgService.update_by_id(org_id, {
+        "status": "0",
+        "slug": f"{org.slug}___deleted___{ts}",
+        "name": f"{org.name}___deleted___{ts}",
+    })
+
+
+@router.delete("/{org_id}/purge", status_code=status.HTTP_204_NO_CONTENT)
+def purge_org(org_id: str, confirm: str = "", user=Depends(require_superuser)):
+    """
+    HARD delete an organisation and ALL its data (superuser only).
+
+    Cascades to: all workspaces (+ their tenants, datasets, documents),
+    all members, the org row itself.
+    Irreversible. Requires ``?confirm=DELETE`` query parameter.
+    """
+    if confirm != "DELETE":
+        raise HTTPException(
+            status_code=400,
+            detail="Purge requires ?confirm=DELETE query parameter",
+        )
+    from api.db.services.org_service import OrgService
+    from api.db.services.workspace_service import WorkspaceService
+    from management.server.services.provisioning import purge_workspace
+
+    ok, org = OrgService.get_by_id(org_id)
+    if not ok or not org:
+        raise HTTPException(status_code=404, detail="Organisation not found")
+
+    # Purge every workspace first (cascades datasets/documents/members)
+    workspaces = WorkspaceService.list_by_org(org_id, include_deleted=True)
+    for ws in workspaces:
+        purge_workspace(ws.id)
+
+    # Then delete org-level rows
+    from api.db.db_models import DB, OrgMember, Organisation
+    from api.db.services.org_service import OrgMemberService
+    with DB.connection_context():
+        OrgMember.delete().where(OrgMember.org_id == org_id).execute()
+        Organisation.delete().where(Organisation.id == org_id).execute()
 
 
 @router.get("/{org_id}/stats")

@@ -83,23 +83,17 @@ def provision_user_route(
 @router.delete("/users/{uid}", status_code=status.HTTP_204_NO_CONTENT)
 def delete_user(uid: str, user=Depends(require_superuser)):
     """
-    GDPR hard-delete via the Tombstone pattern (superuser only).
+    Soft-delete a user (superuser only).
 
-    Instead of deleting the ``User`` row (which would break INNER JOINs on
-    ``tenant_id`` / ``created_by`` throughout RAGFlow and make enterprise
-    datasets, chats, and agents vanish from the UI), we:
+    - Revokes all workspace/org access (WsMember, OrgMember, UserTenant rows deleted)
+    - Email gets ``___deleted___[timestamp]`` suffix → freed for re-invite,
+      readable in DB for restore
+    - is_active='0', status='0' → cannot log in
+    - PII (nickname, avatar, password) is preserved for audit trail
 
-    1. **Revoke all access** — physically delete WsMember, WsGroupMember,
-       OrgMember, the personal Tenant, and UserTenant rows.
-    2. **Anonymise PII** — overwrite email, nickname, avatar, password on the
-       User row so no personal data remains.
-    3. **Deactivate** — set ``is_active='0'`` so the login flow rejects the
-       account, and ``status='0'`` for good measure.
-
-    The User row stays as a tombstone. INNER JOINs resolve to
-    "Utilisateur Supprimé" in the UI, enterprise data is preserved, and the
-    RGPD right-to-erasure is satisfied.
+    For full RGPD erasure, use ``DELETE /users/{uid}/purge``.
     """
+    import time
     from api.db.services.user_service import UserService
 
     ok, target = UserService.get_by_id(uid)
@@ -112,21 +106,67 @@ def delete_user(uid: str, user=Depends(require_superuser)):
     if uid == user.id:
         raise HTTPException(status_code=400, detail="Cannot delete yourself")
 
+    from api.db.db_models import DB, User, UserTenant, WsGroupMember
+    from api.db.services.workspace_service import WsMember
+    from api.db.services.org_service import OrgMember
+
+    ts = int(time.time())
+    with DB.connection_context():
+        # Revoke all access
+        WsGroupMember.delete().where(WsGroupMember.user_id == uid).execute()
+        WsMember.delete().where(WsMember.user_id == uid).execute()
+        OrgMember.delete().where(OrgMember.user_id == uid).execute()
+        UserTenant.delete().where(UserTenant.user_id == uid).execute()
+
+        # Deactivate + free email for re-invite
+        User.update({
+            User.email: f"{target.email}___deleted___{ts}",
+            User.is_active: "0",
+            User.status: "0",
+        }).where(User.id == uid).execute()
+
+
+@router.delete("/users/{uid}/purge", status_code=status.HTTP_204_NO_CONTENT)
+def purge_user(uid: str, confirm: str = "", user=Depends(require_superuser)):
+    """
+    RGPD hard-delete via the Tombstone pattern (superuser only).
+
+    Full PII erasure: overwrites email, nickname, avatar, password.
+    The User row stays as a tombstone so INNER JOINs on created_by/tenant_id
+    don't break (enterprise data is preserved).
+    Requires ``?confirm=DELETE`` query parameter.
+    """
+    if confirm != "DELETE":
+        raise HTTPException(
+            status_code=400,
+            detail="Purge requires ?confirm=DELETE query parameter",
+        )
+    from api.db.services.user_service import UserService
+
+    ok, target = UserService.get_by_id(uid)
+    if not ok or not target:
+        raise HTTPException(status_code=404, detail="User not found")
+
+    if target.is_superuser:
+        raise HTTPException(status_code=400, detail="Cannot purge a superuser account")
+
+    if uid == user.id:
+        raise HTTPException(status_code=400, detail="Cannot purge yourself")
+
     from api.db.db_models import DB, User, Tenant, UserTenant, WsGroupMember
     from api.db.services.workspace_service import WsMember
     from api.db.services.org_service import OrgMember
 
     with DB.connection_context():
-        # 1. Revoke all access
         WsGroupMember.delete().where(WsGroupMember.user_id == uid).execute()
         WsMember.delete().where(WsMember.user_id == uid).execute()
         OrgMember.delete().where(OrgMember.user_id == uid).execute()
         UserTenant.delete().where(UserTenant.user_id == uid).execute()
         Tenant.delete().where(Tenant.id == uid).execute()
 
-        # 2. Anonymise PII + 3. Deactivate
+        # Full PII erasure — tombstone stays for referential integrity
         User.update({
-            User.email: f"deleted_{uid}@anonymized.local",
+            User.email: f"purged_{uid}@anonymized.local",
             User.nickname: "Utilisateur Supprimé",
             User.password: "",
             User.avatar: None,

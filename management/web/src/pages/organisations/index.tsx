@@ -4,7 +4,6 @@ import { Table, Button, Card, Space, Tag, Modal, Form, Input, InputNumber, App }
 import { PlusOutlined } from '@ant-design/icons';
 import type { ColumnsType } from 'antd/es/table';
 import api from '@/lib/api';
-import { useBulkDelete } from '@/components/BulkActions';
 
 interface Org {
   id: string;
@@ -22,12 +21,6 @@ export default function OrganisationsPage() {
   const [modalOpen, setModalOpen] = useState(false);
   const [form] = Form.useForm();
   const { message } = App.useApp();
-
-  const { rowSelection, BulkDeleteButton } = useBulkDelete<string>({
-    entityName: 'organisation',
-    deleteOne: (id) => api.delete(`/orgs/${id}`),
-    onDone: () => fetchOrgs(),
-  });
 
   const fetchOrgs = () => {
     setLoading(true);
@@ -66,12 +59,9 @@ export default function OrganisationsPage() {
     <div>
       <div className="flex justify-between items-center mb-4">
         <h2 className="text-xl font-semibold">Organisations</h2>
-        <Space>
-          <BulkDeleteButton />
-          <Button type="primary" icon={<PlusOutlined />} onClick={() => setModalOpen(true)}>
-            New Organisation
-          </Button>
-        </Space>
+        <Button type="primary" icon={<PlusOutlined />} onClick={() => setModalOpen(true)}>
+          New Organisation
+        </Button>
       </div>
 
       <Card>
@@ -81,7 +71,6 @@ export default function OrganisationsPage() {
           rowKey="id"
           loading={loading}
           pagination={false}
-          rowSelection={rowSelection}
         />
       </Card>
 

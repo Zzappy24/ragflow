@@ -160,10 +160,12 @@ def deprovision_workspace(ws_id: str) -> None:
     """
     Soft-delete a workspace and its RAGFlow tenant + technical user.
 
-    All data (datasets, documents, chunks) is preserved on disk and in DB —
-    we only flip ``status='0'`` so the resources stop appearing in lists.
+    The workspace name gets a ``___deleted___[timestamp]`` suffix so the
+    original name is readable in DB for restore purposes, while being freed
+    for immediate reuse in the UI. status → '0'.
     Use ``restore_workspace`` to undo, or ``purge_workspace`` to hard-delete.
     """
+    import time
     from api.db.db_models import DB, User, Tenant
     from api.db.services.workspace_service import WorkspaceService
 
@@ -171,9 +173,13 @@ def deprovision_workspace(ws_id: str) -> None:
     if not ok or not ws:
         return
     tenant_id = ws.tenant_id
+    ts = int(time.time())
 
     with DB.connection_context():
-        WorkspaceService.update_by_id(ws_id, {"status": "0"})
+        WorkspaceService.update_by_id(ws_id, {
+            "status": "0",
+            "name": f"{ws.name}___deleted___{ts}",
+        })
         Tenant.update(status="0").where(Tenant.id == tenant_id).execute()
         # Technical user shares the tenant_id (RAGFlow convention)
         User.update(status="0").where(User.id == tenant_id).execute()
@@ -291,7 +297,9 @@ def provision_user(
         raise ValueError(f"invalid ws_role: {ws_role}")
 
     # Pre-checks outside the transaction — cheap and give better error messages.
-    if UserService.query(email=email):
+    # Only block on active users (status="1") — deleted users have their email
+    # anonymised to deleted_{id}@anonymized.local so the original is already free.
+    if UserService.query(email=email, status="1"):
         raise ValueError(f"email '{email}' already exists")
 
     ws = None
@@ -378,13 +386,24 @@ def deprovision_user(user_id: str) -> None:
     """
     Soft-delete a human user: flip is_active to '0' and status to '0'.
 
-    Org/workspace memberships are left intact so audit trails remain
-    intelligible; the user simply can't log in anymore.
+    Email gets a ``___deleted___[timestamp]`` suffix so the original address
+    is freed for re-invite, while remaining readable in DB for audit/restore.
     """
+    import time
     from api.db.db_models import DB, User
+    from api.db.services.user_service import UserService
+
+    ts = int(time.time())
+    ok, user = UserService.get_by_id(user_id)
+    if not ok or not user:
+        return
 
     with DB.connection_context():
-        User.update(is_active="0", status="0").where(User.id == user_id).execute()
+        User.update(
+            is_active="0",
+            status="0",
+            email=f"{user.email}___deleted___{ts}",
+        ).where(User.id == user_id).execute()
 
 
 def grant_workspace_access(ws, target_user_id: str, role: str, member_id: str):

@@ -9,7 +9,10 @@ class OrgService(CommonService):
     @classmethod
     @DB.connection_context()
     def get_by_slug(cls, slug):
-        return cls.model.get_or_none(cls.model.slug == slug)
+        # Only match active orgs — deleted orgs should not block slug reuse.
+        return cls.model.get_or_none(
+            (cls.model.slug == slug) & (cls.model.status == "1")
+        )
 
     @classmethod
     @DB.connection_context()
