@@ -6,6 +6,7 @@ import {
   BankOutlined,
   LogoutOutlined,
   UserOutlined,
+  InboxOutlined,
 } from '@ant-design/icons';
 import { useAuthStore } from '@/stores/auth';
 
@@ -15,6 +16,7 @@ const { Text } = Typography;
 const menuItems = [
   { key: '/', icon: <DashboardOutlined />, label: <Link to="/">Dashboard</Link> },
   { key: '/organisations', icon: <BankOutlined />, label: <Link to="/organisations">Organisations</Link> },
+  { key: '/archives', icon: <InboxOutlined />, label: <Link to="/archives">Archives</Link> },
 ];
 
 export default function AppLayout() {
@@ -51,7 +53,13 @@ export default function AppLayout() {
         </div>
         <Menu
           mode="inline"
-          selectedKeys={[location.pathname.startsWith('/organisations') || location.pathname.startsWith('/workspaces') ? '/organisations' : location.pathname]}
+          selectedKeys={[
+            location.pathname.startsWith('/organisations') || location.pathname.startsWith('/workspaces')
+              ? '/organisations'
+              : location.pathname.startsWith('/archives')
+              ? '/archives'
+              : location.pathname,
+          ]}
           items={menuItems}
           className="border-r-0 mt-2"
         />

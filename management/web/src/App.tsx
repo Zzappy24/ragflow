@@ -10,6 +10,7 @@ import MembersPage from '@/pages/members';
 import GroupsPage from '@/pages/groups';
 import ApiKeysPage from '@/pages/api-keys';
 import AuditPage from '@/pages/audit';
+import ArchivesPage from '@/pages/archives';
 
 export default function App() {
   return (
@@ -32,6 +33,7 @@ export default function App() {
         <Route path="/groups" element={<GroupsPage />} />
         <Route path="/api-keys" element={<ApiKeysPage />} />
         <Route path="/audit" element={<AuditPage />} />
+        <Route path="/archives" element={<ArchivesPage />} />
       </Route>
     </Routes>
   );
