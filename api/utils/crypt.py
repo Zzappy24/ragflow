@@ -22,13 +22,18 @@ from Cryptodome.PublicKey import RSA
 from Cryptodome.Cipher import PKCS1_v1_5 as Cipher_pkcs1_v1_5
 from common.file_utils import get_project_base_directory
 
+# Passphrase for the RSA private key.
+# In production: set RSA_PASSPHRASE env var via secrets manager / docker .env.
+# In dev: falls back to the upstream default "Welcome" so existing dev keys work.
+_RSA_PASSPHRASE = os.environ.get("RSA_PASSPHRASE", "Welcome")
+
 
 def crypt(line):
     """
     decrypt(crypt(input_string)) == base64(input_string), which frontend and ragflow_cli use.
     """
     file_path = os.path.join(get_project_base_directory(), "conf", "public.pem")
-    rsa_key = RSA.importKey(Path(file_path).read_text(), "Welcome")
+    rsa_key = RSA.importKey(Path(file_path).read_text(), _RSA_PASSPHRASE)
     cipher = Cipher_pkcs1_v1_5.new(rsa_key)
     password_base64 = base64.b64encode(line.encode('utf-8')).decode("utf-8")
     encrypted_password = cipher.encrypt(password_base64.encode())
@@ -37,7 +42,7 @@ def crypt(line):
 
 def decrypt(line):
     file_path = os.path.join(get_project_base_directory(), "conf", "private.pem")
-    rsa_key = RSA.importKey(Path(file_path).read_text(), "Welcome")
+    rsa_key = RSA.importKey(Path(file_path).read_text(), _RSA_PASSPHRASE)
     cipher = Cipher_pkcs1_v1_5.new(rsa_key)
     return cipher.decrypt(base64.b64decode(line), "Fail to decrypt password!").decode('utf-8')
 
@@ -53,7 +58,7 @@ def decrypt2(crypt_text):
 
     file_path = os.path.join(get_project_base_directory(), "conf", "private.pem")
     pem = Path(file_path).read_text()
-    rsa_key = RSA.importKey(pem, "Welcome")
+    rsa_key = RSA.importKey(pem, _RSA_PASSPHRASE)
     cipher = Cipher_PKCS1_v1_5.new(rsa_key)
     decrypt_text = cipher.decrypt(decode_data, None)
     return (b64decode(decrypt_text)).decode()
