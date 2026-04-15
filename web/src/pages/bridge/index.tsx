@@ -6,15 +6,21 @@
  * endpoint, stores auth in localStorage, and redirects to /.
  */
 import { Authorization, Token, UserInfo } from '@/constants/authorization';
-import { useEffect, useState } from 'react';
+import { getAuthorization } from '@/utils/authorization-util';
+import { useEffect, useRef, useState } from 'react';
 import { useNavigate, useSearchParams } from 'react-router';
 
 export default function BridgePage() {
   const [searchParams] = useSearchParams();
   const navigate = useNavigate();
   const [error, setError] = useState<string | null>(null);
+  const called = useRef(false);
 
   useEffect(() => {
+    // Guard against React StrictMode double-invocation in dev.
+    if (called.current) return;
+    called.current = true;
+
     const token = searchParams.get('bridge_token');
     if (!token) {
       navigate('/login', { replace: true });
@@ -30,7 +36,15 @@ export default function BridgePage() {
         });
 
         const body = await res.json().catch(() => null);
+
         if (!res.ok || !body || body.code !== 0) {
+          // "already used" can happen in React StrictMode (double effect) when
+          // the first call already succeeded and stored auth in localStorage.
+          // If we're already authenticated, just proceed silently.
+          if (getAuthorization()) {
+            navigate('/', { replace: true });
+            return;
+          }
           setError(body?.message || `Bridge login failed (${res.status})`);
           setTimeout(() => navigate('/login', { replace: true }), 2000);
           return;
@@ -65,7 +79,7 @@ export default function BridgePage() {
         setTimeout(() => navigate('/login', { replace: true }), 2000);
       }
     })();
-  }, []); // run once on mount
+  }, []); // eslint-disable-line react-hooks/exhaustive-deps
 
   if (error) {
     return (
