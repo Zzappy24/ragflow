@@ -1,9 +1,10 @@
 import { useEffect, useState } from 'react';
 import { useSearchParams, useParams } from 'react-router-dom';
-import { Table, Card, Input, Space, Tag, Tooltip, Typography } from 'antd';
+import { Table, Card, Space, Tag, Tooltip, Typography } from 'antd';
 import { CheckCircleOutlined, CloseCircleOutlined } from '@ant-design/icons';
 import dayjs from 'dayjs';
 import api from '@/lib/api';
+import { AuditFilterBar, AuditFilters } from './filters';
 
 const { Text } = Typography;
 
@@ -49,9 +50,10 @@ function DiffCell({ diff }: { diff: AuditEntry['diff'] }) {
 function DetailsCell({ details }: { details: AuditEntry['details'] }) {
   if (!details || !Object.keys(details).length) return null;
   const summary = Object.entries(details)
-    .filter(([, v]) => v !== null && v !== undefined)
+    .filter(([k, v]) => k !== 'target_display_name' && v !== null && v !== undefined)
     .map(([k, v]) => `${k}: ${v}`)
     .join('\n');
+  if (!summary) return null;
   return (
     <Tooltip title={summary}>
       <Tag className="cursor-default">détails</Tag>
@@ -67,22 +69,27 @@ export default function AuditPage({ orgId: orgIdProp, wsId: wsIdProp }: { orgId?
   const [logs, setLogs] = useState<AuditEntry[]>([]);
   const [loading, setLoading] = useState(true);
   const [page, setPage] = useState(1);
-  const [actionFilter, setActionFilter] = useState<string | undefined>();
+  const [filters, setFilters] = useState<AuditFilters>({});
 
   const scope = wsId ? 'ws' : 'org';
   const scopeId = wsId || orgId || '';
+
+  const handleFiltersChange = (f: AuditFilters) => {
+    setPage(1);
+    setFilters(f);
+  };
 
   const fetchLogs = () => {
     if (!scopeId) { setLoading(false); return; }
     setLoading(true);
     const url = scope === 'ws' ? `/workspaces/${scopeId}/audit` : `/orgs/${scopeId}/audit`;
     api
-      .get(url, { params: { page, page_size: 50, action: actionFilter } })
+      .get(url, { params: { page, page_size: 50, ...filters } })
       .then((res) => setLogs(res.data.items || []))
       .finally(() => setLoading(false));
   };
 
-  useEffect(fetchLogs, [scopeId, page, actionFilter]);
+  useEffect(fetchLogs, [scopeId, page, filters]);
 
   const columns = [
     {
@@ -151,25 +158,17 @@ export default function AuditPage({ orgId: orgIdProp, wsId: wsIdProp }: { orgId?
   if (!scopeId) {
     return (
       <Card>
-        <p className="text-gray-500">
-          Sélectionnez une organisation ou un workspace.
-        </p>
+        <p className="text-gray-500">Sélectionnez une organisation ou un workspace.</p>
       </Card>
     );
   }
 
   return (
     <div>
-      <div className="flex justify-between items-center mb-4">
+      <div className="flex justify-between items-start mb-4">
         <h2 className="text-xl font-semibold">Audit Log</h2>
-        <Input
-          placeholder="Filtrer par action (ex: ORG_ARCHIVE)..."
-          allowClear
-          onChange={(e) => setActionFilter(e.target.value || undefined)}
-          style={{ width: 280 }}
-        />
+        <AuditFilterBar filters={filters} onChange={handleFiltersChange} />
       </div>
-
       <Card>
         <Table
           columns={columns}

@@ -1,8 +1,9 @@
 import { useEffect, useState } from 'react';
-import { Table, Card, Input, Space, Tag, Tooltip, Typography, Select } from 'antd';
+import { Table, Card, Space, Tag, Tooltip, Typography } from 'antd';
 import { CheckCircleOutlined, CloseCircleOutlined } from '@ant-design/icons';
 import dayjs from 'dayjs';
 import api from '@/lib/api';
+import { AuditFilterBar, AuditFilters } from './filters';
 
 const { Text } = Typography;
 
@@ -49,9 +50,10 @@ function DiffCell({ diff }: { diff: AuditEntry['diff'] }) {
 function DetailsCell({ details }: { details: AuditEntry['details'] }) {
   if (!details || !Object.keys(details).length) return null;
   const summary = Object.entries(details)
-    .filter(([, v]) => v !== null && v !== undefined)
+    .filter(([k, v]) => k !== 'target_display_name' && v !== null && v !== undefined)
     .map(([k, v]) => `${k}: ${v}`)
     .join('\n');
+  if (!summary) return null;
   return (
     <Tooltip title={summary}>
       <Tag className="cursor-default">détails</Tag>
@@ -63,17 +65,22 @@ export default function GlobalAuditPage() {
   const [logs, setLogs] = useState<AuditEntry[]>([]);
   const [loading, setLoading] = useState(true);
   const [page, setPage] = useState(1);
-  const [actionFilter, setActionFilter] = useState<string | undefined>();
+  const [filters, setFilters] = useState<AuditFilters>({});
+
+  const handleFiltersChange = (f: AuditFilters) => {
+    setPage(1);
+    setFilters(f);
+  };
 
   const fetchLogs = () => {
     setLoading(true);
     api
-      .get('/audit', { params: { page, page_size: 50, action: actionFilter || undefined } })
+      .get('/audit', { params: { page, page_size: 50, ...filters } })
       .then((res) => setLogs(res.data.items || []))
       .finally(() => setLoading(false));
   };
 
-  useEffect(fetchLogs, [page, actionFilter]);
+  useEffect(fetchLogs, [page, filters]);
 
   const columns = [
     {
@@ -85,7 +92,7 @@ export default function GlobalAuditPage() {
     {
       title: 'Organisation',
       key: 'org',
-      width: 160,
+      width: 150,
       ellipsis: true,
       render: (_: unknown, r: AuditEntry) => {
         if (!r.org_id) return <Text type="secondary">—</Text>;
@@ -102,7 +109,7 @@ export default function GlobalAuditPage() {
     {
       title: 'Acteur',
       key: 'actor',
-      width: 200,
+      width: 190,
       ellipsis: true,
       render: (_: unknown, r: AuditEntry) => (
         r.actor_email
@@ -128,7 +135,7 @@ export default function GlobalAuditPage() {
     {
       title: 'Cible',
       key: 'target',
-      width: 200,
+      width: 190,
       ellipsis: true,
       render: (_: unknown, r: AuditEntry) => {
         const name = r.details?.target_display_name;
@@ -158,16 +165,10 @@ export default function GlobalAuditPage() {
 
   return (
     <div>
-      <div className="flex justify-between items-center mb-4">
+      <div className="flex justify-between items-start mb-4">
         <h2 className="text-xl font-semibold">Audit Global</h2>
-        <Input
-          placeholder="Filtrer par action (ex: USER_DELETE)..."
-          allowClear
-          onChange={(e) => { setPage(1); setActionFilter(e.target.value || undefined); }}
-          style={{ width: 280 }}
-        />
+        <AuditFilterBar filters={filters} onChange={handleFiltersChange} />
       </div>
-
       <Card>
         <Table
           columns={columns}
