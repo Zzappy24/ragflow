@@ -17,16 +17,48 @@ def system_stats(user=Depends(require_superuser)):
 
     with DB.connection_context():
         total_orgs = Organisation.select().where(Organisation.status == "1").count()
-        total_workspaces = Workspace.select().where(Workspace.status == "1").count()
-        # Exclude technical workspace owners (ws-*@internal) from real-user count.
-        total_users = (
-            User.select()
-            .where((User.status == "1") & (~User.email.endswith("@internal")))
+
+        # Exclude technical tenants (ws-*@internal) from workspace count
+        total_workspaces = (
+            Workspace.select()
+            .where(
+                (Workspace.status == "1") &
+                Workspace.tenant_id.is_null(False)
+            )
             .count()
         )
 
-    datasets = KnowledgebaseService.query(status="1")
-    total_datasets = len(list(datasets))
+        # Real human users only: active, not technical tenant users, not tombstones
+        technical_user_ids = (
+            Workspace.select(Workspace.tenant_id)
+            .where(Workspace.tenant_id.is_null(False))
+        )
+        total_users = (
+            User.select()
+            .where(
+                (User.status == "1") &
+                (~User.email.startswith("purged_")) &
+                User.id.not_in(technical_user_ids)
+            )
+            .count()
+        )
+
+        # Datasets scoped to workspace tenants only (excludes personal tenant datasets)
+        ws_tenant_ids = list(
+            Workspace.select(Workspace.tenant_id)
+            .where(
+                (Workspace.status == "1") &
+                Workspace.tenant_id.is_null(False)
+            )
+            .tuples()
+        )
+        ws_tenant_ids = [row[0] for row in ws_tenant_ids]
+
+    if ws_tenant_ids:
+        all_datasets = KnowledgebaseService.query(status="1")
+        total_datasets = sum(1 for d in all_datasets if d.tenant_id in ws_tenant_ids)
+    else:
+        total_datasets = 0
 
     return SystemStats(
         total_orgs=total_orgs,
