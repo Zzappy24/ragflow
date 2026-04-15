@@ -1,7 +1,8 @@
 import { useEffect, useState } from 'react';
 import { useParams, Link, useNavigate } from 'react-router-dom';
-import { Card, Tabs, Spin, Progress, Row, Col, Statistic, Breadcrumb, Typography, Tag, Button, Modal, Input, App } from 'antd';
-import { AppstoreOutlined, TeamOutlined, AuditOutlined, HomeOutlined, DatabaseOutlined, FileOutlined, DeleteOutlined } from '@ant-design/icons';
+import { Card, Tabs, Spin, Progress, Row, Col, Statistic, Breadcrumb, Typography, Tag, Button, Modal, Input, App, Table, Space } from 'antd';
+import { AppstoreOutlined, TeamOutlined, AuditOutlined, HomeOutlined, DatabaseOutlined, FileOutlined, DeleteOutlined, InboxOutlined, UndoOutlined } from '@ant-design/icons';
+import dayjs from 'dayjs';
 import api from '@/lib/api';
 import { useAuthStore } from '@/stores/auth';
 import WorkspacesPage from '@/pages/workspaces';
@@ -9,6 +10,126 @@ import MembersPage from '@/pages/members';
 import AuditPage from '@/pages/audit';
 
 const { Title, Text } = Typography;
+
+function formatTime(t: string | number | null) {
+  if (!t) return '—';
+  const ms = typeof t === 'number' && t < 1e11 ? t * 1000 : t;
+  return dayjs(ms).format('DD/MM/YYYY HH:mm');
+}
+
+function OrgArchivesTab({ orgId }: { orgId: string }) {
+  const { message } = App.useApp();
+  const [data, setData] = useState<{ workspaces: any[]; users: any[] }>({ workspaces: [], users: [] });
+  const [loading, setLoading] = useState(true);
+  const [restoring, setRestoring] = useState<string | null>(null);
+
+  const fetch = () => {
+    setLoading(true);
+    api.get(`/orgs/${orgId}/archives`)
+      .then((r) => setData(r.data))
+      .catch(() => setData({ workspaces: [], users: [] }))
+      .finally(() => setLoading(false));
+  };
+
+  useEffect(fetch, [orgId]);
+
+  const restoreWs = async (wsId: string, name: string) => {
+    setRestoring(wsId);
+    try {
+      await api.post(`/orgs/${orgId}/archives/workspaces/${wsId}/restore`);
+      message.success(`Workspace "${name}" restauré`);
+      fetch();
+    } catch (err: any) {
+      message.error(err?.response?.data?.detail ?? 'Erreur lors de la restauration');
+    } finally {
+      setRestoring(null);
+    }
+  };
+
+  const restoreUser = async (uid: string, email: string) => {
+    setRestoring(uid);
+    try {
+      await api.post(`/orgs/${orgId}/archives/users/${uid}/restore`);
+      message.success(`Utilisateur "${email}" restauré`);
+      fetch();
+    } catch (err: any) {
+      message.error(err?.response?.data?.detail ?? 'Erreur lors de la restauration');
+    } finally {
+      setRestoring(null);
+    }
+  };
+
+  const wsColumns = [
+    { title: 'Nom', dataIndex: 'name', key: 'name' },
+    { title: 'Archivé le', dataIndex: 'create_time', key: 'create_time', width: 160, render: formatTime },
+    {
+      title: '',
+      key: 'actions',
+      width: 120,
+      render: (_: unknown, r: any) => (
+        <Button
+          size="small"
+          icon={<UndoOutlined />}
+          loading={restoring === r.id}
+          onClick={() => restoreWs(r.id, r.name)}
+        >
+          Restaurer
+        </Button>
+      ),
+    },
+  ];
+
+  const userColumns = [
+    { title: 'Email', dataIndex: 'email', key: 'email' },
+    { title: 'Nom', dataIndex: 'nickname', key: 'nickname' },
+    { title: 'Archivé le', dataIndex: 'create_time', key: 'create_time', width: 160, render: formatTime },
+    {
+      title: '',
+      key: 'actions',
+      width: 120,
+      render: (_: unknown, r: any) => (
+        <Button
+          size="small"
+          icon={<UndoOutlined />}
+          loading={restoring === r.id}
+          onClick={() => restoreUser(r.id, r.email)}
+        >
+          Restaurer
+        </Button>
+      ),
+    },
+  ];
+
+  if (loading) return <Spin className="flex justify-center mt-8" />;
+
+  const isEmpty = data.workspaces.length === 0 && data.users.length === 0;
+
+  if (isEmpty) {
+    return (
+      <Card>
+        <div className="text-center py-10 text-gray-400">
+          <InboxOutlined className="text-4xl mb-3" />
+          <p>Aucun élément archivé dans cette organisation.</p>
+        </div>
+      </Card>
+    );
+  }
+
+  return (
+    <Space direction="vertical" className="w-full" size="large">
+      {data.workspaces.length > 0 && (
+        <Card title={<span><AppstoreOutlined /> Workspaces archivés ({data.workspaces.length})</span>}>
+          <Table columns={wsColumns} dataSource={data.workspaces} rowKey="id" pagination={false} size="small" />
+        </Card>
+      )}
+      {data.users.length > 0 && (
+        <Card title={<span><TeamOutlined /> Utilisateurs archivés ({data.users.length})</span>}>
+          <Table columns={userColumns} dataSource={data.users} rowKey="id" pagination={false} size="small" />
+        </Card>
+      )}
+    </Space>
+  );
+}
 
 interface OrgDetail {
   id: string;
@@ -212,6 +333,11 @@ export default function OrgDetailPage() {
             key: 'audit',
             label: <span><AuditOutlined /> Audit</span>,
             children: <AuditPage orgId={orgId} />,
+          },
+          {
+            key: 'archives',
+            label: <span><InboxOutlined /> Archives</span>,
+            children: <OrgArchivesTab orgId={orgId!} />,
           },
         ]}
       />

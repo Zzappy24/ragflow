@@ -415,3 +415,182 @@ def purge_archived_user(user_id: str, confirm: str = "", user=Depends(require_su
             User.is_active: "0",
             User.status: "0",
         }).where(User.id == user_id).execute()
+
+
+# ---------------------------------------------------------------------------
+# ORG-SCOPED ARCHIVES — OrgAdmin self-service restore
+# ---------------------------------------------------------------------------
+
+def _snapshot_timestamps() -> set[str]:
+    """Return all timestamps that are part of an org cascade snapshot."""
+    from api.db.db_models import DB, Organisation
+    with DB.connection_context():
+        archived_orgs = list(Organisation.select(Organisation.name).where(Organisation.status == "0"))
+    return {_extract_ts(o.name) for o in archived_orgs if _extract_ts(o.name)}
+
+
+@router.get("/orgs/{org_id}/archives")
+def list_org_archives(org_id: str, user_id: str = Depends(get_current_user_id)):
+    """List archived workspaces and users scoped to this org (org_admin or superuser).
+
+    Excludes snapshot entities (archived as part of an org cascade) — those are
+    only restorable by the superuser via the global Archives centre.
+    """
+    require_org_admin(org_id, user_id)
+
+    from api.db.db_models import DB, Workspace, User
+    from api.db.services.org_service import OrgMember
+
+    snapshot_ts = _snapshot_timestamps()
+
+    # Archived workspaces belonging to this org
+    with DB.connection_context():
+        ws_rows = list(
+            Workspace.select()
+            .where((Workspace.org_id == org_id) & (Workspace.status == "0"))
+            .order_by(Workspace.create_time.desc())
+        )
+
+    workspaces = []
+    for ws in ws_rows:
+        ts = _extract_ts(ws.name)
+        if ts and ts in snapshot_ts:
+            continue  # part of org cascade, superuser-only
+        workspaces.append({
+            "id": ws.id,
+            "name": _strip_deleted(ws.name),
+            "create_time": getattr(ws, "create_time", None),
+        })
+
+    # Archived users who still have an OrgMember record for this org
+    # (users individually deleted via DELETE /users/{uid} have no OrgMember left —
+    # they appear in the global superuser Archives only)
+    with DB.connection_context():
+        member_user_ids = list(
+            OrgMember.select(OrgMember.user_id)
+            .where(OrgMember.org_id == org_id)
+            .tuples()
+        )
+    member_user_ids = [row[0] for row in member_user_ids]
+
+    users = []
+    if member_user_ids:
+        with DB.connection_context():
+            user_rows = list(
+                User.select()
+                .where(
+                    (User.id.in_(member_user_ids)) &
+                    (User.status == "0") &
+                    ~(User.email.startswith("purged_"))
+                )
+                .order_by(User.create_time.desc())
+            )
+        for u in user_rows:
+            ts = _extract_ts(u.email)
+            if ts and ts in snapshot_ts:
+                continue  # part of org cascade, superuser-only
+            users.append({
+                "id": u.id,
+                "email": _strip_deleted(u.email),
+                "nickname": u.nickname,
+                "create_time": getattr(u, "create_time", None),
+            })
+
+    return {"workspaces": workspaces, "users": users}
+
+
+@router.post("/orgs/{org_id}/archives/workspaces/{ws_id}/restore")
+def restore_org_workspace(request: Request, org_id: str, ws_id: str, user_id: str = Depends(get_current_user_id)):
+    """Restore an archived workspace scoped to this org (org_admin or superuser)."""
+    require_org_admin(org_id, user_id)
+
+    from api.db.db_models import DB, Workspace, Tenant, User
+
+    with DB.connection_context():
+        ws = Workspace.get_or_none(
+            (Workspace.id == ws_id) & (Workspace.org_id == org_id) & (Workspace.status == "0")
+        )
+    if not ws:
+        raise HTTPException(status_code=404, detail="Archived workspace not found in this organisation")
+
+    # Block snapshot restores — must go through global Archives
+    ts = _extract_ts(ws.name)
+    if ts and ts in _snapshot_timestamps():
+        raise HTTPException(
+            status_code=400,
+            detail="This workspace was archived as part of an org cascade. Restore the organisation via the global Archives centre.",
+        )
+
+    clean_name = _strip_deleted(ws.name)
+    with DB.connection_context():
+        Workspace.update({Workspace.name: clean_name, Workspace.status: "1"}).where(Workspace.id == ws_id).execute()
+        if ws.tenant_id:
+            Tenant.update(status="1").where(Tenant.id == ws.tenant_id).execute()
+            User.update(status="1").where(User.id == ws.tenant_id).execute()
+
+    audit_svc.record(
+        request=request,
+        actor_user_id=user_id,
+        action=audit_svc.WS_RESTORE,
+        org_id=org_id,
+        workspace_id=ws_id,
+        resource_type="workspace",
+        resource_id=ws_id,
+        details={"target_display_name": clean_name, "name": clean_name},
+    )
+
+    return {"id": ws_id, "name": clean_name}
+
+
+@router.post("/orgs/{org_id}/archives/users/{uid}/restore")
+def restore_org_user(request: Request, org_id: str, uid: str, user_id: str = Depends(get_current_user_id)):
+    """Restore an archived user scoped to this org (org_admin or superuser)."""
+    require_org_admin(org_id, user_id)
+
+    from api.db.db_models import DB, User
+    from api.db.services.org_service import OrgMember
+
+    # Verify user has an OrgMember record for this org (not individually purged)
+    with DB.connection_context():
+        has_membership = OrgMember.select().where(
+            (OrgMember.org_id == org_id) & (OrgMember.user_id == uid)
+        ).exists()
+    if not has_membership:
+        raise HTTPException(status_code=404, detail="User not found in this organisation's archives")
+
+    with DB.connection_context():
+        target = User.get_or_none((User.id == uid) & (User.status == "0"))
+    if not target:
+        raise HTTPException(status_code=404, detail="Archived user not found")
+    if target.email.startswith("purged_"):
+        raise HTTPException(status_code=400, detail="Cannot restore a purged (tombstoned) user")
+
+    # Block snapshot restores
+    ts = _extract_ts(target.email)
+    if ts and ts in _snapshot_timestamps():
+        raise HTTPException(
+            status_code=400,
+            detail="This user was archived as part of an org cascade. Restore the organisation via the global Archives centre.",
+        )
+
+    clean_email = _strip_deleted(target.email)
+    with DB.connection_context():
+        conflict = User.get_or_none((User.email == clean_email) & (User.status == "1"))
+    if conflict:
+        raise HTTPException(status_code=409, detail=f"Email '{clean_email}' is already taken by an active user")
+
+    with DB.connection_context():
+        User.update({User.email: clean_email, User.status: "1", User.is_active: "1"}).where(User.id == uid).execute()
+
+    audit_svc.record(
+        request=request,
+        actor_user_id=user_id,
+        action=audit_svc.USER_RESTORE,
+        org_id=org_id,
+        resource_type="user",
+        resource_id=uid,
+        details={"target_display_name": clean_email, "email": clean_email},
+    )
+
+    return {"id": uid, "email": clean_email}
+
