@@ -2,7 +2,7 @@ import { useEffect, useState } from 'react';
 import {
   Tabs, Table, Button, Modal, Input, App, Tag, Space, Typography, Tooltip,
 } from 'antd';
-import { UndoOutlined, DeleteOutlined, InboxOutlined } from '@ant-design/icons';
+import { UndoOutlined, FireOutlined, InboxOutlined } from '@ant-design/icons';
 import type { ColumnsType } from 'antd/es/table';
 import api from '@/lib/api';
 
@@ -147,7 +147,8 @@ export default function ArchivesPage() {
           <Tooltip title="Supprimer définitivement">
             <Button
               danger
-              icon={<DeleteOutlined />}
+              type="primary"
+              icon={<FireOutlined />}
               size="small"
               onClick={() => {
                 setPurgeTarget({ entityType: type, id: record.id, label: record[labelKey] });
@@ -266,6 +267,7 @@ export default function ArchivesPage() {
             key="purge"
             danger
             type="primary"
+            icon={<FireOutlined />}
             disabled={purgeConfirm !== 'PURGER'}
             loading={purging}
             onClick={handlePurge}

@@ -54,6 +54,7 @@ export default function WorkspacesPage({
     entityName: 'workspace',
     deleteOne: (id) => api.delete(`/orgs/${actualOrgId}/workspaces/${id}`),
     onDone: refresh,
+    variant: 'archive',
   });
 
   useEffect(fetchWorkspaces, [actualOrgId, showDeleted]);

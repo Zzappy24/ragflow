@@ -1,7 +1,7 @@
 import { useEffect, useState } from 'react';
 import { useSearchParams, useParams } from 'react-router-dom';
 import { Table, Button, Card, Modal, Form, Input, Select, App, Popconfirm, Space, Typography, Tooltip } from 'antd';
-import { PlusOutlined, DeleteOutlined, UserAddOutlined, CopyOutlined, UserDeleteOutlined } from '@ant-design/icons';
+import { PlusOutlined, UserAddOutlined, CopyOutlined, UserDeleteOutlined, FireOutlined, MinusCircleOutlined } from '@ant-design/icons';
 import type { ColumnsType } from 'antd/es/table';
 import api from '@/lib/api';
 import { useBulkDelete } from '@/components/BulkActions';
@@ -170,9 +170,9 @@ export default function MembersPage({
       width: 80,
       align: 'center' as const,
       render: (_: unknown, record: Member) => (
-        <Tooltip title="Remove from this scope only">
-          <Popconfirm title="Remove this member from the group?" onConfirm={() => onRemove(record.user_id)}>
-            <Button type="text" icon={<DeleteOutlined />} size="small">Remove</Button>
+        <Tooltip title="Retirer l'accès (récupérable)">
+          <Popconfirm title="Retirer ce membre ?" onConfirm={() => onRemove(record.user_id)}>
+            <Button type="text" icon={<MinusCircleOutlined />} size="small">Retirer</Button>
           </Popconfirm>
         </Tooltip>
       ),
@@ -182,15 +182,15 @@ export default function MembersPage({
       width: 80,
       align: 'center' as const,
       render: (_: unknown, record: Member) => (
-        <Tooltip title="GDPR: erase PII and revoke all access permanently">
+        <Tooltip title="RGPD : efface les données personnelles définitivement">
           <Popconfirm
-            title="Permanently delete this user account?"
-            description="All PII will be erased. Enterprise data will show 'Utilisateur Supprimé'. This cannot be undone."
+            title="Supprimer définitivement ce compte ?"
+            description="Toutes les données personnelles seront effacées. Irréversible."
             onConfirm={() => onDeleteUser(record.user_id)}
-            okText="Delete Account"
-            okButtonProps={{ danger: true }}
+            okText="Supprimer définitivement"
+            okButtonProps={{ danger: true, type: 'primary' }}
           >
-            <Button type="text" danger icon={<UserDeleteOutlined />} size="small">Delete</Button>
+            <Button type="text" danger icon={<FireOutlined />} size="small">Supprimer</Button>
           </Popconfirm>
         </Tooltip>
       ),

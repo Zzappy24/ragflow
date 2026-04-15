@@ -1,7 +1,7 @@
 import { useEffect, useState } from 'react';
 import { useParams, Link, useNavigate } from 'react-router-dom';
 import { Card, Tabs, Spin, Statistic, Row, Col, Tag, Breadcrumb, Typography, Skeleton, Button, Popconfirm, App, Space } from 'antd';
-import { TeamOutlined, DatabaseOutlined, KeyOutlined, AuditOutlined, GroupOutlined, HomeOutlined, DeleteOutlined, ExportOutlined, RobotOutlined } from '@ant-design/icons';
+import { TeamOutlined, DatabaseOutlined, KeyOutlined, AuditOutlined, GroupOutlined, HomeOutlined, InboxOutlined, ExportOutlined, RobotOutlined } from '@ant-design/icons';
 import api from '@/lib/api';
 import MembersPage from '@/pages/members';
 import GroupsPage from '@/pages/groups';
@@ -131,18 +131,18 @@ export default function WorkspaceDetailPage() {
             </Button>
           )}
           <Popconfirm
-            title="Delete this workspace?"
+            title="Archiver ce workspace ?"
             description={
               isEmpty
-                ? 'This action cannot be undone.'
-                : `This workspace has ${stats?.members_count ?? 0} member(s) and ${stats?.datasets_count ?? 0} dataset(s). Delete anyway?`
+                ? 'Le workspace sera désactivé. Récupérable depuis les Archives.'
+                : `Ce workspace a ${stats?.members_count ?? 0} membre(s) et ${stats?.datasets_count ?? 0} dataset(s). Archiver quand même ?`
             }
-            okText="Delete"
-            okButtonProps={{ danger: true }}
+            okText="Archiver"
+            okButtonProps={{ style: { background: '#f97316', borderColor: '#f97316' } }}
             onConfirm={onDelete}
           >
-            <Button danger icon={<DeleteOutlined />} loading={deleting}>
-              Delete workspace
+            <Button icon={<InboxOutlined />} loading={deleting} style={{ color: '#f97316', borderColor: '#f97316' }}>
+              Archiver le workspace
             </Button>
           </Popconfirm>
         </Space>

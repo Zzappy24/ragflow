@@ -1,7 +1,7 @@
 import { useEffect, useState } from 'react';
 import { useParams, Link, useNavigate } from 'react-router-dom';
 import { Card, Tabs, Spin, Progress, Row, Col, Statistic, Breadcrumb, Typography, Tag, Button, Modal, Input, App, Table, Space } from 'antd';
-import { AppstoreOutlined, TeamOutlined, AuditOutlined, HomeOutlined, DatabaseOutlined, FileOutlined, DeleteOutlined, InboxOutlined, UndoOutlined } from '@ant-design/icons';
+import { AppstoreOutlined, TeamOutlined, AuditOutlined, HomeOutlined, DatabaseOutlined, FileOutlined, InboxOutlined, UndoOutlined, FireOutlined } from '@ant-design/icons';
 import dayjs from 'dayjs';
 import api from '@/lib/api';
 import { useAuthStore } from '@/stores/auth';
@@ -356,8 +356,9 @@ export default function OrgDetailPage() {
               </div>
             </div>
             <Button
-              icon={<DeleteOutlined />}
+              icon={<InboxOutlined />}
               onClick={() => setArchiveModalOpen(true)}
+              style={{ color: '#f97316', borderColor: '#f97316' }}
             >
               Archiver
             </Button>
@@ -372,7 +373,8 @@ export default function OrgDetailPage() {
             </div>
             <Button
               danger
-              icon={<DeleteOutlined />}
+              type="primary"
+              icon={<FireOutlined />}
               onClick={() => setPurgeModalOpen(true)}
             >
               Supprimer définitivement
