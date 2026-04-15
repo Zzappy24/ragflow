@@ -71,7 +71,7 @@ def get_workspace(org_id: str, ws_id: str, user_id: str = Depends(get_current_us
     require_org_admin(org_id, user_id)
     from api.db.services.workspace_service import WorkspaceService
     ok, ws = WorkspaceService.get_by_id(ws_id)
-    if not ok or not ws or ws.org_id != org_id:
+    if not ok or not ws or ws.org_id != org_id or ws.status != "1":
         raise HTTPException(status_code=404, detail="Workspace not found")
     return _ws_to_response(ws)
 
@@ -83,7 +83,7 @@ def update_workspace(org_id: str, ws_id: str, body: WsUpdate, user_id: str = Dep
     from api.db.services.workspace_service import WorkspaceService
 
     ok, ws = WorkspaceService.get_by_id(ws_id)
-    if not ok or not ws or ws.org_id != org_id:
+    if not ok or not ws or ws.org_id != org_id or ws.status != "1":
         raise HTTPException(status_code=404, detail="Workspace not found")
 
     update_data = body.model_dump(exclude_none=True)
@@ -102,7 +102,7 @@ def delete_workspace(request: Request, org_id: str, ws_id: str, user_id: str = D
     from management.server.services.provisioning import deprovision_workspace
 
     ok, ws = WorkspaceService.get_by_id(ws_id)
-    if not ok or not ws or ws.org_id != org_id:
+    if not ok or not ws or ws.org_id != org_id or ws.status != "1":
         raise HTTPException(status_code=404, detail="Workspace not found")
     deprovision_workspace(ws_id)
 

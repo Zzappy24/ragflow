@@ -44,6 +44,72 @@ from rag.utils.redis_conn import RedisDistributedLock
 
 stop_event = threading.Event()
 
+
+def flush_token_usage():
+    """Flush daily token usage counters from Redis to MySQL every 5 minutes."""
+    from datetime import date
+    from rag.utils.redis_conn import REDIS_CONN
+    from api.db.db_models import TokenUsageDaily, DB
+
+    lock_value = str(uuid.uuid4())
+    redis_lock = RedisDistributedLock("flush_token_usage", lock_value=lock_value, timeout=120)
+
+    while not stop_event.is_set():
+        try:
+            if redis_lock.acquire():
+                try:
+                    pattern = "token_usage:*"
+                    cursor = 0
+                    keys = []
+                    while True:
+                        cursor, batch = REDIS_CONN.REDIS.scan(cursor, match=pattern, count=100)
+                        keys.extend(batch)
+                        if cursor == 0:
+                            break
+                    for key in keys:
+                        # key format: token_usage:{date}:{tenant_id}:{llm_factory}:{model_type}:{llm_name}
+                        parts = key.split(":", 6)
+                        if len(parts) != 6:
+                            continue
+                        _, day, tenant_id, llm_factory, model_type, llm_name = parts
+
+                        # Atomically get and reset the counter
+                        pipe = REDIS_CONN.REDIS.pipeline()
+                        pipe.get(key)
+                        pipe.delete(key)
+                        results = pipe.execute()
+                        tokens = int(results[0] or 0)
+                        if tokens <= 0:
+                            continue
+
+                        with DB.connection_context():
+                            (TokenUsageDaily
+                             .insert(
+                                 tenant_id=tenant_id,
+                                 llm_factory=llm_factory,
+                                 model_type=model_type,
+                                 llm_name=llm_name,
+                                 date=day,
+                                 tokens=tokens,
+                             )
+                             .on_conflict(
+                                 conflict_target=[
+                                     TokenUsageDaily.tenant_id,
+                                     TokenUsageDaily.llm_factory,
+                                     TokenUsageDaily.model_type,
+                                     TokenUsageDaily.llm_name,
+                                     TokenUsageDaily.date,
+                                 ],
+                                 preserve=[],
+                                 update={TokenUsageDaily.tokens: TokenUsageDaily.tokens + tokens},
+                             )
+                             .execute())
+                finally:
+                    redis_lock.release()
+        except Exception:
+            logging.exception("flush_token_usage exception")
+        stop_event.wait(300)  # flush every 5 minutes
+
 RAGFLOW_DEBUGPY_LISTEN = int(os.environ.get('RAGFLOW_DEBUGPY_LISTEN', "0"))
 
 def update_progress():
@@ -162,11 +228,18 @@ if __name__ == '__main__':
         t = threading.Thread(target=update_progress, daemon=True)
         t.start()
 
+    def delayed_start_flush_token_usage():
+        logging.info("Starting flush_token_usage thread (delayed)")
+        t = threading.Thread(target=flush_token_usage, daemon=True)
+        t.start()
+
     if RuntimeConfig.DEBUG:
         if os.environ.get("WERKZEUG_RUN_MAIN") == "true":
             threading.Timer(1.0, delayed_start_update_progress).start()
+            threading.Timer(2.0, delayed_start_flush_token_usage).start()
     else:
         threading.Timer(1.0, delayed_start_update_progress).start()
+        threading.Timer(2.0, delayed_start_flush_token_usage).start()
 
     # start http server
     try:

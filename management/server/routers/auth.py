@@ -70,9 +70,11 @@ def me(user=Depends(get_current_user)):
     orgs = []
     for m in org_memberships:
         ok, org = OrgService.get_by_id(m.org_id)
+        if not ok or not org or getattr(org, "status", "1") != "1":
+            continue  # skip deleted orgs
         orgs.append({
             "org_id": m.org_id,
-            "org_name": org.name if ok and org else "?",
+            "org_name": org.name,
             "role": m.role,
         })
 

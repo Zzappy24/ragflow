@@ -112,7 +112,7 @@ def get_org(org_id: str, user_id: str = Depends(get_current_user_id)):
     user = require_org_admin(org_id, user_id)
     from api.db.services.org_service import OrgService
     ok, org = OrgService.get_by_id(org_id)
-    if not ok or not org:
+    if not ok or not org or org.status != "1":
         raise HTTPException(status_code=404, detail="Organisation not found")
     return _org_to_response(org)
 
@@ -124,7 +124,7 @@ def update_org(org_id: str, body: OrgUpdate, user_id: str = Depends(get_current_
     from api.db.services.org_service import OrgService
 
     ok, org = OrgService.get_by_id(org_id)
-    if not ok or not org:
+    if not ok or not org or org.status != "1":
         raise HTTPException(status_code=404, detail="Organisation not found")
 
     update_data = body.model_dump(exclude_none=True)

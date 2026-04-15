@@ -836,6 +836,22 @@ class TenantLLM(DataBaseModel):
         )
 
 
+class TokenUsageDaily(DataBaseModel):
+    id = PrimaryKeyField()
+    tenant_id = CharField(max_length=32, null=False, index=True)
+    llm_factory = CharField(max_length=128, null=False, index=True)
+    model_type = CharField(max_length=128, null=False, index=True)
+    llm_name = CharField(max_length=128, null=False, index=True)
+    date = CharField(max_length=10, null=False, help_text="YYYY-MM-DD", index=True)
+    tokens = BigIntegerField(default=0)
+
+    class Meta:
+        db_table = "token_usage_daily"
+        indexes = (
+            (("tenant_id", "llm_factory", "model_type", "llm_name", "date"), True),
+        )
+
+
 class TenantLangfuse(DataBaseModel):
     tenant_id = CharField(max_length=32, null=False, primary_key=True)
     secret_key = CharField(max_length=2048, null=False, help_text="SECRET KEY", index=True)

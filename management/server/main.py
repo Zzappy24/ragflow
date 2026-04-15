@@ -17,6 +17,12 @@ from fastapi.middleware.cors import CORSMiddleware
 
 from management.server.config import settings
 
+if not settings.JWT_SECRET:
+    raise RuntimeError(
+        "ADMIN_JWT_SECRET environment variable is not set. "
+        "Generate one with: python -c \"import secrets; print(secrets.token_urlsafe(32))\""
+    )
+
 
 @asynccontextmanager
 async def lifespan(app: FastAPI):

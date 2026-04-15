@@ -207,6 +207,17 @@ async def bridge_login():
             data=False, code=RetCode.AUTHENTICATION_ERROR, message="Bridge token already used"
         )
 
+    # Load and validate user first — before any membership check
+    ok_user, user = UserService.get_by_id(user_id)
+    if not ok_user or not user:
+        return get_json_result(
+            data=False, code=RetCode.AUTHENTICATION_ERROR, message="User not found"
+        )
+    if hasattr(user, "is_active") and user.is_active == "0":
+        return get_json_result(
+            data=False, code=RetCode.FORBIDDEN, message="Account disabled"
+        )
+
     # Re-verify workspace membership at consumption time — admin panel state
     # could have changed between issuance and use.
     from api.db.services.workspace_service import WorkspaceService, WsMemberService
@@ -219,8 +230,7 @@ async def bridge_login():
     membership = WsMemberService.get_membership(ws_id, user_id)
     if not membership:
         # Allow superusers / org admins through too — mirrors require_ws_member
-        ok_user, user_obj = UserService.get_by_id(user_id)
-        is_super = bool(ok_user and getattr(user_obj, "is_superuser", False))
+        is_super = bool(getattr(user, "is_superuser", False))
         is_org_admin = False
         if not is_super:
             try:
@@ -235,16 +245,6 @@ async def bridge_login():
                 code=RetCode.AUTHENTICATION_ERROR,
                 message="Not a member of this workspace",
             )
-
-    ok_user, user = UserService.get_by_id(user_id)
-    if not ok_user or not user:
-        return get_json_result(
-            data=False, code=RetCode.AUTHENTICATION_ERROR, message="User not found"
-        )
-    if hasattr(user, "is_active") and user.is_active == "0":
-        return get_json_result(
-            data=False, code=RetCode.FORBIDDEN, message="Account disabled"
-        )
 
     # Copy to a new dict — user.to_json() returns peewee's internal __data__
     # reference, and mutating it would corrupt the model state and cause

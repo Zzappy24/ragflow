@@ -16,6 +16,7 @@
 import os
 import json
 import logging
+from datetime import date
 from peewee import IntegrityError
 from langfuse import Langfuse
 from common import settings
@@ -221,6 +222,15 @@ class TenantLLMService(CommonService):
         except Exception:
             logging.exception("TenantLLMService.increase_usage got exception,Failed to update used_tokens for tenant_id=%s, llm_name=%s", tenant_id, llm_name)
             return 0
+
+        # Fire-and-forget: push to Redis for async daily flush — never blocks the hot path
+        try:
+            from rag.utils.redis_conn import REDIS_CONN
+            today = date.today().isoformat()
+            redis_key = f"token_usage:{today}:{tenant_id}:{llm_factory or ''}:{llm_type}:{llm_name}"
+            REDIS_CONN.REDIS.incrby(redis_key, used_tokens)
+        except Exception:
+            logging.warning("token_usage Redis incrby failed — usage will not be recorded for this call", exc_info=False)
 
         return num
 

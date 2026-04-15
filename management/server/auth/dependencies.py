@@ -80,7 +80,7 @@ def require_ws_admin(ws_id: str, user_id: str = Depends(get_current_user_id)):
 
     from api.db.services.workspace_service import WorkspaceService, WsMemberService
     ok, ws = WorkspaceService.get_by_id(ws_id)
-    if not ok or not ws:
+    if not ok or not ws or ws.status != "1":
         raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Workspace not found")
 
     # Check org admin
@@ -113,7 +113,7 @@ def require_ws_member(ws_id: str, user_id: str = Depends(get_current_user_id)):
 
     from api.db.services.workspace_service import WorkspaceService, WsMemberService
     ok, ws = WorkspaceService.get_by_id(ws_id)
-    if not ok or not ws:
+    if not ok or not ws or ws.status != "1":
         raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Workspace not found")
 
     # Org admin bypass

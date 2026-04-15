@@ -77,5 +77,5 @@ def health():
         with DB.connection_context():
             DB.execute_sql("SELECT 1")
         return {"status": "healthy", "db": "connected"}
-    except Exception as e:
-        return {"status": "unhealthy", "db": str(e)}
+    except Exception:
+        return {"status": "unhealthy", "db": "connection failed"}

@@ -45,6 +45,10 @@ def _resolve_tenant() -> str | None:
             return ws.tenant_id
 
         if getattr(current_user, "is_superuser", False):
+            logging.info(
+                "RBAC superuser bypass: user=%s accessed workspace=%s tenant=%s",
+                current_user.id, ws_id, ws.tenant_id,
+            )
             return ws.tenant_id
 
         # Org admins of the workspace's parent org can access without an
@@ -53,6 +57,10 @@ def _resolve_tenant() -> str | None:
             from api.db.services.org_service import OrgMemberService
             om = OrgMemberService.get_membership(ws.org_id, current_user.id)
             if om and om.role == "org_admin":
+                logging.info(
+                    "RBAC org_admin bypass: user=%s org=%s accessed workspace=%s tenant=%s",
+                    current_user.id, ws.org_id, ws_id, ws.tenant_id,
+                )
                 return ws.tenant_id
         except Exception:
             pass

@@ -120,6 +120,11 @@ const routeConfigOptions = [
     layout: false,
   },
   {
+    path: '/bridge',
+    Component: () => import('@/pages/bridge'),
+    layout: false,
+  },
+  {
     path: Routes.ChatShare,
     Component: () => import('@/pages/next-chats/share'),
     layout: false,
@@ -154,6 +159,12 @@ const routeConfigOptions = [
     Component: () => import('@/layouts/root-layout'),
     loader: ({ request }: { request: Request }) => {
       const url = new URL(request.url);
+      const bridgeToken = url.searchParams.get('bridge_token');
+      if (bridgeToken) {
+        return redirect(
+          `/bridge?bridge_token=${encodeURIComponent(bridgeToken)}`,
+        );
+      }
       const auth = url.searchParams.get('auth');
       if (auth) {
         authorizationUtil.setAuthorization(auth);
