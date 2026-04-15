@@ -1429,15 +1429,21 @@ class AuditLog(DataBaseModel):
     org_id = CharField(max_length=32, null=True, index=True)
     workspace_id = CharField(max_length=32, null=True, index=True)
     user_id = CharField(max_length=32, null=False, index=True)
+    # Email of the actor stored at event time (survives user purge)
+    actor_email = CharField(max_length=255, null=True)
     action = CharField(max_length=64, null=False, index=True)
+    # "success" | "failure"
+    status = CharField(max_length=16, null=True, default="success")
     resource_type = CharField(max_length=32, null=True, index=True)
     resource_id = CharField(max_length=32, null=True, index=True)
     details = JSONField(null=True)
+    # Before/after state for auditable mutations
+    diff = JSONField(null=True)
     ip_address = CharField(max_length=45, null=True)
     user_agent = CharField(max_length=512, null=True)
 
     class Meta:
-        db_table = "audit_log"
+        db_table = "cyllene_audit_log"
 
 
 class ApiKeyScope(DataBaseModel):

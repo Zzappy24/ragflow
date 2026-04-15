@@ -1,10 +1,11 @@
 """
 Member management routes for both org-level and workspace-level members.
 """
-from fastapi import APIRouter, Depends, HTTPException, status
+from fastapi import APIRouter, Depends, HTTPException, Request, status
 
 from management.server.auth.dependencies import get_current_user_id, require_org_admin
 from management.server.models.schemas import MemberAdd, MemberUpdateRole, MemberResponse
+from management.server.services import audit as audit_svc
 
 router = APIRouter()
 
@@ -26,6 +27,12 @@ def _load_user(user_id: str):
     return user if ok else None
 
 
+def _ws_org_id(ws_id: str) -> str | None:
+    from api.db.services.workspace_service import WorkspaceService
+    ok, ws = WorkspaceService.get_by_id(ws_id)
+    return ws.org_id if ok and ws else None
+
+
 # -- Org Members -------------------------------------------------------------
 
 @router.get("/orgs/{org_id}/members", response_model=list[MemberResponse])
@@ -42,7 +49,7 @@ def list_org_members(org_id: str, user_id: str = Depends(get_current_user_id)):
 
 
 @router.post("/orgs/{org_id}/members", response_model=MemberResponse, status_code=status.HTTP_201_CREATED)
-def add_org_member(org_id: str, body: MemberAdd, user_id: str = Depends(get_current_user_id)):
+def add_org_member(request: Request, org_id: str, body: MemberAdd, user_id: str = Depends(get_current_user_id)):
     """Add a member to an organisation by email."""
     require_org_admin(org_id, user_id)
 
@@ -75,11 +82,22 @@ def add_org_member(org_id: str, body: MemberAdd, user_id: str = Depends(get_curr
     })
 
     ok, member = OrgMemberService.get_by_id(member_id)
+
+    audit_svc.record(
+        request=request,
+        actor_user_id=user_id,
+        action=audit_svc.ORG_MEMBER_ADD,
+        org_id=org_id,
+        resource_type="user",
+        resource_id=target_user.id,
+        details={"target_display_name": body.email, "email": body.email, "role": body.role},
+    )
+
     return _member_to_response(member, target_user)
 
 
 @router.put("/orgs/{org_id}/members/{uid}", response_model=MemberResponse)
-def update_org_member_role(org_id: str, uid: str, body: MemberUpdateRole, user_id: str = Depends(get_current_user_id)):
+def update_org_member_role(request: Request, org_id: str, uid: str, body: MemberUpdateRole, user_id: str = Depends(get_current_user_id)):
     """Update an org member's role."""
     require_org_admin(org_id, user_id)
 
@@ -91,14 +109,44 @@ def update_org_member_role(org_id: str, uid: str, body: MemberUpdateRole, user_i
     if not membership:
         raise HTTPException(status_code=404, detail="Member not found")
 
+    # Last-admin lockout prevention: cannot demote the last org_admin
+    if membership.role == "org_admin" and body.role != "org_admin":
+        admin_count = (
+            OrgMemberService.model.select()
+            .where(
+                (OrgMemberService.model.org_id == org_id) &
+                (OrgMemberService.model.role == "org_admin") &
+                (OrgMemberService.model.status == "1")
+            )
+            .count()
+        )
+        if admin_count <= 1:
+            raise HTTPException(
+                status_code=400,
+                detail="Cannot demote the last org admin — assign another admin first",
+            )
+
+    old_role = membership.role
     OrgMemberService.update_by_id(membership.id, {"role": body.role})
     ok, member = OrgMemberService.get_by_id(membership.id)
     user = _load_user(uid)
+
+    audit_svc.record(
+        request=request,
+        actor_user_id=user_id,
+        action=audit_svc.ORG_MEMBER_ROLE_CHANGE,
+        org_id=org_id,
+        resource_type="user",
+        resource_id=uid,
+        details={"target_display_name": user.email if user else uid},
+        diff={"before": {"role": old_role}, "after": {"role": body.role}},
+    )
+
     return _member_to_response(member, user)
 
 
 @router.delete("/orgs/{org_id}/members/{uid}", status_code=status.HTTP_204_NO_CONTENT)
-def remove_org_member(org_id: str, uid: str, user_id: str = Depends(get_current_user_id)):
+def remove_org_member(request: Request, org_id: str, uid: str, user_id: str = Depends(get_current_user_id)):
     """Remove a member from an organisation."""
     require_org_admin(org_id, user_id)
 
@@ -110,7 +158,49 @@ def remove_org_member(org_id: str, uid: str, user_id: str = Depends(get_current_
     if not membership:
         raise HTTPException(status_code=404, detail="Member not found")
 
+    # Last-admin lockout prevention
+    if membership.role == "org_admin":
+        admin_count = (
+            OrgMemberService.model.select()
+            .where(
+                (OrgMemberService.model.org_id == org_id) &
+                (OrgMemberService.model.role == "org_admin") &
+                (OrgMemberService.model.status == "1")
+            )
+            .count()
+        )
+        if admin_count <= 1:
+            raise HTTPException(
+                status_code=400,
+                detail="Cannot remove the last org admin — assign another admin first",
+            )
+
+    target = _load_user(uid)
+
+    # Cascade: revoke all workspace access in this org
+    from api.db.services.workspace_service import WorkspaceService, WsMemberService
+    from api.db.db_models import DB
+    org_workspaces = WorkspaceService.list_by_org(org_id, include_deleted=False)
+    ws_ids = [ws.id for ws in org_workspaces]
+    if ws_ids:
+        with DB.connection_context():
+            WsMemberService.model.update({"status": "0"}).where(
+                (WsMemberService.model.user_id == uid) &
+                (WsMemberService.model.workspace_id.in_(ws_ids))
+            ).execute()
+
     OrgMemberService.update_by_id(membership.id, {"status": "0"})
+
+    audit_svc.record(
+        request=request,
+        actor_user_id=user_id,
+        action=audit_svc.ORG_MEMBER_REMOVE,
+        org_id=org_id,
+        resource_type="user",
+        resource_id=uid,
+        details={"target_display_name": target.email if target else uid, "email": target.email if target else None},
+        diff={"role_deleted": membership.role},
+    )
 
 
 # -- Workspace Members -------------------------------------------------------
@@ -131,7 +221,7 @@ def list_ws_members(ws_id: str, user_id: str = Depends(get_current_user_id)):
 
 
 @router.post("/workspaces/{ws_id}/members", response_model=MemberResponse, status_code=status.HTTP_201_CREATED)
-def add_ws_member(ws_id: str, body: MemberAdd, user_id: str = Depends(get_current_user_id)):
+def add_ws_member(request: Request, ws_id: str, body: MemberAdd, user_id: str = Depends(get_current_user_id)):
     """Add a member to a workspace. User must already be an org member."""
     from management.server.auth.dependencies import require_ws_admin
     require_ws_admin(ws_id, user_id)
@@ -167,11 +257,23 @@ def add_ws_member(ws_id: str, body: MemberAdd, user_id: str = Depends(get_curren
     grant_workspace_access(ws=ws, target_user_id=target_user.id, role=body.role, member_id=member_id)
 
     ok, member = WsMemberService.get_by_id(member_id)
+
+    audit_svc.record(
+        request=request,
+        actor_user_id=user_id,
+        action=audit_svc.WS_MEMBER_ADD,
+        org_id=ws.org_id,
+        workspace_id=ws_id,
+        resource_type="user",
+        resource_id=target_user.id,
+        details={"target_display_name": body.email, "email": body.email, "role": body.role},
+    )
+
     return _member_to_response(member, target_user)
 
 
 @router.put("/workspaces/{ws_id}/members/{uid}", response_model=MemberResponse)
-def update_ws_member_role(ws_id: str, uid: str, body: MemberUpdateRole, user_id: str = Depends(get_current_user_id)):
+def update_ws_member_role(request: Request, ws_id: str, uid: str, body: MemberUpdateRole, user_id: str = Depends(get_current_user_id)):
     """Update a workspace member's role."""
     from management.server.auth.dependencies import require_ws_admin
     require_ws_admin(ws_id, user_id)
@@ -184,14 +286,47 @@ def update_ws_member_role(ws_id: str, uid: str, body: MemberUpdateRole, user_id:
     if not membership:
         raise HTTPException(status_code=404, detail="Member not found")
 
+    old_role = membership.role
+
+    # Last ws_admin lockout prevention
+    if old_role == "ws_admin" and body.role != "ws_admin":
+        from api.db.services.workspace_service import WsMemberService as _WsMemberService
+        admin_count = (
+            _WsMemberService.model.select()
+            .where(
+                (_WsMemberService.model.workspace_id == ws_id) &
+                (_WsMemberService.model.role == "ws_admin") &
+                (_WsMemberService.model.status == "1")
+            )
+            .count()
+        )
+        if admin_count <= 1:
+            raise HTTPException(
+                status_code=400,
+                detail="Cannot demote the last workspace admin — assign another admin first",
+            )
+
     WsMemberService.update_by_id(membership.id, {"role": body.role})
     ok, member = WsMemberService.get_by_id(membership.id)
     user = _load_user(uid)
+
+    audit_svc.record(
+        request=request,
+        actor_user_id=user_id,
+        action=audit_svc.WS_MEMBER_ROLE_CHANGE,
+        org_id=_ws_org_id(ws_id),
+        workspace_id=ws_id,
+        resource_type="user",
+        resource_id=uid,
+        details={"target_display_name": user.email if user else uid},
+        diff={"before": {"role": old_role}, "after": {"role": body.role}},
+    )
+
     return _member_to_response(member, user)
 
 
 @router.delete("/workspaces/{ws_id}/members/{uid}", status_code=status.HTTP_204_NO_CONTENT)
-def remove_ws_member(ws_id: str, uid: str, user_id: str = Depends(get_current_user_id)):
+def remove_ws_member(request: Request, ws_id: str, uid: str, user_id: str = Depends(get_current_user_id)):
     """Remove a member from a workspace."""
     from management.server.auth.dependencies import require_ws_admin
     require_ws_admin(ws_id, user_id)
@@ -204,4 +339,17 @@ def remove_ws_member(ws_id: str, uid: str, user_id: str = Depends(get_current_us
     if not membership:
         raise HTTPException(status_code=404, detail="Member not found")
 
+    target = _load_user(uid)
     WsMemberService.update_by_id(membership.id, {"status": "0"})
+
+    audit_svc.record(
+        request=request,
+        actor_user_id=user_id,
+        action=audit_svc.WS_MEMBER_REMOVE,
+        org_id=_ws_org_id(ws_id),
+        workspace_id=ws_id,
+        resource_type="user",
+        resource_id=uid,
+        details={"target_display_name": target.email if target else uid, "email": target.email if target else None},
+        diff={"role_deleted": membership.role},
+    )

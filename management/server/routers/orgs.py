@@ -2,7 +2,7 @@
 Organisation CRUD routes.
 Only superusers can create/delete orgs. Org admins can update their own org.
 """
-from fastapi import APIRouter, Depends, HTTPException, status
+from fastapi import APIRouter, Depends, HTTPException, Request, status
 
 from management.server.auth.dependencies import (
     get_current_user,
@@ -11,6 +11,7 @@ from management.server.auth.dependencies import (
     require_org_admin,
 )
 from management.server.models.schemas import OrgCreate, OrgUpdate, OrgResponse
+from management.server.services import audit as audit_svc
 
 router = APIRouter()
 
@@ -136,7 +137,7 @@ def update_org(org_id: str, body: OrgUpdate, user_id: str = Depends(get_current_
 
 
 @router.delete("/{org_id}", status_code=status.HTTP_204_NO_CONTENT)
-def delete_org(org_id: str, user=Depends(require_superuser)):
+def delete_org(request: Request, org_id: str, user=Depends(require_superuser)):
     """Soft-delete organisation and cascade to its workspaces + orphaned users.
 
     All entities share the same timestamp suffix so the entire snapshot can be
@@ -203,6 +204,16 @@ def delete_org(org_id: str, user=Depends(require_superuser)):
                     User.is_active: "0",
                     User.status: "0",
                 }).where(User.id == uid).execute()
+
+    audit_svc.record(
+        request=request,
+        actor_user_id=user.id,
+        action=audit_svc.ORG_ARCHIVE,
+        org_id=org_id,
+        resource_type="organisation",
+        resource_id=org_id,
+        details={"target_display_name": org.name, "name": org.name, "cascaded_workspaces": len(ws_ids), "cascaded_users": len(user_ids)},
+    )
 
 
 @router.delete("/{org_id}/purge", status_code=status.HTTP_204_NO_CONTENT)

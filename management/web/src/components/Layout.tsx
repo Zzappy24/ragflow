@@ -7,20 +7,24 @@ import {
   LogoutOutlined,
   UserOutlined,
   InboxOutlined,
+  AuditOutlined,
 } from '@ant-design/icons';
 import { useAuthStore } from '@/stores/auth';
 
 const { Sider, Content, Header } = AntLayout;
 const { Text } = Typography;
 
-const menuItems = [
-  { key: '/', icon: <DashboardOutlined />, label: <Link to="/">Dashboard</Link> },
-  { key: '/organisations', icon: <BankOutlined />, label: <Link to="/organisations">Organisations</Link> },
-  { key: '/archives', icon: <InboxOutlined />, label: <Link to="/archives">Archives</Link> },
-];
-
 export default function AppLayout() {
   const { user, fetchMe, logout, isLoggedIn } = useAuthStore();
+
+  const menuItems = [
+    { key: '/', icon: <DashboardOutlined />, label: <Link to="/">Dashboard</Link> },
+    { key: '/organisations', icon: <BankOutlined />, label: <Link to="/organisations">Organisations</Link> },
+    ...(user?.is_superuser ? [
+      { key: '/archives', icon: <InboxOutlined />, label: <Link to="/archives">Archives</Link> },
+      { key: '/audit', icon: <AuditOutlined />, label: <Link to="/audit">Audit Global</Link> },
+    ] : []),
+  ];
   const navigate = useNavigate();
   const location = useLocation();
 
@@ -58,6 +62,8 @@ export default function AppLayout() {
               ? '/organisations'
               : location.pathname.startsWith('/archives')
               ? '/archives'
+              : location.pathname.startsWith('/audit')
+              ? '/audit'
               : location.pathname,
           ]}
           items={menuItems}

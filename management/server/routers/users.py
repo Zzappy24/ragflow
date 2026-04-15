@@ -17,7 +17,7 @@ Flow:
      outbound email.
   4. The user lands on RAGFlow, sets a password, and is auto-logged in.
 """
-from fastapi import APIRouter, Depends, HTTPException, status
+from fastapi import APIRouter, Depends, HTTPException, Request, status
 
 from management.server.auth.dependencies import (
     get_current_user_id,
@@ -27,6 +27,7 @@ from management.server.auth.dependencies import (
 from management.server.auth.jwt import create_invite_token
 from management.server.config import settings
 from management.server.models.schemas import UserProvision, UserProvisionResponse
+from management.server.services import audit as audit_svc
 
 router = APIRouter()
 
@@ -37,6 +38,7 @@ router = APIRouter()
     status_code=status.HTTP_201_CREATED,
 )
 def provision_user_route(
+    request: Request,
     body: UserProvision,
     user_id: str = Depends(get_current_user_id),
 ):
@@ -72,6 +74,16 @@ def provision_user_route(
     token = create_invite_token(new_user_id)
     invite_url = f"{settings.RAGFLOW_BASE_URL}/set-password?invite_token={token}"
 
+    audit_svc.record(
+        request=request,
+        actor_user_id=user_id,
+        action=audit_svc.USER_INVITE,
+        org_id=body.org_id,
+        resource_type="user",
+        resource_id=new_user_id,
+        details={"target_display_name": body.email, "email": body.email, "org_role": body.org_role, "ws_id": body.ws_id},
+    )
+
     return UserProvisionResponse(
         user_id=new_user_id,
         email=body.email,
@@ -81,7 +93,7 @@ def provision_user_route(
 
 
 @router.delete("/users/{uid}", status_code=status.HTTP_204_NO_CONTENT)
-def delete_user(uid: str, user=Depends(require_superuser)):
+def delete_user(request: Request, uid: str, user=Depends(require_superuser)):
     """
     Soft-delete a user (superuser only).
 
@@ -108,7 +120,11 @@ def delete_user(uid: str, user=Depends(require_superuser)):
 
     from api.db.db_models import DB, User, UserTenant, WsGroupMember
     from api.db.services.workspace_service import WsMember
-    from api.db.services.org_service import OrgMember
+    from api.db.services.org_service import OrgMember, OrgMemberService
+
+    # Capture org memberships before they are deleted
+    memberships = OrgMemberService.list_orgs_for_user(uid)
+    audit_org_ids = [m.org_id for m in memberships] if memberships else [None]
 
     ts = int(time.time())
     with DB.connection_context():
@@ -125,9 +141,20 @@ def delete_user(uid: str, user=Depends(require_superuser)):
             User.status: "0",
         }).where(User.id == uid).execute()
 
+    for org_id in audit_org_ids:
+        audit_svc.record(
+            request=request,
+            actor_user_id=user.id,
+            action=audit_svc.USER_DELETE,
+            org_id=org_id,
+            resource_type="user",
+            resource_id=uid,
+            details={"target_display_name": target.email, "email": target.email},
+        )
+
 
 @router.delete("/users/{uid}/purge", status_code=status.HTTP_204_NO_CONTENT)
-def purge_user(uid: str, confirm: str = "", user=Depends(require_superuser)):
+def purge_user(request: Request, uid: str, confirm: str = "", user=Depends(require_superuser)):
     """
     RGPD hard-delete via the Tombstone pattern (superuser only).
 
@@ -155,7 +182,11 @@ def purge_user(uid: str, confirm: str = "", user=Depends(require_superuser)):
 
     from api.db.db_models import DB, User, Tenant, UserTenant, WsGroupMember
     from api.db.services.workspace_service import WsMember
-    from api.db.services.org_service import OrgMember
+    from api.db.services.org_service import OrgMember, OrgMemberService
+
+    # Capture org memberships before they are deleted
+    memberships = OrgMemberService.list_orgs_for_user(uid)
+    audit_org_ids = [m.org_id for m in memberships] if memberships else [None]
 
     with DB.connection_context():
         WsGroupMember.delete().where(WsGroupMember.user_id == uid).execute()
@@ -173,3 +204,14 @@ def purge_user(uid: str, confirm: str = "", user=Depends(require_superuser)):
             User.is_active: "0",
             User.status: "0",
         }).where(User.id == uid).execute()
+
+    for org_id in audit_org_ids:
+        audit_svc.record(
+            request=request,
+            actor_user_id=user.id,
+            action=audit_svc.USER_PURGE,
+            org_id=org_id,
+            resource_type="user",
+            resource_id=uid,
+            details={"target_display_name": target.email, "email": target.email, "nickname": target.nickname},
+        )

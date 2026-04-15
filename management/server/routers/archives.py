@@ -11,9 +11,10 @@ Purge: hard-delete avec cascade (org → workspaces, ws → datasets/docs).
 """
 import re
 
-from fastapi import APIRouter, Depends, HTTPException, status
+from fastapi import APIRouter, Depends, HTTPException, Request, status
 
-from management.server.auth.dependencies import require_superuser
+from management.server.auth.dependencies import require_superuser, get_current_user_id, require_org_admin
+from management.server.services import audit as audit_svc
 
 router = APIRouter()
 
@@ -161,7 +162,7 @@ def list_archived_users(user=Depends(require_superuser)):
 # ---------------------------------------------------------------------------
 
 @router.post("/archives/orgs/{org_id}/restore")
-def restore_org(org_id: str, user=Depends(require_superuser)):
+def restore_org(request: Request, org_id: str, user=Depends(require_superuser)):
     """Restore an archived org and cascade to all workspaces + users that share
     the same archive timestamp (timestamp-matching restore).
 
@@ -246,6 +247,16 @@ def restore_org(org_id: str, user=Depends(require_superuser)):
         except ValueError as e:
             raise HTTPException(status_code=400, detail=str(e))
 
+    audit_svc.record(
+        request=request,
+        actor_user_id=user.id,
+        action=audit_svc.ORG_RESTORE,
+        org_id=org_id,
+        resource_type="organisation",
+        resource_id=org_id,
+        details={"target_display_name": clean_name, "name": clean_name, "restored_workspaces": restored_ws, "restored_users": restored_users},
+    )
+
     return {
         "id": org_id,
         "name": clean_name,
@@ -318,7 +329,7 @@ def restore_user(user_id: str, user=Depends(require_superuser)):
 # ---------------------------------------------------------------------------
 
 @router.delete("/archives/orgs/{org_id}/purge", status_code=status.HTTP_204_NO_CONTENT)
-def purge_archived_org(org_id: str, confirm: str = "", user=Depends(require_superuser)):
+def purge_archived_org(request: Request, org_id: str, confirm: str = "", user=Depends(require_superuser)):
     if confirm != "DELETE":
         raise HTTPException(status_code=400, detail="Purge requires ?confirm=DELETE")
 
@@ -338,6 +349,16 @@ def purge_archived_org(org_id: str, confirm: str = "", user=Depends(require_supe
     with DB.connection_context():
         OrgMember.delete().where(OrgMember.org_id == org_id).execute()
         Organisation.delete().where(Organisation.id == org_id).execute()
+
+    audit_svc.record(
+        request=request,
+        actor_user_id=user.id,
+        action=audit_svc.ORG_PURGE,
+        org_id=org_id,
+        resource_type="organisation",
+        resource_id=org_id,
+        details={"target_display_name": _strip_deleted(org.name), "name": _strip_deleted(org.name)},
+    )
 
 
 @router.delete("/archives/workspaces/{ws_id}/purge", status_code=status.HTTP_204_NO_CONTENT)

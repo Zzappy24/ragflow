@@ -11,19 +11,30 @@ class AuditService(CommonService):
     @classmethod
     @DB.connection_context()
     def record(cls, org_id=None, workspace_id=None, user_id=None,
-               action=None, resource_type=None, resource_id=None,
-               details=None, ip_address=None, user_agent=None):
-        """Record an audit event. Never raises — audit must not block operations."""
+               actor_email=None, action=None, status="success",
+               resource_type=None, resource_id=None,
+               details=None, diff=None,
+               ip_address=None, user_agent=None):
+        """Record an audit event. Never raises — audit must not block operations.
+
+        Args:
+            actor_email: Email of the actor at event time (survives user purge).
+            status: "success" or "failure".
+            diff: Dict with {"before": {...}, "after": {...}} for state changes.
+        """
         try:
             cls.model.create(
                 id=get_uuid(),
                 org_id=org_id or "",
                 workspace_id=workspace_id or "",
                 user_id=user_id or "",
+                actor_email=actor_email or "",
                 action=action or "",
+                status=status,
                 resource_type=resource_type or "",
                 resource_id=resource_id or "",
                 details=details or {},
+                diff=diff,
                 ip_address=ip_address or "",
                 user_agent=(user_agent or "")[:512],
                 create_time=current_timestamp(),
@@ -53,6 +64,17 @@ class AuditService(CommonService):
             q = q.where(cls.model.action == action)
         if user_id:
             q = q.where(cls.model.user_id == user_id)
+        offset = (page - 1) * page_size
+        return list(q.order_by(cls.model.create_time.desc()).offset(offset).limit(page_size))
+
+    @classmethod
+    @DB.connection_context()
+    def query_global(cls, page=1, page_size=50, org_id=None, action=None):
+        q = cls.model.select()
+        if org_id:
+            q = q.where(cls.model.org_id == org_id)
+        if action:
+            q = q.where(cls.model.action == action)
         offset = (page - 1) * page_size
         return list(q.order_by(cls.model.create_time.desc()).offset(offset).limit(page_size))
 

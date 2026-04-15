@@ -1,6 +1,5 @@
 import { useEffect, useState } from 'react';
-import { useSearchParams, useParams } from 'react-router-dom';
-import { Table, Card, Input, Space, Tag, Tooltip, Typography } from 'antd';
+import { Table, Card, Input, Space, Tag, Tooltip, Typography, Select } from 'antd';
 import { CheckCircleOutlined, CloseCircleOutlined } from '@ant-design/icons';
 import dayjs from 'dayjs';
 import api from '@/lib/api';
@@ -14,6 +13,7 @@ interface AuditEntry {
   action: string;
   status: string | null;
   org_id: string | null;
+  org_name: string | null;
   workspace_id: string | null;
   resource_type: string | null;
   resource_id: string | null;
@@ -59,30 +59,21 @@ function DetailsCell({ details }: { details: AuditEntry['details'] }) {
   );
 }
 
-export default function AuditPage({ orgId: orgIdProp, wsId: wsIdProp }: { orgId?: string; wsId?: string } = {}) {
-  const [searchParams] = useSearchParams();
-  const params = useParams<{ orgId?: string; wsId?: string }>();
-  const orgId = orgIdProp || params.orgId || searchParams.get('org');
-  const wsId = wsIdProp || params.wsId || searchParams.get('ws');
+export default function GlobalAuditPage() {
   const [logs, setLogs] = useState<AuditEntry[]>([]);
   const [loading, setLoading] = useState(true);
   const [page, setPage] = useState(1);
   const [actionFilter, setActionFilter] = useState<string | undefined>();
 
-  const scope = wsId ? 'ws' : 'org';
-  const scopeId = wsId || orgId || '';
-
   const fetchLogs = () => {
-    if (!scopeId) { setLoading(false); return; }
     setLoading(true);
-    const url = scope === 'ws' ? `/workspaces/${scopeId}/audit` : `/orgs/${scopeId}/audit`;
     api
-      .get(url, { params: { page, page_size: 50, action: actionFilter } })
+      .get('/audit', { params: { page, page_size: 50, action: actionFilter || undefined } })
       .then((res) => setLogs(res.data.items || []))
       .finally(() => setLoading(false));
   };
 
-  useEffect(fetchLogs, [scopeId, page, actionFilter]);
+  useEffect(fetchLogs, [page, actionFilter]);
 
   const columns = [
     {
@@ -90,6 +81,23 @@ export default function AuditPage({ orgId: orgIdProp, wsId: wsIdProp }: { orgId?
       dataIndex: 'create_time',
       width: 160,
       render: (t: string | number) => formatTime(t),
+    },
+    {
+      title: 'Organisation',
+      key: 'org',
+      width: 160,
+      ellipsis: true,
+      render: (_: unknown, r: AuditEntry) => {
+        if (!r.org_id) return <Text type="secondary">—</Text>;
+        if (r.org_name === '[Organisation Supprimée]') {
+          return (
+            <Tooltip title={r.org_id}>
+              <Tag color="red">Supprimée</Tag>
+            </Tooltip>
+          );
+        }
+        return <Text className="text-xs">{r.org_name || r.org_id}</Text>;
+      },
     },
     {
       title: 'Acteur',
@@ -111,7 +119,7 @@ export default function AuditPage({ orgId: orgIdProp, wsId: wsIdProp }: { orgId?
     {
       title: 'Statut',
       dataIndex: 'status',
-      width: 90,
+      width: 80,
       render: (s: string | null) =>
         !s || s === 'success'
           ? <CheckCircleOutlined className="text-green-500" />
@@ -148,24 +156,14 @@ export default function AuditPage({ orgId: orgIdProp, wsId: wsIdProp }: { orgId?
     },
   ];
 
-  if (!scopeId) {
-    return (
-      <Card>
-        <p className="text-gray-500">
-          Sélectionnez une organisation ou un workspace.
-        </p>
-      </Card>
-    );
-  }
-
   return (
     <div>
       <div className="flex justify-between items-center mb-4">
-        <h2 className="text-xl font-semibold">Audit Log</h2>
+        <h2 className="text-xl font-semibold">Audit Global</h2>
         <Input
-          placeholder="Filtrer par action (ex: ORG_ARCHIVE)..."
+          placeholder="Filtrer par action (ex: USER_DELETE)..."
           allowClear
-          onChange={(e) => setActionFilter(e.target.value || undefined)}
+          onChange={(e) => { setPage(1); setActionFilter(e.target.value || undefined); }}
           style={{ width: 280 }}
         />
       </div>

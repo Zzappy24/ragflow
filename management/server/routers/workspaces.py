@@ -2,10 +2,11 @@
 Workspace CRUD routes.
 Org admins can create/delete workspaces within their org.
 """
-from fastapi import APIRouter, Depends, HTTPException, status
+from fastapi import APIRouter, Depends, HTTPException, Request, status
 
 from management.server.auth.dependencies import get_current_user_id, require_org_admin, require_superuser
 from management.server.models.schemas import WsCreate, WsUpdate, WsResponse
+from management.server.services import audit as audit_svc
 
 router = APIRouter()
 
@@ -37,7 +38,7 @@ def list_workspaces(
 
 
 @router.post("/orgs/{org_id}/workspaces", response_model=WsResponse, status_code=status.HTTP_201_CREATED)
-def create_workspace(org_id: str, body: WsCreate, user_id: str = Depends(get_current_user_id)):
+def create_workspace(request: Request, org_id: str, body: WsCreate, user_id: str = Depends(get_current_user_id)):
     """Create a workspace. Provisions a RAGFlow tenant under the hood."""
     user = require_org_admin(org_id, user_id)
 
@@ -49,6 +50,18 @@ def create_workspace(org_id: str, body: WsCreate, user_id: str = Depends(get_cur
         raise HTTPException(status_code=status.HTTP_409_CONFLICT, detail=msg)
 
     ws = provision_workspace(org_id=org_id, name=body.name, description=body.description, created_by=user_id)
+
+    audit_svc.record(
+        request=request,
+        actor_user_id=user_id,
+        action=audit_svc.WS_CREATE,
+        org_id=org_id,
+        workspace_id=ws.id,
+        resource_type="workspace",
+        resource_id=ws.id,
+        details={"target_display_name": body.name, "name": body.name},
+    )
+
     return _ws_to_response(ws)
 
 
@@ -82,7 +95,7 @@ def update_workspace(org_id: str, ws_id: str, body: WsUpdate, user_id: str = Dep
 
 
 @router.delete("/orgs/{org_id}/workspaces/{ws_id}", status_code=status.HTTP_204_NO_CONTENT)
-def delete_workspace(org_id: str, ws_id: str, user_id: str = Depends(get_current_user_id)):
+def delete_workspace(request: Request, org_id: str, ws_id: str, user_id: str = Depends(get_current_user_id)):
     """Soft-delete a workspace + its RAGFlow tenant + technical user."""
     require_org_admin(org_id, user_id)
     from api.db.services.workspace_service import WorkspaceService
@@ -93,9 +106,20 @@ def delete_workspace(org_id: str, ws_id: str, user_id: str = Depends(get_current
         raise HTTPException(status_code=404, detail="Workspace not found")
     deprovision_workspace(ws_id)
 
+    audit_svc.record(
+        request=request,
+        actor_user_id=user_id,
+        action=audit_svc.WS_ARCHIVE,
+        org_id=org_id,
+        workspace_id=ws_id,
+        resource_type="workspace",
+        resource_id=ws_id,
+        details={"target_display_name": ws.name, "name": ws.name},
+    )
+
 
 @router.post("/orgs/{org_id}/workspaces/{ws_id}/restore", response_model=WsResponse)
-def restore_workspace_route(org_id: str, ws_id: str, user_id: str = Depends(get_current_user_id)):
+def restore_workspace_route(request: Request, org_id: str, ws_id: str, user_id: str = Depends(get_current_user_id)):
     """Restore a soft-deleted workspace (org_admin or superuser)."""
     require_org_admin(org_id, user_id)
     from api.db.services.workspace_service import WorkspaceService
@@ -106,6 +130,18 @@ def restore_workspace_route(org_id: str, ws_id: str, user_id: str = Depends(get_
         raise HTTPException(status_code=404, detail="Workspace not found")
     restore_workspace(ws_id)
     ok, ws = WorkspaceService.get_by_id(ws_id)
+
+    audit_svc.record(
+        request=request,
+        actor_user_id=user_id,
+        action=audit_svc.WS_RESTORE,
+        org_id=org_id,
+        workspace_id=ws_id,
+        resource_type="workspace",
+        resource_id=ws_id,
+        details={"target_display_name": ws.name if ok else ws_id, "name": ws.name if ok else ws_id},
+    )
+
     return _ws_to_response(ws)
 
 
