@@ -888,6 +888,15 @@ async def user_profile():
         # workspaces the user can access (member of) — used by the switcher.
         workspaces = []
         try:
+            from api.db.services.org_service import OrgService
+            org_name_cache: dict = {}
+
+            def _org_name(oid: str) -> str:
+                if oid not in org_name_cache:
+                    ok_o, o = OrgService.get_by_id(oid)
+                    org_name_cache[oid] = o.name if ok_o and o else oid
+                return org_name_cache[oid]
+
             memberships = WsMemberService.list_workspaces_for_user(current_user.id)
             for m in memberships:
                 ok_ws, ws = WorkspaceService.get_by_id(m.workspace_id)
@@ -896,6 +905,7 @@ async def user_profile():
                         "id": ws.id,
                         "name": ws.name,
                         "org_id": ws.org_id,
+                        "org_name": _org_name(ws.org_id),
                         "role": m.role,
                         "tenant_id": ws.tenant_id,
                     })
@@ -916,6 +926,7 @@ async def user_profile():
                         "id": ws.id,
                         "name": ws.name,
                         "org_id": ws.org_id,
+                        "org_name": _org_name(ws.org_id),
                         "role": "ws_admin",  # implicit
                         "tenant_id": ws.tenant_id,
                     })
