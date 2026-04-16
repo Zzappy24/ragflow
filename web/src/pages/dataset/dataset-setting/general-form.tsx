@@ -11,6 +11,7 @@ import {
 } from '@/components/ui/form';
 import { Input } from '@/components/ui/input';
 import { LanguageTranslationMap } from '@/constants/common';
+import { useFetchUserInfo } from '@/hooks/use-user-setting-request';
 import { useMemo } from 'react';
 import { useFormContext } from 'react-hook-form';
 import { useTranslation } from 'react-i18next';
@@ -20,6 +21,8 @@ import { EmbeddingModelItem } from './configuration/common-item';
 export function GeneralForm() {
   const form = useFormContext();
   const { t } = useTranslation();
+  const { data: userInfo } = useFetchUserInfo();
+  const isWsAdmin = userInfo?.ws_role === 'ws_admin';
 
   const languageOptions = useMemo(() => {
     return Object.keys(LanguageTranslationMap).map((x) => ({
@@ -122,7 +125,7 @@ export function GeneralForm() {
           );
         }}
       />
-      <EmbeddingModelItem isEdit={true}></EmbeddingModelItem>
+      {isWsAdmin && <EmbeddingModelItem isEdit={true}></EmbeddingModelItem>}
       <PageRankFormField></PageRankFormField>
 
       <TagItems></TagItems>

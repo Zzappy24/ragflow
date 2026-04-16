@@ -131,6 +131,7 @@ const ChatCard = forwardRef(function ChatCard(
   const llmId = useWatch({ control: form.control, name: 'llm_id' });
 
   const { data: userInfo } = useFetchUserInfo();
+  const isWsAdmin = userInfo?.ws_role === 'ws_admin';
   const { data: currentDialog } = useFetchChat();
 
   useSetDefaultModel(form);
@@ -174,31 +175,35 @@ const ChatCard = forwardRef(function ChatCard(
         <CardTitle className="flex justify-between items-center">
           <div className="flex items-center gap-3">
             <span className="text-base">{idx + 1}</span>
-            <Form {...form}>
-              <LargeModelFormFieldWithoutFilter
-                triggerTestId="chat-detail-multimodel-card-model-select"
-                optionTestIdPrefix="chat-detail-llm-option-"
-              ></LargeModelFormFieldWithoutFilter>
-            </Form>
+            {isWsAdmin && (
+              <Form {...form}>
+                <LargeModelFormFieldWithoutFilter
+                  triggerTestId="chat-detail-multimodel-card-model-select"
+                  optionTestIdPrefix="chat-detail-llm-option-"
+                ></LargeModelFormFieldWithoutFilter>
+              </Form>
+            )}
           </div>
           <div className="space-x-2">
-            <Tooltip>
-              <TooltipTrigger asChild>
-                <Button
-                  variant="ghost"
-                  size="icon-sm"
-                  disabled={isEmpty(llmId)}
-                  onClick={handleApplyConfig}
-                  data-testid="chat-detail-multimodel-card-apply"
-                  data-card-index={idx}
-                >
-                  <ListCheck />
-                </Button>
-              </TooltipTrigger>
-              <TooltipContent>
-                <p>{t('chat.applyModelConfigs')}</p>
-              </TooltipContent>
-            </Tooltip>
+            {isWsAdmin && (
+              <Tooltip>
+                <TooltipTrigger asChild>
+                  <Button
+                    variant="ghost"
+                    size="icon-sm"
+                    disabled={isEmpty(llmId)}
+                    onClick={handleApplyConfig}
+                    data-testid="chat-detail-multimodel-card-apply"
+                    data-card-index={idx}
+                  >
+                    <ListCheck />
+                  </Button>
+                </TooltipTrigger>
+                <TooltipContent>
+                  <p>{t('chat.applyModelConfigs')}</p>
+                </TooltipContent>
+              </Tooltip>
+            )}
             {!isLatestChat || chatBoxIds.length === 3 ? (
               <Button
                 variant="ghost"

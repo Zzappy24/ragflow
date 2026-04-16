@@ -48,6 +48,7 @@ from api.utils.crypt import decrypt
 from api.utils.tenant_utils import ensure_tenant_model_id_for_params
 from rag.utils.redis_conn import REDIS_CONN
 from api.apps import login_required, current_user, login_user, logout_user
+from api.apps.extensions.rbac import require_permission, Permission
 from api.utils.web_utils import (
     send_email_html,
     OTP_LENGTH,
@@ -1134,6 +1135,7 @@ async def tenant_info():
 
 @manager.route("/set_tenant_info", methods=["POST"])  # noqa: F821
 @login_required
+@require_permission(Permission.LLM_CONFIGURE)  # CUSTOM B2B SaaS — workspace default models are admin-only
 @validate_request("tenant_id", "asr_id", "embd_id", "img2txt_id", "llm_id")
 async def set_tenant_info():
     """

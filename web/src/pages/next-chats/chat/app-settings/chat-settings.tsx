@@ -5,6 +5,7 @@ import { Separator } from '@/components/ui/separator';
 import { DatasetMetadata } from '@/constants/chat';
 import { useSetModalState } from '@/hooks/common-hooks';
 import { useFetchChat, useUpdateChat } from '@/hooks/use-chat-request';
+import { useFetchUserInfo } from '@/hooks/use-user-setting-request';
 import { cn } from '@/lib/utils';
 import {
   removeUselessFieldsFromValues,
@@ -27,6 +28,8 @@ import { useChatSettingSchema } from './use-chat-setting-schema';
 type ChatSettingsProps = { hasSingleChatBox: boolean };
 
 export function ChatSettings({ hasSingleChatBox }: ChatSettingsProps) {
+  const { data: userInfo } = useFetchUserInfo();
+  const isWsAdmin = userInfo?.ws_role === 'ws_admin';
   const formSchema = useChatSettingSchema();
   const { data } = useFetchChat();
   const { updateChat, loading } = useUpdateChat();
@@ -163,8 +166,12 @@ export function ChatSettings({ hasSingleChatBox }: ChatSettingsProps) {
                     <ChatBasicSetting></ChatBasicSetting>
                     <Separator />
                     <ChatPromptEngine></ChatPromptEngine>
-                    <Separator />
-                    <ChatModelSettings></ChatModelSettings>
+                    {isWsAdmin && (
+                      <>
+                        <Separator />
+                        <ChatModelSettings></ChatModelSettings>
+                      </>
+                    )}
                   </section>
                 </ScrollArea>
 

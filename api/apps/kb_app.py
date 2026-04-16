@@ -867,7 +867,7 @@ def delete_kb_task():
 
 @manager.route("/check_embedding", methods=["post"])  # noqa: F821
 @login_required
-@require_permission(Permission.DATASET_READ)
+@require_permission(Permission.LLM_CONFIGURE)  # CUSTOM B2B SaaS — consumes GPU compute, admin-only
 async def check_embedding():
 
     def _guess_vec_field(src: dict) -> str | None:

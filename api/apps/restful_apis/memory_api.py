@@ -24,6 +24,9 @@ from api.apps import login_required, current_user
 from api.utils.api_utils import validate_request, get_request_json, get_error_argument_result, get_json_result
 from api.apps.services import memory_api_service
 from api.utils.tenant_utils import ensure_tenant_model_id_for_params
+from api.apps.extensions.rbac import has_permission, Permission
+from api.db.services.user_service import TenantService
+from api.utils.tenant_context import active_tenant_id
 
 
 @manager.route("/memories", methods=["POST"])  # noqa: F821
@@ -33,6 +36,15 @@ async def create_memory():
     timing_enabled = os.getenv("RAGFLOW_API_TIMING")
     t_start = time.perf_counter() if timing_enabled else None
     req = await get_request_json()
+    # CUSTOM B2B SaaS: non-admins cannot set custom models — replace with workspace defaults
+    tid = active_tenant_id()
+    if not has_permission(current_user.id, tid, Permission.LLM_CONFIGURE):
+        ok, tenant = TenantService.get_by_id(tid)
+        if ok:
+            for _field, _default in (("llm_id", tenant.llm_id), ("embd_id", tenant.embd_id)):
+                if req.get(_field) and req[_field] != _default:
+                    logging.warning("RBAC: non-admin %s attempted to set %s=%s on memory creation — replaced with workspace default", current_user.id, _field, req[_field])
+                    req[_field] = _default
     req = ensure_tenant_model_id_for_params(current_user.id, req)
     t_parsed = time.perf_counter() if timing_enabled else None
     try:
@@ -87,6 +99,15 @@ async def create_memory():
 @login_required
 async def update_memory(memory_id):
     req = await get_request_json()
+    # CUSTOM B2B SaaS: non-admins cannot change models on an existing memory
+    if not has_permission(current_user.id, active_tenant_id(), Permission.LLM_CONFIGURE):
+        for _field in ("llm_id", "embd_id", "tenant_llm_id", "tenant_embd_id"):
+            if _field in req:
+                return get_json_result(
+                    data=False,
+                    message="Only workspace admins can change the model configuration of a memory.",
+                    code=RetCode.OPERATING_ERROR,
+                ), 403
     new_settings = {k: req[k] for k in [
         "name", "permissions", "llm_id", "embd_id", "memory_type", "memory_size", "forgetting_policy", "temperature",
         "avatar", "description", "system_prompt", "user_prompt", "tenant_llm_id", "tenant_embd_id"

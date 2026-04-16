@@ -29,7 +29,7 @@ from api.utils.validation_utils import (
     validate_and_parse_request_args,
 )
 from api.apps.services import dataset_api_service
-from api.apps.extensions.rbac import require_permission, Permission
+from api.apps.extensions.rbac import require_permission, has_permission, Permission
 
 
 @manager.route("/datasets", methods=["POST"])  # noqa: F821
@@ -95,6 +95,15 @@ async def create(tenant_id: str=None):
     req, err = await validate_and_parse_json_request(request, CreateDatasetReq)
     if err is not None:
         return get_error_argument_result(err)
+
+    # CUSTOM B2B SaaS: non-admins cannot force embedding_model at creation — silent drop, fallback to workspace default
+    _effective_tenant = tenant_id or current_user.id
+    if ("embd_id" in req or "embedding_model" in req) and not has_permission(
+        current_user.id, _effective_tenant, Permission.LLM_CONFIGURE
+    ):
+        logging.warning("RBAC: non-admin %s attempted to set embedding_model on dataset creation — dropped", current_user.id)
+        req.pop("embd_id", None)
+        req.pop("embedding_model", None)
 
     try:
         if not tenant_id:
@@ -239,6 +248,13 @@ async def update(tenant_id, dataset_id):
     # |----------------|-------------|
     # | embedding_model| embd_id     |
     # | chunk_method   | parser_id   |
+    # CUSTOM B2B SaaS: block embedding_model changes for non-admins (FinOps — GPU cost control)
+    raw_body = await request.get_json() or {}
+    if "embedding_model" in raw_body and not has_permission(
+        current_user.id, tenant_id, Permission.LLM_CONFIGURE
+    ):
+        return get_error_argument_result("Only workspace admins can change the embedding model.")
+
     extras = {"dataset_id": dataset_id}
     req, err = await validate_and_parse_json_request(request, UpdateDatasetReq, extras=extras, exclude_unset=True)
     if err is not None:

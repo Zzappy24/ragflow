@@ -72,3 +72,53 @@ restricted_loads(Payload)
 
 #### How to prevent?
 Strictly filter the module and name before calling with getattr function.
+
+
+
+
+---
+
+## B2B SaaS — FinOps RBAC (Custom Layer)
+
+Doctrine : **ws_admin gère le compute (modèles), EDITOR/VIEWER gère l'usage (données/conversations).**
+
+### Vecteurs compute verrouillés
+
+| Endpoint | Champ | Mécanisme | Fichier |
+|---|---|---|---|
+| `POST /user/set_tenant_info` | llm_id, embd_id, asr_id, img2txt_id | `@require_permission(LLM_CONFIGURE)` → 403 | `user_app.py` |
+| `POST /chats` | llm_id, rerank_id, llm_setting | Silent drop → fallback workspace default | `chat_api.py` |
+| `PUT /chats/{id}` | llm_id | 403 si valeur change | `chat_api.py` |
+| `PUT /chats/{id}` | rerank_id | 403 si valeur change | `chat_api.py` |
+| `PATCH /chats/{id}` | llm_id | 403 si valeur change | `chat_api.py` |
+| `PATCH /chats/{id}` | rerank_id | 403 si valeur change | `chat_api.py` |
+| `POST /datasets` | embedding_model | Silent drop → fallback workspace default | `dataset_api.py` |
+| `PUT /datasets/{id}` | embedding_model | 403 si valeur change | `dataset_api.py` |
+| `POST /memories` | llm_id, embd_id | Replace par défaut workspace + log WARN | `memory_api.py` |
+| `PUT /memories/{id}` | llm_id, embd_id | 403 immédiat | `memory_api.py` |
+| `POST /kb/check_embedding` | embd_id | `@require_permission(LLM_CONFIGURE)` → 403 | `kb_app.py` |
+| `POST /llm/set_api_key` | — | `@require_permission(LLM_CONFIGURE)` → 403 | `llm_app.py` |
+| `POST /llm/add_llm` | — | `@require_permission(LLM_CONFIGURE)` → 403 | `llm_app.py` |
+| `POST /llm/delete_llm` | — | `@require_permission(LLM_CONFIGURE)` → 403 | `llm_app.py` |
+| `POST /llm/enable_llm` | — | `@require_permission(LLM_CONFIGURE)` → 403 | `llm_app.py` |
+| Connecteurs datasources | — | `@require_permission(DATASOURCE_CONFIGURE)` | `connector_app.py` |
+| Serveurs MCP | — | `@require_permission(MCP_CONFIGURE)` | `mcp_server_app.py` |
+
+### Frontend masqué (ws_member ne voit pas les contrôles)
+
+| Composant | Condition | Fichier |
+|---|---|---|
+| Sélecteur modèle LLM (chat settings) | `isWsAdmin` | `chat-settings.tsx` |
+| Sélecteur modèle LLM (multi-chat A/B) | `isWsAdmin` | `next-multiple-chat-box.tsx` |
+| Sélecteur embedding model (dataset settings) | `isWsAdmin` | `general-form.tsx` |
+| Page configuration modèles utilisateur | Remplacée par message admin | `setting-model/index.tsx` |
+
+### Rôles
+
+| Rôle | Permissions compute |
+|---|---|
+| `ws_admin` | Toutes — peut configurer tous les modèles |
+| `editor` | Aucune — fallback silencieux ou 403 |
+| `viewer` | Aucune |
+
+Voir `api/apps/extensions/rbac.py` pour la matrice complète `ROLE_PERMISSIONS`.

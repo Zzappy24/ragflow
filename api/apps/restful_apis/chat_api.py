@@ -48,7 +48,7 @@ from api.utils.tenant_utils import ensure_tenant_model_id_for_params
 from common.constants import LLMType, RetCode, StatusEnum
 from common.misc_utils import get_uuid
 from rag.prompts.generator import chunks_format
-from api.apps.extensions.rbac import require_permission, Permission
+from api.apps.extensions.rbac import require_permission, has_permission, Permission
 from rag.prompts.template import load_prompt
 
 _DEFAULT_PROMPT_CONFIG = {
@@ -233,15 +233,22 @@ async def create():
             req["kb_ids"] = kb_ids
             req.pop("dataset_ids", None)
 
-        if "llm_id" in req:
-            err = _validate_llm_id(req.get("llm_id"), active_tenant_id(), req.get("llm_setting"))
-            if err:
-                return get_data_error_result(message=err)
+        # CUSTOM B2B SaaS: non-admins cannot force a model at creation — silent drop, fallback to workspace default
+        if not has_permission(current_user.id, active_tenant_id(), Permission.LLM_CONFIGURE):
+            for _field in ("llm_id", "rerank_id", "llm_setting"):
+                if _field in req:
+                    logging.warning("RBAC: non-admin %s attempted to set %s on chat creation — dropped", current_user.id, _field)
+                    req.pop(_field)
+        else:
+            if "llm_id" in req:
+                err = _validate_llm_id(req.get("llm_id"), active_tenant_id(), req.get("llm_setting"))
+                if err:
+                    return get_data_error_result(message=err)
 
-        if "rerank_id" in req:
-            err = _validate_rerank_id(req.get("rerank_id"), active_tenant_id())
-            if err:
-                return get_data_error_result(message=err)
+            if "rerank_id" in req:
+                err = _validate_rerank_id(req.get("rerank_id"), active_tenant_id())
+                if err:
+                    return get_data_error_result(message=err)
 
         if "prompt_config" in req:
             if not isinstance(req["prompt_config"], dict):
@@ -392,11 +399,27 @@ async def update_chat(chat_id):
             req.pop("dataset_ids", None)
 
         if "llm_id" in req:
+            if req["llm_id"] != current_chat.get("llm_id") and not has_permission(
+                current_user.id, active_tenant_id(), Permission.LLM_CONFIGURE
+            ):
+                return get_json_result(
+                    data=False,
+                    message="Only workspace admins can change the chat model.",
+                    code=RetCode.OPERATING_ERROR,
+                ), 403
             err = _validate_llm_id(req.get("llm_id"), active_tenant_id(), req.get("llm_setting"))
             if err:
                 return get_data_error_result(message=err)
 
         if "rerank_id" in req:
+            if req["rerank_id"] != current_chat.get("rerank_id") and not has_permission(
+                current_user.id, active_tenant_id(), Permission.LLM_CONFIGURE
+            ):
+                return get_json_result(
+                    data=False,
+                    message="Only workspace admins can change the rerank model.",
+                    code=RetCode.OPERATING_ERROR,
+                ), 403
             err = _validate_rerank_id(req.get("rerank_id"), active_tenant_id())
             if err:
                 return get_data_error_result(message=err)
@@ -480,11 +503,27 @@ async def patch_chat(chat_id):
             req.pop("dataset_ids", None)
 
         if "llm_id" in req:
+            if req["llm_id"] != current_chat.get("llm_id") and not has_permission(
+                current_user.id, active_tenant_id(), Permission.LLM_CONFIGURE
+            ):
+                return get_json_result(
+                    data=False,
+                    message="Only workspace admins can change the chat model.",
+                    code=RetCode.OPERATING_ERROR,
+                ), 403
             err = _validate_llm_id(req.get("llm_id"), active_tenant_id(), req.get("llm_setting"))
             if err:
                 return get_data_error_result(message=err)
 
         if "rerank_id" in req:
+            if req["rerank_id"] != current_chat.get("rerank_id") and not has_permission(
+                current_user.id, active_tenant_id(), Permission.LLM_CONFIGURE
+            ):
+                return get_json_result(
+                    data=False,
+                    message="Only workspace admins can change the rerank model.",
+                    code=RetCode.OPERATING_ERROR,
+                ), 403
             err = _validate_rerank_id(req.get("rerank_id"), active_tenant_id())
             if err:
                 return get_data_error_result(message=err)
