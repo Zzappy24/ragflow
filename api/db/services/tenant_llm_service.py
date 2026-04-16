@@ -236,7 +236,7 @@ class TenantLLMService(CommonService):
 
     @classmethod
     @DB.connection_context()
-    def increase_usage_by_id(cls, tenant_model_id: int, used_tokens: int):
+    def increase_usage_by_id(cls, tenant_model_id: int, used_tokens: int, context_tenant_id: str | None = None):
         try:
             update_cnt = cls.model.update(used_tokens=cls.model.used_tokens + used_tokens).where(cls.model.id == tenant_model_id).execute()
         except Exception as e:
@@ -244,11 +244,14 @@ class TenantLLMService(CommonService):
             return 0
 
         # Fire-and-forget: push to Redis for async daily flush — never blocks the hot path
+        # context_tenant_id is the workspace tenant_id (may differ from row.tenant_id which is the personal tenant
+        # used as fallback when the workspace has no own LLM config).
         try:
             row = cls.model.get_by_id(tenant_model_id)
             from rag.utils.redis_conn import REDIS_CONN
             today = date.today().isoformat()
-            redis_key = f"token_usage:{today}:{row.tenant_id}:{row.llm_factory or ''}:{row.model_type}:{row.llm_name}"
+            effective_tenant_id = context_tenant_id or row.tenant_id
+            redis_key = f"token_usage:{today}:{effective_tenant_id}:{row.llm_factory or ''}:{row.model_type}:{row.llm_name}"
             REDIS_CONN.REDIS.incrby(redis_key, used_tokens)
         except Exception:
             logging.warning("token_usage Redis incrby failed in increase_usage_by_id", exc_info=False)

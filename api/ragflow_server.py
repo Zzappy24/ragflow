@@ -93,14 +93,6 @@ def flush_token_usage():
                                  tokens=tokens,
                              )
                              .on_conflict(
-                                 conflict_target=[
-                                     TokenUsageDaily.tenant_id,
-                                     TokenUsageDaily.llm_factory,
-                                     TokenUsageDaily.model_type,
-                                     TokenUsageDaily.llm_name,
-                                     TokenUsageDaily.date,
-                                 ],
-                                 preserve=[],
                                  update={TokenUsageDaily.tokens: TokenUsageDaily.tokens + tokens},
                              )
                              .execute())

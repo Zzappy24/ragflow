@@ -197,10 +197,18 @@ class Base(ABC):
         stop = kwargs.get("stop")
         if stop:
             request_kwargs["stop"] = stop
+        # Request usage stats on the final chunk so input+output tokens are reported correctly.
+        # Servers that don't support this option silently ignore the field.
+        if "stream_options" not in request_kwargs:
+            request_kwargs["stream_options"] = {"include_usage": True}
 
         response = await self.async_client.chat.completions.create(**request_kwargs)
         async for resp in response:
+            # Final usage-only chunk (choices is empty, sent by include_usage)
             if not resp.choices:
+                tol = total_token_count_from_response(resp)
+                if tol:
+                    yield "", tol
                 continue
             if not resp.choices[0].delta.content:
                 resp.choices[0].delta.content = ""
