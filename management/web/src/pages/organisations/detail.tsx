@@ -1,7 +1,14 @@
 import { useEffect, useState } from 'react';
 import { useParams, Link, useNavigate } from 'react-router-dom';
-import { Card, Tabs, Spin, Progress, Row, Col, Statistic, Breadcrumb, Typography, Tag, Button, Modal, Input, App, Table, Space } from 'antd';
-import { AppstoreOutlined, TeamOutlined, AuditOutlined, HomeOutlined, DatabaseOutlined, FileOutlined, InboxOutlined, UndoOutlined, FireOutlined } from '@ant-design/icons';
+import { Card, Tabs, Spin, Progress, Row, Col, Statistic, Breadcrumb, Typography, Tag, Button, Modal, Input, App, Table, Space, Select } from 'antd';
+import { DatePicker } from 'antd';
+import type { Dayjs } from 'dayjs';
+import { AppstoreOutlined, TeamOutlined, AuditOutlined, HomeOutlined, DatabaseOutlined, FileOutlined, InboxOutlined, UndoOutlined, FireOutlined, ThunderboltOutlined, BarChartOutlined } from '@ant-design/icons';
+import {
+  AreaChart, Area, BarChart, Bar, PieChart, Pie,
+  XAxis, YAxis, CartesianGrid, Tooltip,
+  ResponsiveContainer, Cell, Legend,
+} from 'recharts';
 import dayjs from 'dayjs';
 import api from '@/lib/api';
 import { useAuthStore } from '@/stores/auth';
@@ -10,6 +17,299 @@ import MembersPage from '@/pages/members';
 import AuditPage from '@/pages/audit';
 
 const { Title, Text } = Typography;
+const { RangePicker } = DatePicker;
+
+const WS_COLORS = ['#6366f1', '#10b981', '#f59e0b', '#ec4899', '#f97316', '#06b6d4', '#8b5cf6', '#ef4444'];
+const MODEL_TYPE_COLORS: Record<string, string> = {
+  chat: '#6366f1', embedding: '#10b981', rerank: '#f59e0b',
+  image2text: '#ec4899', tts: '#f97316', speech2text: '#06b6d4', asr: '#06b6d4', ocr: '#8b5cf6', unknown: '#9ca3af',
+};
+function typeColor(t: string) { return MODEL_TYPE_COLORS[t] ?? '#9ca3af'; }
+function wsColor(i: number) { return WS_COLORS[i % WS_COLORS.length]; }
+
+function fmtTokens(n: number): string {
+  if (n >= 1_000_000) return `${(n / 1_000_000).toFixed(1)}M`;
+  if (n >= 1_000) return `${(n / 1_000).toFixed(1)}K`;
+  return String(n ?? 0);
+}
+function shortDate(d: string) { const p = d.split('-'); return `${p[2]}/${p[1]}`; }
+
+interface DailyItem { date: string; tokens: number; [key: string]: number | string; }
+interface ModelItem { model: string; type: string; type_label: string; factory: string; tokens: number; }
+interface ModelTypeItem { type: string; type_label: string; tokens: number; }
+interface WsItem { workspace_id: string; workspace_name: string; tokens: number; indexed_tokens: number; users: number; }
+
+interface OrgUsage {
+  totals: { workspaces: number; users: number; tokens_30d: number; indexed_tokens: number };
+  daily_tokens: DailyItem[];
+  daily_by_model_type_per_factory: Record<string, DailyItem[]>;
+  daily_by_workspace: DailyItem[];
+  factories: string[];
+  model_types: string[];
+  workspace_ids: string[];
+  workspace_id_to_name: Record<string, string>;
+  by_workspace: WsItem[];
+  by_model: ModelItem[];
+  by_model_type: ModelTypeItem[];
+  by_factory: { factory: string; tokens: number }[];
+}
+
+function filterByRange<T extends { date: string }>(items: T[], range: [Dayjs, Dayjs] | null): T[] {
+  if (!range) return items;
+  const [s, e] = range;
+  return items.filter((d) => {
+    const day = dayjs(d.date);
+    return !day.isBefore(s, 'day') && !day.isAfter(e, 'day');
+  });
+}
+
+const RADIAN = Math.PI / 180;
+function DonutLabel({ cx, cy, midAngle, innerRadius, outerRadius, percent }: any) {
+  if (percent < 0.05) return null;
+  const r = innerRadius + (outerRadius - innerRadius) * 0.5;
+  const x = cx + r * Math.cos(-midAngle * RADIAN);
+  const y = cy + r * Math.sin(-midAngle * RADIAN);
+  return <text x={x} y={y} fill="white" textAnchor="middle" dominantBaseline="central" fontSize={11}>{`${(percent * 100).toFixed(0)}%`}</text>;
+}
+
+function OrgUsageTab({ orgId }: { orgId: string }) {
+  const [data, setData] = useState<OrgUsage | null>(null);
+  const [loading, setLoading] = useState(true);
+  const [dateRange, setDateRange] = useState<[Dayjs, Dayjs] | null>(null);
+  const [selectedTypes, setSelectedTypes] = useState<string[]>([]);
+  const [selectedWs, setSelectedWs] = useState<string[]>([]);
+  const [selectedFactory, setSelectedFactory] = useState<string | null>(null);
+
+  useEffect(() => {
+    api.get(`/orgs/${orgId}/usage`)
+      .then((r) => setData(r.data))
+      .catch(() => {})
+      .finally(() => setLoading(false));
+  }, [orgId]);
+
+  if (loading) return <Spin className="flex justify-center mt-10" />;
+  if (!data) return <p className="text-gray-400">Données indisponibles.</p>;
+
+  const activeTypes = selectedTypes.length > 0 ? selectedTypes : data.model_types;
+  const activeWs = selectedWs.length > 0 ? selectedWs : data.workspace_ids;
+
+  const dailySeriesForFactory = selectedFactory
+    ? (data.daily_by_model_type_per_factory[selectedFactory] ?? data.daily_by_model_type_per_factory['__all__'])
+    : data.daily_by_model_type_per_factory['__all__'];
+  const filteredDailyByType = filterByRange(dailySeriesForFactory, dateRange);
+  const filteredDailyByWs = filterByRange(data.daily_by_workspace, dateRange);
+  const filteredModels = data.by_model
+    .filter((m) => activeTypes.includes(m.type))
+    .filter((m) => !selectedFactory || m.factory === selectedFactory);
+  const filteredModelTypes = data.by_model_type.filter((m) => activeTypes.includes(m.type));
+  const filteredWsList = data.by_workspace.filter((w) => activeWs.includes(w.workspace_id));
+
+  const typeOptions = data.model_types.map((t) => ({
+    label: data.by_model_type.find((m) => m.type === t)?.type_label ?? t, value: t,
+  }));
+  const wsOptions = data.workspace_ids.map((id) => ({
+    label: data.workspace_id_to_name[id] ?? id, value: id,
+  }));
+  const factoryOptions = data.by_factory.map((f) => ({ label: f.factory || '(direct)', value: f.factory }));
+
+  const wsColumns = [
+    {
+      title: 'Workspace', dataIndex: 'workspace_name', key: 'name',
+      render: (name: string, row: any) => (
+        <Link to={`/workspaces/${row.workspace_id}`} className="text-indigo-600 hover:underline">{name}</Link>
+      ),
+    },
+    { title: 'Membres', dataIndex: 'users', key: 'users', width: 90, align: 'right' as const },
+    {
+      title: 'Tokens indexés', dataIndex: 'indexed_tokens', key: 'idx',
+      width: 130, align: 'right' as const,
+      render: (v: number) => <span className="text-emerald-600">{fmtTokens(v)}</span>,
+      sorter: (a: any, b: any) => a.indexed_tokens - b.indexed_tokens,
+    },
+    {
+      title: 'Tokens LLM (30j)', dataIndex: 'tokens', key: 'tokens',
+      width: 140, align: 'right' as const,
+      render: (v: number) => <span className="text-indigo-600 font-medium">{fmtTokens(v)}</span>,
+      defaultSortOrder: 'descend' as const,
+      sorter: (a: any, b: any) => a.tokens - b.tokens,
+    },
+  ];
+
+  const modelColumns = [
+    {
+      title: 'Modèle', dataIndex: 'model', key: 'model',
+      render: (m: string, row: any) => (
+        <div>
+          <div className="font-medium text-sm">{m}</div>
+          <div className="text-xs text-gray-400">{row.factory}</div>
+        </div>
+      ),
+    },
+    {
+      title: 'Type', dataIndex: 'type_label', key: 'type', width: 110,
+      render: (t: string, row: any) => (
+        <Tag style={{ background: typeColor(row.type) + '20', borderColor: typeColor(row.type), color: typeColor(row.type) }}>{t}</Tag>
+      ),
+    },
+    {
+      title: 'Tokens (30j)', dataIndex: 'tokens', key: 'tokens',
+      width: 120, align: 'right' as const,
+      render: (v: number) => fmtTokens(v),
+      defaultSortOrder: 'descend' as const,
+      sorter: (a: any, b: any) => a.tokens - b.tokens,
+    },
+  ];
+
+  return (
+    <Space direction="vertical" className="w-full" size="middle">
+      {/* Filters */}
+      <div className="bg-gray-50 border border-gray-200 rounded-lg px-4 py-3 flex flex-wrap gap-3 items-center">
+        <span className="text-xs font-semibold text-gray-500 uppercase tracking-wide mr-1">Filtres</span>
+        <RangePicker size="small" disabledDate={(d) => d.isAfter(dayjs())}
+          onChange={(v) => setDateRange(v ? [v[0]!, v[1]!] : null)} />
+        <Select size="small" mode="multiple" allowClear placeholder="Workspace"
+          style={{ minWidth: 160 }} options={wsOptions}
+          onChange={(v) => setSelectedWs(v)} maxTagCount={2} />
+        <Select size="small" mode="multiple" allowClear placeholder="Type de modèle"
+          style={{ minWidth: 180 }} options={typeOptions}
+          onChange={(v) => setSelectedTypes(v)} maxTagCount={2} />
+        <Select size="small" allowClear placeholder="Provider"
+          style={{ minWidth: 140 }} options={factoryOptions}
+          onChange={(v) => setSelectedFactory(v ?? null)} />
+      </div>
+
+      {/* KPI cards */}
+      <Row gutter={[16, 16]}>
+        <Col xs={12} sm={6}>
+          <Card size="small"><Statistic title="Workspaces" value={data.totals.workspaces} prefix={<AppstoreOutlined />} /></Card>
+        </Col>
+        <Col xs={12} sm={6}>
+          <Card size="small"><Statistic title="Membres" value={data.totals.users} prefix={<TeamOutlined />} /></Card>
+        </Col>
+        <Col xs={12} sm={6}>
+          <Card size="small">
+            <Statistic title="Tokens indexés" value={fmtTokens(data.totals.indexed_tokens)} prefix={<DatabaseOutlined />} />
+            <div className="text-xs text-gray-400 mt-1">contenu stocké dans les KBs</div>
+          </Card>
+        </Col>
+        <Col xs={12} sm={6}>
+          <Card size="small">
+            <div className="flex items-center gap-2 mb-1">
+              <ThunderboltOutlined className="text-indigo-500" />
+              <span className="text-gray-500 text-sm">Tokens LLM (30j)</span>
+            </div>
+            <div className="text-xl font-semibold">{fmtTokens(data.totals.tokens_30d)}</div>
+            <div className="mt-2 space-y-1">
+              {filteredModelTypes.map((m) => (
+                <div key={m.type} className="flex items-center justify-between text-xs">
+                  <div className="flex items-center gap-1.5">
+                    <span className="inline-block w-2 h-2 rounded-full" style={{ background: typeColor(m.type) }} />
+                    <span className="text-gray-500">{m.type_label}</span>
+                  </div>
+                  <span className="font-medium text-gray-700">{fmtTokens(m.tokens)}</span>
+                </div>
+              ))}
+            </div>
+          </Card>
+        </Col>
+      </Row>
+
+      {/* Charts row 1 */}
+      <Row gutter={[16, 16]}>
+        <Col xs={24} lg={14}>
+          <Card title="Tokens LLM par workspace (30j)" size="small">
+            <ResponsiveContainer width="100%" height={220}>
+              <AreaChart data={filteredDailyByWs}>
+                <CartesianGrid strokeDasharray="3 3" stroke="#f0f0f0" />
+                <XAxis dataKey="date" tick={{ fontSize: 10 }} tickFormatter={shortDate} interval="preserveStartEnd" />
+                <YAxis tickFormatter={fmtTokens} tick={{ fontSize: 10 }} width={48} />
+                <Tooltip formatter={(v: number, name: string) => [fmtTokens(v), data.workspace_id_to_name[name] ?? name]} />
+                <Legend formatter={(id) => data.workspace_id_to_name[id] ?? id} iconSize={10} />
+                {activeWs.map((wsId, i) => (
+                  <Area key={wsId} type="monotone" dataKey={wsId} stackId="1"
+                    stroke={wsColor(i)} fill={wsColor(i)} fillOpacity={0.6} dot={false} />
+                ))}
+              </AreaChart>
+            </ResponsiveContainer>
+          </Card>
+        </Col>
+        <Col xs={24} lg={10}>
+          <Card title="Par type de modèle (30j)" size="small">
+            <ResponsiveContainer width="100%" height={220}>
+              <AreaChart data={filteredDailyByType}>
+                <CartesianGrid strokeDasharray="3 3" stroke="#f0f0f0" />
+                <XAxis dataKey="date" tick={{ fontSize: 10 }} tickFormatter={shortDate} interval="preserveStartEnd" />
+                <YAxis tickFormatter={fmtTokens} tick={{ fontSize: 10 }} width={48} />
+                <Tooltip formatter={(v: number, name: string) =>
+                  [fmtTokens(v), data.by_model_type.find((m) => m.type === name)?.type_label ?? name]} />
+                <Legend iconSize={10} />
+                {activeTypes.map((mt) => (
+                  <Area key={mt} type="monotone" dataKey={mt} stackId="1"
+                    stroke={typeColor(mt)} fill={typeColor(mt)} fillOpacity={0.7}
+                    name={data.by_model_type.find((m) => m.type === mt)?.type_label ?? mt}
+                    dot={false} />
+                ))}
+              </AreaChart>
+            </ResponsiveContainer>
+          </Card>
+        </Col>
+      </Row>
+
+      {/* Charts row 2 */}
+      <Row gutter={[16, 16]}>
+        <Col xs={24} sm={10}>
+          <Card title="Répartition par type" size="small">
+            {filteredModelTypes.length > 0 ? (
+              <ResponsiveContainer width="100%" height={200}>
+                <PieChart>
+                  <Pie data={filteredModelTypes} dataKey="tokens" nameKey="type_label"
+                    cx="50%" cy="50%" innerRadius={50} outerRadius={80}
+                    labelLine={false} label={DonutLabel}>
+                    {filteredModelTypes.map((m) => <Cell key={m.type} fill={typeColor(m.type)} />)}
+                  </Pie>
+                  <Tooltip formatter={(v: number, name: string) => [fmtTokens(v), name]} />
+                  <Legend iconSize={10} formatter={(_, entry: any) => entry.payload.type_label} />
+                </PieChart>
+              </ResponsiveContainer>
+            ) : <div className="flex items-center justify-center h-48 text-gray-400 text-sm">Aucune donnée</div>}
+          </Card>
+        </Col>
+        <Col xs={24} sm={14}>
+          <Card title="Workspaces — indexés vs LLM" size="small">
+            <ResponsiveContainer width="100%" height={200}>
+              <BarChart data={filteredWsList} layout="vertical">
+                <CartesianGrid strokeDasharray="3 3" stroke="#f0f0f0" horizontal={false} />
+                <XAxis type="number" tickFormatter={fmtTokens} tick={{ fontSize: 10 }} />
+                <YAxis type="category" dataKey="workspace_name" tick={{ fontSize: 11 }} width={90} />
+                <Tooltip formatter={(v: number, k: string) =>
+                  [fmtTokens(v), k === 'indexed_tokens' ? 'Tokens indexés' : 'Tokens LLM']} />
+                <Legend iconSize={10} formatter={(k) => k === 'indexed_tokens' ? 'Tokens indexés' : 'Tokens LLM'} />
+                <Bar dataKey="indexed_tokens" fill="#10b981" radius={[0, 2, 2, 0]} />
+                <Bar dataKey="tokens" fill="#6366f1" radius={[0, 2, 2, 0]} />
+              </BarChart>
+            </ResponsiveContainer>
+          </Card>
+        </Col>
+      </Row>
+
+      {/* Tables */}
+      <Row gutter={[16, 16]}>
+        <Col xs={24} lg={12}>
+          <Card title="Workspaces" size="small">
+            <Table columns={wsColumns} dataSource={filteredWsList} rowKey="workspace_id" size="small" pagination={false} />
+          </Card>
+        </Col>
+        <Col xs={24} lg={12}>
+          <Card title="Modèles utilisés" size="small">
+            <Table columns={modelColumns} dataSource={filteredModels}
+              rowKey={(r) => `${r.model}-${r.type}`} size="small"
+              pagination={{ pageSize: 6, hideOnSinglePage: true }} />
+          </Card>
+        </Col>
+      </Row>
+    </Space>
+  );
+}
 
 function formatTime(t: string | number | null) {
   if (!t) return '—';
@@ -328,6 +628,11 @@ export default function OrgDetailPage() {
                 ))}
               </Card>
             ),
+          },
+          {
+            key: 'usage',
+            label: <span><BarChartOutlined /> Stats</span>,
+            children: <OrgUsageTab orgId={orgId!} />,
           },
           {
             key: 'audit',

@@ -242,6 +242,17 @@ class TenantLLMService(CommonService):
         except Exception as e:
             logging.exception(f"TenantLLMService.increase_usage got exception {e}, Failed to update used_tokens for tenant_model_id {tenant_model_id}")
             return 0
+
+        # Fire-and-forget: push to Redis for async daily flush — never blocks the hot path
+        try:
+            row = cls.model.get_by_id(tenant_model_id)
+            from rag.utils.redis_conn import REDIS_CONN
+            today = date.today().isoformat()
+            redis_key = f"token_usage:{today}:{row.tenant_id}:{row.llm_factory or ''}:{row.model_type}:{row.llm_name}"
+            REDIS_CONN.REDIS.incrby(redis_key, used_tokens)
+        except Exception:
+            logging.warning("token_usage Redis incrby failed in increase_usage_by_id", exc_info=False)
+
         return update_cnt
 
     @classmethod

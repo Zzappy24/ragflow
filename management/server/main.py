@@ -77,6 +77,7 @@ from management.server.routers import (
     system,
     models,
     archives,
+    stats,
 )
 
 app.include_router(auth.router, prefix="/api/admin/auth", tags=["Auth"])
@@ -90,3 +91,4 @@ app.include_router(audit.router, prefix="/api/admin", tags=["Audit"])
 app.include_router(system.router, prefix="/api/admin/system", tags=["System"])
 app.include_router(models.router, prefix="/api/admin", tags=["Workspace Models"])
 app.include_router(archives.router, prefix="/api/admin", tags=["Archives"])
+app.include_router(stats.router, prefix="/api/admin", tags=["Stats"])

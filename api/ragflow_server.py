@@ -108,7 +108,7 @@ def flush_token_usage():
                     redis_lock.release()
         except Exception:
             logging.exception("flush_token_usage exception")
-        stop_event.wait(300)  # flush every 5 minutes
+        stop_event.wait(30)  # flush every 30 seconds
 
 RAGFLOW_DEBUGPY_LISTEN = int(os.environ.get('RAGFLOW_DEBUGPY_LISTEN', "0"))
 
