@@ -879,12 +879,12 @@ async def update_message_feedback(chat_id, session_id, msg_id):
                     if reference:
                         if isinstance(prior_thumb, bool) and prior_thumb != thumb_raw:
                             ChunkFeedbackService.apply_feedback(
-                                tenant_id=current_user.id,
+                                tenant_id=active_tenant_id(),
                                 reference=reference,
                                 is_positive=not prior_thumb,
                             )
                         feedback_result = ChunkFeedbackService.apply_feedback(
-                            tenant_id=current_user.id,
+                            tenant_id=active_tenant_id(),
                             reference=reference,
                             is_positive=thumb_raw is True,
                         )

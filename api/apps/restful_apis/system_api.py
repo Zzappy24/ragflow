@@ -16,15 +16,15 @@
 
 from quart import jsonify
 
-from api.apps import login_required, current_user
+from api.apps import login_required
 from api.utils.api_utils import get_json_result, get_data_error_result, server_error_response, generate_confirmation_token
 from api.utils.health_utils import run_health_checks
+from api.utils.tenant_context import active_tenant_id
 from common.versions import get_ragflow_version
 from datetime import datetime
 from common.time_utils import current_timestamp, datetime_format
 from api.db.db_models import APIToken
 from api.db.services.api_service import APITokenService
-from api.db.services.user_service import UserTenantService
 from common.log_utils import get_log_levels, set_log_level
 
 @manager.route("/system/ping", methods=["GET"])  # noqa: F821
@@ -90,11 +90,7 @@ def token_list():
                     description: Token creation time.
     """
     try:
-        tenants = UserTenantService.query(user_id=current_user.id)
-        if not tenants:
-            return get_data_error_result(message="Tenant not found!")
-
-        tenant_id = [tenant for tenant in tenants if tenant.role == "owner"][0].tenant_id
+        tenant_id = active_tenant_id()
         objs = APITokenService.query(tenant_id=tenant_id)
         objs = [o.to_dict() for o in objs]
         for o in objs:
@@ -133,11 +129,7 @@ def new_token():
               description: The generated API token.
     """
     try:
-        tenants = UserTenantService.query(user_id=current_user.id)
-        if not tenants:
-            return get_data_error_result(message="Tenant not found!")
-
-        tenant_id = [tenant for tenant in tenants if tenant.role == "owner"][0].tenant_id
+        tenant_id = active_tenant_id()
         obj = {
             "tenant_id": tenant_id,
             "token": generate_confirmation_token(),
@@ -183,11 +175,7 @@ def rm(token):
               description: Deletion status.
     """
     try:
-        tenants = UserTenantService.query(user_id=current_user.id)
-        if not tenants:
-            return get_data_error_result(message="Tenant not found!")
-
-        tenant_id = tenants[0].tenant_id
+        tenant_id = active_tenant_id()
         APITokenService.filter_delete([APIToken.tenant_id == tenant_id, APIToken.token == token])
         return get_json_result(data=True)
     except Exception as e:
