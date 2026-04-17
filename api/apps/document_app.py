@@ -13,9 +13,7 @@
 #  See the License for the specific language governing permissions and
 #  limitations under the License
 #
-import json
 import os.path
-import pathlib
 import re
 from pathlib import Path, PurePosixPath, PureWindowsPath
 
@@ -51,7 +49,7 @@ from common.file_utils import get_project_base_directory
 from common.metadata_utils import convert_conditions, meta_filter, turn2jsonschema
 from common.misc_utils import get_uuid, thread_pool_exec
 from deepdoc.parser.html_parser import RAGFlowHtmlParser
-from rag.nlp import rag_tokenizer, search
+from rag.nlp import search
 
 
 def _is_safe_download_filename(name: str) -> bool:
@@ -249,7 +247,7 @@ async def create():
 @login_required
 @require_permission(Permission.DOCUMENT_READ)
 async def list_docs():
-    kb_id = request.args.get("kb_id")
+    kb_id = request.args.get("id")
     if not kb_id:
         return get_json_result(data=False, message='Lack of "KB ID"', code=RetCode.ARGUMENT_ERROR)
     # CUSTOM B2B SaaS: scope strictly to the active workspace — prevents cross-workspace
@@ -686,6 +684,7 @@ async def run():
         return await thread_pool_exec(_run_sync)
     except Exception as e:
         return server_error_response(e)
+
 
 
 @manager.route("/rename", methods=["POST"])  # noqa: F821

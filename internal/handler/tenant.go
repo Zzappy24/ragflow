@@ -42,6 +42,84 @@ func NewTenantHandler(tenantService *service.TenantService, userService *service
 	}
 }
 
+// GetModels gets the default models for the active tenant.
+// Security: uses GetTenantID(c) so models are scoped to the active workspace.
+func (h *TenantHandler) GetModels(c *gin.Context) {
+	_, errorCode, errorMessage := GetUser(c)
+	if errorCode != common.CodeSuccess {
+		jsonError(c, errorCode, errorMessage)
+		return
+	}
+
+	defaultModels, err := h.tenantService.ListTenantDefaultModels(GetTenantID(c))
+	if err != nil {
+		c.JSON(http.StatusOK, gin.H{
+			"code":    common.CodeExceptionError,
+			"message": err.Error(),
+			"data":    false,
+		})
+		return
+	}
+
+	if defaultModels == nil {
+		c.JSON(http.StatusOK, gin.H{
+			"code":    common.CodeDataError,
+			"message": "No default models",
+			"data":    nil,
+		})
+		return
+	}
+
+	c.JSON(http.StatusOK, gin.H{
+		"code":    common.CodeSuccess,
+		"message": "success",
+		"data":    defaultModels,
+	})
+}
+
+type SetModelRequest struct {
+	ModelProvider string `json:"model_provider" binding:"required"`
+	ModelInstance string `json:"model_instance" binding:"required"`
+	ModelName     string `json:"model_name" binding:"required"`
+	ModelType     string `json:"model_type" binding:"required"`
+}
+
+// SetModels sets the default models for the active tenant.
+// Security: uses GetTenantID(c) so models are scoped to the active workspace.
+func (h *TenantHandler) SetModels(c *gin.Context) {
+	_, errorCode, errorMessage := GetUser(c)
+	if errorCode != common.CodeSuccess {
+		jsonError(c, errorCode, errorMessage)
+		return
+	}
+
+	var req SetModelRequest
+	if err := c.ShouldBindJSON(&req); err != nil {
+		c.JSON(http.StatusBadRequest, gin.H{
+			"code":    common.CodeBadRequest,
+			"data":    nil,
+			"message": "Invalid request body: " + err.Error(),
+		})
+		return
+	}
+
+	err := h.tenantService.SetTenantDefaultModels(GetTenantID(c), req.ModelProvider, req.ModelInstance, req.ModelName, req.ModelType)
+	if err != nil {
+		c.JSON(http.StatusOK, gin.H{
+			"code":    common.CodeExceptionError,
+			"message": err.Error(),
+			"data":    false,
+		})
+		return
+	}
+
+	c.JSON(http.StatusOK, gin.H{
+		"code":    common.CodeSuccess,
+		"message": "success",
+		"data":    nil,
+	})
+}
+
 // TenantInfo get tenant information
 // @Summary Get Tenant Information
 // @Description Get current user's tenant information (owner tenant)
@@ -117,16 +195,16 @@ func (h *TenantHandler) TenantList(c *gin.Context) {
 	})
 }
 
-// CreateDocMetaIndex handles the create doc meta index request
-// @Summary Create Doc Meta Index
-// @Description Create the document metadata index for a tenant
+// CreateMetadataInDocEngine handles the create doc meta table request
+// @Summary Create Doc Meta Table
+// @Description Create the document metadata table for a tenant
 // @Tags tenants
 // @Accept json
 // @Produce json
 // @Security ApiKeyAuth
 // @Success 200 {object} map[string]interface{}
-// @Router /v1/tenant/doc_meta_index [post]
-func (h *TenantHandler) CreateDocMetaIndex(c *gin.Context) {
+// @Router /v1/tenant/doc_engine_metadata_table [post]
+func (h *TenantHandler) CreateMetadataInDocEngine(c *gin.Context) {
 	_, errorCode, errorMessage := GetUser(c)
 	if errorCode != common.CodeSuccess {
 		jsonError(c, errorCode, errorMessage)
@@ -135,7 +213,7 @@ func (h *TenantHandler) CreateDocMetaIndex(c *gin.Context) {
 
 	tenantID := GetTenantID(c)
 
-	code, err := h.tenantService.CreateDocMetaIndex(tenantID)
+	code, err := h.tenantService.CreateMetadataInDocEngine(tenantID)
 	if err != nil {
 		jsonError(c, code, err.Error())
 		return
@@ -148,16 +226,16 @@ func (h *TenantHandler) CreateDocMetaIndex(c *gin.Context) {
 	})
 }
 
-// DeleteDocMetaIndex handles the delete doc meta index request
-// @Summary Delete Doc Meta Index
-// @Description Delete the document metadata index for a tenant
+// DeleteMetadataInDocEngine handles the delete doc meta table request
+// @Summary Delete Metadata In Doc Engine
+// @Description Delete the document metadata table for a tenant
 // @Tags tenants
 // @Accept json
 // @Produce json
 // @Security ApiKeyAuth
 // @Success 200 {object} map[string]interface{}
-// @Router /v1/tenant/doc_meta_index [delete]
-func (h *TenantHandler) DeleteDocMetaIndex(c *gin.Context) {
+// @Router /v1/tenant/doc_engine_metadata_table [delete]
+func (h *TenantHandler) DeleteMetadataInDocEngine(c *gin.Context) {
 	_, errorCode, errorMessage := GetUser(c)
 	if errorCode != common.CodeSuccess {
 		jsonError(c, errorCode, errorMessage)
@@ -166,7 +244,7 @@ func (h *TenantHandler) DeleteDocMetaIndex(c *gin.Context) {
 
 	tenantID := GetTenantID(c)
 
-	code, err := h.tenantService.DeleteDocMetaIndex(tenantID)
+	code, err := h.tenantService.DeleteMetadataInDocEngine(tenantID)
 	if err != nil {
 		jsonError(c, code, err.Error())
 		return

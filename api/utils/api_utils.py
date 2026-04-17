@@ -316,35 +316,60 @@ def token_required(func):
             raise err
 
         token = authorization_list[1]
+
+        # First try API token (explicit API token authentication)
         objs = APIToken.query(token=token)
-        if not objs:
-            err = WerkzeugUnauthorized(description="Authentication error: API key is invalid!")
-            err.code = RetCode.AUTHENTICATION_ERROR
-            raise err
+        if objs:
+            # On success, inject tenant_id into the route function's kwargs
+            kwargs["tenant_id"] = objs[0].tenant_id
 
-        # On success, inject tenant_id into the route function's kwargs
-        kwargs["tenant_id"] = objs[0].tenant_id
+            # RBAC: check api_key_scope if present
+            try:
+                from api.db.services.workspace_service import ApiKeyScopeService
+                from datetime import datetime
+                scope = ApiKeyScopeService.get_by_token(token)
+                if scope:
+                    if scope.expires_at and scope.expires_at < datetime.utcnow():
+                        raise WerkzeugUnauthorized(description="API key expired")
+                    if scope.status != "1":
+                        raise WerkzeugUnauthorized(description="API key disabled")
+                    ApiKeyScopeService.touch_last_used(token)
+            except WerkzeugUnauthorized:
+                raise
+            except Exception:
+                pass  # no scope = legacy token, allow through
 
-        # RBAC: check api_key_scope if present
+            result = func(*args, **kwargs)
+            if inspect.iscoroutine(result):
+                return await result
+            return result
+
+        # Fallback: try login token (for clients that use login token as API token)
+        # Login tokens are JWT-encoded (URLSafeTimedSerializer), need to decode to get raw access_token
+        from api.db.services.user_service import UserService
+        from common.constants import StatusEnum
+        from common import settings
+        from itsdangerous.url_safe import URLSafeTimedSerializer as Serializer
         try:
-            from api.db.services.workspace_service import ApiKeyScopeService
-            from datetime import datetime
-            scope = ApiKeyScopeService.get_by_token(token)
-            if scope:
-                if scope.expires_at and scope.expires_at < datetime.utcnow():
-                    raise WerkzeugUnauthorized(description="API key expired")
-                if scope.status != "1":
-                    raise WerkzeugUnauthorized(description="API key disabled")
-                ApiKeyScopeService.touch_last_used(token)
-        except WerkzeugUnauthorized:
-            raise
+            jwt = Serializer(secret_key=settings.SECRET_KEY)
+            raw_token = str(jwt.loads(token))
+            user = UserService.query(access_token=raw_token, status=StatusEnum.VALID.value)
+            if user:
+                # On success, inject tenant_id from user's tenant
+                from api.db.services.user_service import UserTenantService
+                tenants = UserTenantService.query(user_id=user[0].id)
+                if tenants:
+                    kwargs["tenant_id"] = tenants[0].tenant_id
+                    result = func(*args, **kwargs)
+                    if inspect.iscoroutine(result):
+                        return await result
+                    return result
         except Exception:
-            pass  # no scope = legacy token, allow through
+            pass
 
-        result = func(*args, **kwargs)
-        if inspect.iscoroutine(result):
-            return await result
-        return result
+        err = WerkzeugUnauthorized(description="Authentication error: API key is invalid!")
+        err.code = RetCode.AUTHENTICATION_ERROR
+        raise err
 
     return wrapper
 
@@ -441,6 +466,10 @@ def get_parser_config(chunk_method, parser_config):
                 ],
                 "method": "light",
             },
+            "parent_child": {
+                "use_parent_child": False,
+                "children_delimiter": "\n",
+            },
         },
         "qa": {"raptor": {"use_raptor": False}, "graphrag": {"use_graphrag": False}},
         "tag": None,
@@ -468,16 +497,23 @@ def get_parser_config(chunk_method, parser_config):
     # If no parser_config provided, return default merged with base defaults
     if not parser_config:
         if default_config is None:
-            return deep_merge(base_defaults, {})
-        return deep_merge(base_defaults, default_config)
+            merged_config = deep_merge(base_defaults, {})
+        else:
+            merged_config = deep_merge(base_defaults, default_config)
+    elif default_config is None:
+        # If parser_config is provided but no defaults for this method
+        merged_config = deep_merge(base_defaults, parser_config)
+    else:
+        # Ensure raptor and graph_rag fields have default values if not provided
+        merged_config = deep_merge(base_defaults, default_config)
+        merged_config = deep_merge(merged_config, parser_config)
 
-    # If parser_config is provided, merge with defaults to ensure required fields exist
-    if default_config is None:
-        return deep_merge(base_defaults, parser_config)
-
-    # Ensure raptor and graph_rag fields have default values if not provided
-    merged_config = deep_merge(base_defaults, default_config)
-    merged_config = deep_merge(merged_config, parser_config)
+    # Flatten parent_child config into children_delimiter for the execution layer
+    pc = merged_config.get("parent_child", {})
+    if pc.get("use_parent_child"):
+        merged_config["children_delimiter"] = pc.get("children_delimiter", "\n")
+    elif pc:
+        merged_config["children_delimiter"] = ""
 
     return merged_config
 
