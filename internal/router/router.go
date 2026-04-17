@@ -20,6 +20,7 @@ import (
 	"github.com/gin-gonic/gin"
 
 	"ragflow/internal/handler"
+	"ragflow/internal/middleware"
 )
 
 // Router router
@@ -106,6 +107,10 @@ func (r *Router) Setup(engine *gin.Engine) {
 	// Protected routes
 	authorized := engine.Group("")
 	authorized.Use(r.authHandler.AuthMiddleware())
+	// Multi-tenant workspace isolation (custom B2B layer — not upstream).
+	// Reads X-Workspace-Id, validates membership, injects tenant_id into context.
+	// See internal/middleware/workspace.go
+	authorized.Use(middleware.NewWorkspaceMiddleware().Resolve())
 	{
 		// User info endpoint
 		authorized.GET("/v1/user/info", r.userHandler.Info)

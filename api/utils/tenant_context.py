@@ -11,8 +11,12 @@ Use ``active_tenant_id()`` everywhere you need a tenant_id for data scoping —
 NOT ``current_user.id``. Using ``current_user.id`` directly leaks data across
 workspaces because, in the legacy single-tenant model, ``user.id == tenant.id``.
 
-``active_tenant_id()`` raises 401 if no tenant could be resolved (e.g. unauth
-request, or X-Workspace-Id pointing at a workspace the user is not a member of).
+X-Workspace-Id is REQUIRED on every authenticated request. Every user belongs
+to at least one workspace (the "général" default workspace created at org
+onboarding). There is no personal-tenant fallback.
+
+``active_tenant_id()`` raises 401 if no tenant could be resolved (missing
+header, inactive workspace, or user not a member).
 Routes that prefer to fail soft can use ``maybe_active_tenant_id()`` instead.
 """
 import logging
@@ -67,8 +71,9 @@ def _resolve_tenant() -> str | None:
 
         return None  # not a member — deny
 
-    # No workspace header — legacy personal tenant
-    return current_user.id
+    # No workspace header — X-Workspace-Id is required in this B2B SaaS model.
+    # Every user belongs to at least one workspace (default "général" workspace).
+    return None
 
 
 def _ensure_resolved() -> None:

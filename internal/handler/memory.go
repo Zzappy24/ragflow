@@ -89,12 +89,12 @@ func (h *MemoryHandler) CreateMemory(c *gin.Context) {
 
 	// Get current logged-in user information
 	// GetUser is a context value set by the authentication middleware
-	user, errorCode, errorMessage := GetUser(c)
+	_, errorCode, errorMessage := GetUser(c)
 	if errorCode != common.CodeSuccess {
 		jsonError(c, errorCode, errorMessage)
 		return
 	}
-	userID := user.ID
+	userID := GetTenantID(c)
 
 	// Parse JSON request body
 	var req service.CreateMemoryRequest
@@ -239,12 +239,12 @@ func (h *MemoryHandler) UpdateMemory(c *gin.Context) {
 	}
 
 	// Get current logged-in user information
-	user, errorCode, errorMessage := GetUser(c)
+	_, errorCode, errorMessage := GetUser(c)
 	if errorCode != common.CodeSuccess {
 		jsonError(c, errorCode, errorMessage)
 		return
 	}
-	userID := user.ID
+	userID := GetTenantID(c)
 
 	// Parse JSON request body
 	var req service.UpdateMemoryRequest
@@ -412,13 +412,21 @@ func (h *MemoryHandler) ListMemories(c *gin.Context) {
 	}
 
 	// Parse tenant_id parameter
-	// If not specified, service will get all tenants associated with the user
+	// If not specified, scope to the active workspace tenant (or all personal tenants).
 	var tenantIDs []string
 	if tenantIDsParam != "" {
 		if strings.Contains(tenantIDsParam, ",") {
 			tenantIDs = strings.Split(tenantIDsParam, ",")
 		} else {
 			tenantIDs = []string{tenantIDsParam}
+		}
+	}
+
+	// In workspace mode, scope the listing to the active tenant when no explicit
+	// tenant_id filter was provided in the request.
+	if len(tenantIDs) == 0 {
+		if tid := GetTenantID(c); tid != user.ID {
+			tenantIDs = []string{tid}
 		}
 	}
 

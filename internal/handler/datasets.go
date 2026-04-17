@@ -118,7 +118,7 @@ func (h *DatasetsHandler) ListDatasets(c *gin.Context) {
 
 // CreateDataset handles POST /api/v1/datasets.
 func (h *DatasetsHandler) CreateDataset(c *gin.Context) {
-	user, errorCode, errorMessage := GetUser(c)
+	_, errorCode, errorMessage := GetUser(c)
 	if errorCode != common.CodeSuccess {
 		jsonError(c, errorCode, errorMessage)
 		return
@@ -130,7 +130,7 @@ func (h *DatasetsHandler) CreateDataset(c *gin.Context) {
 		return
 	}
 
-	result, code, err := h.datasetsService.CreateDataset(&req, user.ID)
+	result, code, err := h.datasetsService.CreateDataset(&req, GetTenantID(c))
 	if err != nil {
 		jsonError(c, code, err.Error())
 		return
@@ -144,7 +144,7 @@ func (h *DatasetsHandler) CreateDataset(c *gin.Context) {
 
 // DeleteDatasets handles DELETE /api/v1/datasets.
 func (h *DatasetsHandler) DeleteDatasets(c *gin.Context) {
-	user, errorCode, errorMessage := GetUser(c)
+	_, errorCode, errorMessage := GetUser(c)
 	if errorCode != common.CodeSuccess {
 		jsonError(c, errorCode, errorMessage)
 		return
@@ -166,7 +166,7 @@ func (h *DatasetsHandler) DeleteDatasets(c *gin.Context) {
 		ids = *req.IDs
 	}
 
-	result, code, err := h.datasetsService.DeleteDatasets(ids, req.DeleteAll, user.ID)
+	result, code, err := h.datasetsService.DeleteDatasets(ids, req.DeleteAll, GetTenantID(c))
 	if err != nil {
 		jsonError(c, code, err.Error())
 		return

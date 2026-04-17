@@ -93,7 +93,7 @@ var (
 // @Success 200 {object} map[string]interface{}
 // @Router /v1/kb/create [post]
 func (h *KnowledgebaseHandler) CreateKB(c *gin.Context) {
-	user, errorCode, errorMessage := GetUser(c)
+	_, errorCode, errorMessage := GetUser(c)
 	if errorCode != common.CodeSuccess {
 		jsonError(c, errorCode, errorMessage)
 		return
@@ -105,7 +105,7 @@ func (h *KnowledgebaseHandler) CreateKB(c *gin.Context) {
 		return
 	}
 
-	result, code, err := h.kbService.CreateKB(&req, user.ID)
+	result, code, err := h.kbService.CreateKB(&req, GetTenantID(c))
 	if err != nil {
 		jsonError(c, code, err.Error())
 		return
@@ -125,7 +125,7 @@ func (h *KnowledgebaseHandler) CreateKB(c *gin.Context) {
 // @Success 200 {object} map[string]interface{}
 // @Router /v1/kb/update [post]
 func (h *KnowledgebaseHandler) UpdateKB(c *gin.Context) {
-	user, errorCode, errorMessage := GetUser(c)
+	_, errorCode, errorMessage := GetUser(c)
 	if errorCode != common.CodeSuccess {
 		jsonError(c, errorCode, errorMessage)
 		return
@@ -137,7 +137,7 @@ func (h *KnowledgebaseHandler) UpdateKB(c *gin.Context) {
 		return
 	}
 
-	result, code, err := h.kbService.UpdateKB(&req, user.ID)
+	result, code, err := h.kbService.UpdateKB(&req, GetTenantID(c))
 	if err != nil {
 		if strings.Contains(err.Error(), "authorization") {
 			jsonError(c, common.CodeAuthenticationError, err.Error())
@@ -315,7 +315,7 @@ func (h *KnowledgebaseHandler) ListKbs(c *gin.Context) {
 // @Success 200 {object} map[string]interface{}
 // @Router /v1/kb/rm [post]
 func (h *KnowledgebaseHandler) DeleteKB(c *gin.Context) {
-	user, errorCode, errorMessage := GetUser(c)
+	_, errorCode, errorMessage := GetUser(c)
 	if errorCode != common.CodeSuccess {
 		jsonError(c, errorCode, errorMessage)
 		return
@@ -329,7 +329,7 @@ func (h *KnowledgebaseHandler) DeleteKB(c *gin.Context) {
 		return
 	}
 
-	code, err := h.kbService.DeleteKB(req.KBID, user.ID)
+	code, err := h.kbService.DeleteKB(req.KBID, GetTenantID(c))
 	if err != nil {
 		if strings.Contains(err.Error(), "authorization") {
 			jsonError(c, common.CodeAuthenticationError, err.Error())

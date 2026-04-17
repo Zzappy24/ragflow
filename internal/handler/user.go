@@ -525,7 +525,7 @@ func (h *UserHandler) GetLoginChannels(c *gin.Context) {
 // @Success 200 {object} map[string]interface{}
 // @Router /v1/user/set_tenant_info [post]
 func (h *UserHandler) SetTenantInfo(c *gin.Context) {
-	user, errorCode, errorMessage := GetUser(c)
+	_, errorCode, errorMessage := GetUser(c)
 	if errorCode != common.CodeSuccess {
 		jsonError(c, errorCode, errorMessage)
 		return
@@ -541,7 +541,7 @@ func (h *UserHandler) SetTenantInfo(c *gin.Context) {
 		return
 	}
 
-	err := h.userService.SetTenantInfo(user.ID, &req)
+	err := h.userService.SetTenantInfo(GetTenantID(c), &req)
 	if err != nil {
 		c.JSON(http.StatusOK, gin.H{
 			"code":    common.CodeDataError,

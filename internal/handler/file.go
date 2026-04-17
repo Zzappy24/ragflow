@@ -56,12 +56,12 @@ func NewFileHandler(fileService *service.FileService, userService *service.UserS
 // @Success 200 {object} service.ListFilesResponse
 // @Router /api/v1/files [get]
 func (h *FileHandler) ListFiles(c *gin.Context) {
-	user, errorCode, errorMessage := GetUser(c)
+	_, errorCode, errorMessage := GetUser(c)
 	if errorCode != common.CodeSuccess {
 		jsonError(c, errorCode, errorMessage)
 		return
 	}
-	userID := user.ID
+	userID := GetTenantID(c)
 
 	parentID := c.Query("parent_id")
 	keywords := c.Query("keywords")
@@ -121,12 +121,12 @@ func (h *FileHandler) ListFiles(c *gin.Context) {
 // @Success 200 {object} map[string]interface{}
 // @Router /v1/file/root_folder [get]
 func (h *FileHandler) GetRootFolder(c *gin.Context) {
-	user, errorCode, errorMessage := GetUser(c)
+	_, errorCode, errorMessage := GetUser(c)
 	if errorCode != common.CodeSuccess {
 		jsonError(c, errorCode, errorMessage)
 		return
 	}
-	userID := user.ID
+	userID := GetTenantID(c)
 
 	// Get root folder
 	rootFolder, err := h.fileService.GetRootFolder(userID)
@@ -234,13 +234,13 @@ type CreateFolderRequest struct {
 // @Failure 400 {object} map[string]interface{}
 // @Router /v1/file/upload [post]
 func (h *FileHandler) UploadFile(c *gin.Context) {
-	user, errorCode, errorMessage := GetUser(c)
+	_, errorCode, errorMessage := GetUser(c)
 	if errorCode != common.CodeSuccess {
 		jsonError(c, errorCode, errorMessage)
 		return
 	}
 
-	userID := user.ID
+	userID := GetTenantID(c)
 
 	contentType := c.ContentType()
 

@@ -49,12 +49,12 @@ func NewChatHandler(chatService *service.ChatService, userService *service.UserS
 // @Success 200 {object} service.ListChatsResponse
 // @Router /v1/dialog/list [get]
 func (h *ChatHandler) ListChats(c *gin.Context) {
-	user, errorCode, errorMessage := GetUser(c)
+	_, errorCode, errorMessage := GetUser(c)
 	if errorCode != common.CodeSuccess {
 		jsonError(c, errorCode, errorMessage)
 		return
 	}
-	userID := user.ID
+	userID := GetTenantID(c)
 
 	// List chats - default to valid status "1" (same as Python StatusEnum.VALID.value)
 	result, err := h.chatService.ListChats(userID, "1")
@@ -88,12 +88,12 @@ func (h *ChatHandler) ListChats(c *gin.Context) {
 // @Success 200 {object} service.ListChatsNextResponse
 // @Router /v1/dialog/next [post]
 func (h *ChatHandler) ListChatsNext(c *gin.Context) {
-	user, errorCode, errorMessage := GetUser(c)
+	_, errorCode, errorMessage := GetUser(c)
 	if errorCode != common.CodeSuccess {
 		jsonError(c, errorCode, errorMessage)
 		return
 	}
-	userID := user.ID
+	userID := GetTenantID(c)
 
 	// Parse query parameters
 	keywords := c.Query("keywords")
@@ -158,12 +158,12 @@ func (h *ChatHandler) ListChatsNext(c *gin.Context) {
 // @Success 200 {object} service.SetDialogResponse
 // @Router /v1/dialog/set [post]
 func (h *ChatHandler) SetDialog(c *gin.Context) {
-	user, errorCode, errorMessage := GetUser(c)
+	_, errorCode, errorMessage := GetUser(c)
 	if errorCode != common.CodeSuccess {
 		jsonError(c, errorCode, errorMessage)
 		return
 	}
-	userID := user.ID
+	userID := GetTenantID(c)
 
 	// Parse request body
 	var req service.SetDialogRequest
@@ -216,12 +216,12 @@ type RemoveDialogsRequest struct {
 // @Success 200 {object} map[string]interface{}
 // @Router /v1/dialog/rm [post]
 func (h *ChatHandler) RemoveChats(c *gin.Context) {
-	user, errorCode, errorMessage := GetUser(c)
+	_, errorCode, errorMessage := GetUser(c)
 	if errorCode != common.CodeSuccess {
 		jsonError(c, errorCode, errorMessage)
 		return
 	}
-	userID := user.ID
+	userID := GetTenantID(c)
 
 	// Parse request body
 	var req RemoveDialogsRequest

@@ -35,3 +35,16 @@ func GetUser(c *gin.Context) (*entity.User, common.ErrorCode, string) {
 	}
 	return user, common.CodeSuccess, ""
 }
+
+// GetTenantID returns the active tenant_id for the current request.
+// The value is set by WorkspaceMiddleware after validating X-Workspace-Id.
+// X-Workspace-Id is mandatory — every user belongs to at least one workspace.
+// Returns "" only if the middleware was bypassed (should not happen in practice).
+func GetTenantID(c *gin.Context) string {
+	if tid, exists := c.Get("tenant_id"); exists {
+		if s, ok := tid.(string); ok {
+			return s
+		}
+	}
+	return ""
+}

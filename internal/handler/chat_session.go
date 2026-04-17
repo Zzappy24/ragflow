@@ -51,12 +51,12 @@ func NewChatSessionHandler(chatSessionService *service.ChatSessionService, userS
 // @Success 200 {object} service.SetChatSessionResponse
 // @Router /v1/conversation/set [post]
 func (h *ChatSessionHandler) SetChatSession(c *gin.Context) {
-	user, errorCode, errorMessage := GetUser(c)
+	_, errorCode, errorMessage := GetUser(c)
 	if errorCode != common.CodeSuccess {
 		jsonError(c, errorCode, errorMessage)
 		return
 	}
-	userID := user.ID
+	userID := GetTenantID(c)
 
 	// Parse request body
 	var req service.SetChatSessionRequest
@@ -100,12 +100,12 @@ type RemoveChatSessionsRequest struct {
 // @Success 200 {object} map[string]interface{}
 // @Router /v1/conversation/rm [post]
 func (h *ChatSessionHandler) RemoveChatSessions(c *gin.Context) {
-	user, errorCode, errorMessage := GetUser(c)
+	_, errorCode, errorMessage := GetUser(c)
 	if errorCode != common.CodeSuccess {
 		jsonError(c, errorCode, errorMessage)
 		return
 	}
-	userID := user.ID
+	userID := GetTenantID(c)
 
 	// Parse request body
 	var req RemoveChatSessionsRequest
@@ -152,12 +152,12 @@ func (h *ChatSessionHandler) RemoveChatSessions(c *gin.Context) {
 // @Success 200 {object} service.ListChatSessionsResponse
 // @Router /v1/conversation/list [get]
 func (h *ChatSessionHandler) ListChatSessions(c *gin.Context) {
-	user, errorCode, errorMessage := GetUser(c)
+	_, errorCode, errorMessage := GetUser(c)
 	if errorCode != common.CodeSuccess {
 		jsonError(c, errorCode, errorMessage)
 		return
 	}
-	userID := user.ID
+	userID := GetTenantID(c)
 
 	// Get dialog_id from query parameter
 	dialogID := c.Query("dialog_id")
@@ -218,12 +218,12 @@ type CompletionRequest struct {
 // @Success 200 {object} map[string]interface{}
 // @Router /v1/conversation/completion [post]
 func (h *ChatSessionHandler) Completion(c *gin.Context) {
-	user, errorCode, errorMessage := GetUser(c)
+	_, errorCode, errorMessage := GetUser(c)
 	if errorCode != common.CodeSuccess {
 		jsonError(c, errorCode, errorMessage)
 		return
 	}
-	userID := user.ID
+	userID := GetTenantID(c)
 
 	// Parse request body
 	var req CompletionRequest

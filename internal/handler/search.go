@@ -55,12 +55,12 @@ func NewSearchHandler(searchService *service.SearchService, userService *service
 // @Success 200 {object} service.ListSearchAppsResponse
 // @Router /v1/search/list [post]
 func (h *SearchHandler) ListSearchApps(c *gin.Context) {
-	user, errorCode, errorMessage := GetUser(c)
+	_, errorCode, errorMessage := GetUser(c)
 	if errorCode != common.CodeSuccess {
 		jsonError(c, errorCode, errorMessage)
 		return
 	}
-	userID := user.ID
+	userID := GetTenantID(c)
 
 	// Parse query parameters
 	keywords := c.Query("keywords")

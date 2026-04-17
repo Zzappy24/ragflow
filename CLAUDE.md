@@ -143,6 +143,37 @@ These files contain custom multi-tenant code that will likely conflict with upst
 | `web/src/components/image/index.tsx` | Authenticated image fetch (blob URL) |
 | `web/src/layouts/components/workspace-switcher.tsx` | Workspace switcher component |
 
+### Go server — upstream migration watch
+
+Upstream is actively migrating routes from Python to Go (8+ PRs since we froze: search CRUD,
+datasets update, file lookup, models). Every new Go handler arrives **without** workspace tenant
+isolation. On every upstream merge that touches `internal/`:
+
+1. **Grep for new `user.ID` usages in handlers:**
+   ```
+   grep -rn "user\.ID" internal/handler/*.go
+   ```
+2. **Any new handler using `user.ID` for data-scoping must be changed to `GetTenantID(c)`.**
+   - Exceptions: `Accessible(kbID, user.ID)` and listing ops that JOIN `user_tenant` are fine.
+   - Ownership/create ops (`CreateXxx`, `UpdateXxx`, `DeleteXxx`) must use `GetTenantID(c)`.
+3. **New router groups added to `authorized` automatically get workspace isolation** via the
+   single `authorized.Use(middleware.NewWorkspaceMiddleware().Resolve())` line — no action needed
+   unless upstream adds a new top-level group outside `authorized`.
+
+Custom Go files (never conflict upstream):
+| File | What's custom |
+|------|--------------|
+| `internal/middleware/workspace.go` | X-Workspace-Id → tenant_id resolution, 403 if missing |
+| `internal/dao/workspace.go` | Read-only access to workspace/ws_member/org_member tables |
+
+Upstream Go files with our one-line touch-point:
+| File | Change |
+|------|--------|
+| `internal/router/router.go` | `authorized.Use(middleware.NewWorkspaceMiddleware().Resolve())` |
+| `internal/handler/common.go` | `GetTenantID(c)` helper added |
+
 ### Merge procedure
 
-On every upstream merge, grep for `_fallback_personal_tenant_id`, `WorkspaceService`, `WsMemberService`, `X-Workspace-Id`, `active_tenant_id`, `OrgMemberService` to identify conflict zones. Review each custom change against upstream diffs before merging.
+On every upstream merge, grep for `_fallback_personal_tenant_id`, `WorkspaceService`,
+`WsMemberService`, `X-Workspace-Id`, `active_tenant_id`, `OrgMemberService` to identify
+Python conflict zones. For Go, grep `user\.ID` in `internal/handler/` as described above.

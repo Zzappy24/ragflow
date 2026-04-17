@@ -61,13 +61,13 @@ func NewLLMHandler(llmService *service.LLMService, userService *service.UserServ
 // @Success 200 {object} map[string]interface{}
 // @Router /v1/llm/my_llms [get]
 func (h *LLMHandler) GetMyLLMs(c *gin.Context) {
-	user, errorCode, errorMessage := GetUser(c)
+	_, errorCode, errorMessage := GetUser(c)
 	if errorCode != common.CodeSuccess {
 		jsonError(c, errorCode, errorMessage)
 		return
 	}
 
-	tenantID := user.ID
+	tenantID := GetTenantID(c)
 	includeDetailsStr := c.DefaultQuery("include_details", "false")
 	includeDetails := includeDetailsStr == "true"
 
@@ -99,7 +99,7 @@ func (h *LLMHandler) GetMyLLMs(c *gin.Context) {
 // @Success 200 {object} map[string]interface{}
 // @Router /v1/llm/set_api_key [post]
 func (h *LLMHandler) SetAPIKey(c *gin.Context) {
-	user, errorCode, errorMessage := GetUser(c)
+	_, errorCode, errorMessage := GetUser(c)
 	if errorCode != common.CodeSuccess {
 		jsonError(c, errorCode, errorMessage)
 		return
@@ -115,7 +115,7 @@ func (h *LLMHandler) SetAPIKey(c *gin.Context) {
 		return
 	}
 
-	tenantID := user.ID
+	tenantID := GetTenantID(c)
 	result, err := h.llmService.SetAPIKey(tenantID, &req)
 	if err != nil {
 		c.JSON(http.StatusOK, gin.H{
@@ -220,13 +220,13 @@ func (h *LLMHandler) Factories(c *gin.Context) {
 // @Success 200 {object} map[string][]service.LLMListItem
 // @Router /v1/llm/list [get]
 func (h *LLMHandler) ListApp(c *gin.Context) {
-	user, errorCode, errorMessage := GetUser(c)
+	_, errorCode, errorMessage := GetUser(c)
 	if errorCode != common.CodeSuccess {
 		jsonError(c, errorCode, errorMessage)
 		return
 	}
 
-	tenantID := user.ID
+	tenantID := GetTenantID(c)
 
 	modelType := c.Query("model_type")
 

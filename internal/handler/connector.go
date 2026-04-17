@@ -48,12 +48,12 @@ func NewConnectorHandler(connectorService *service.ConnectorService, userService
 // @Success 200 {object} service.ListConnectorsResponse
 // @Router /connector/list [get]
 func (h *ConnectorHandler) ListConnectors(c *gin.Context) {
-	user, errorCode, errorMessage := GetUser(c)
+	_, errorCode, errorMessage := GetUser(c)
 	if errorCode != common.CodeSuccess {
 		jsonError(c, errorCode, errorMessage)
 		return
 	}
-	userID := user.ID
+	userID := GetTenantID(c)
 
 	// List connectors
 	result, err := h.connectorService.ListConnectors(userID)

@@ -52,13 +52,13 @@ func NewTenantHandler(tenantService *service.TenantService, userService *service
 // @Success 200 {object} map[string]interface{}
 // @Router /v1/user/tenant_info [get]
 func (h *TenantHandler) TenantInfo(c *gin.Context) {
-	user, errorCode, errorMessage := GetUser(c)
+	_, errorCode, errorMessage := GetUser(c)
 	if errorCode != common.CodeSuccess {
 		jsonError(c, errorCode, errorMessage)
 		return
 	}
 
-	tenantInfo, err := h.tenantService.GetTenantInfo(user.ID)
+	tenantInfo, err := h.tenantService.GetTenantInfo(GetTenantID(c))
 	if err != nil {
 		c.JSON(http.StatusOK, gin.H{
 			"code":    common.CodeExceptionError,
@@ -127,14 +127,13 @@ func (h *TenantHandler) TenantList(c *gin.Context) {
 // @Success 200 {object} map[string]interface{}
 // @Router /v1/tenant/doc_meta_index [post]
 func (h *TenantHandler) CreateDocMetaIndex(c *gin.Context) {
-	user, errorCode, errorMessage := GetUser(c)
+	_, errorCode, errorMessage := GetUser(c)
 	if errorCode != common.CodeSuccess {
 		jsonError(c, errorCode, errorMessage)
 		return
 	}
 
-	// Use user.ID as tenant ID (user IS the tenant in user mode)
-	tenantID := user.ID
+	tenantID := GetTenantID(c)
 
 	code, err := h.tenantService.CreateDocMetaIndex(tenantID)
 	if err != nil {
@@ -159,14 +158,13 @@ func (h *TenantHandler) CreateDocMetaIndex(c *gin.Context) {
 // @Success 200 {object} map[string]interface{}
 // @Router /v1/tenant/doc_meta_index [delete]
 func (h *TenantHandler) DeleteDocMetaIndex(c *gin.Context) {
-	user, errorCode, errorMessage := GetUser(c)
+	_, errorCode, errorMessage := GetUser(c)
 	if errorCode != common.CodeSuccess {
 		jsonError(c, errorCode, errorMessage)
 		return
 	}
 
-	// Use user.ID as tenant ID (user IS the tenant in user mode)
-	tenantID := user.ID
+	tenantID := GetTenantID(c)
 
 	code, err := h.tenantService.DeleteDocMetaIndex(tenantID)
 	if err != nil {
@@ -196,7 +194,7 @@ type InsertMetadataFromFileRequest struct {
 // @Success 200 {object} map[string]interface{}
 // @Router /v1/tenant/insert_metadata_from_file [post]
 func (h *TenantHandler) InsertMetadataFromFile(c *gin.Context) {
-	user, errorCode, errorMessage := GetUser(c)
+	_, errorCode, errorMessage := GetUser(c)
 	if errorCode != common.CodeSuccess {
 		jsonError(c, errorCode, errorMessage)
 		return
@@ -250,8 +248,7 @@ func (h *TenantHandler) InsertMetadataFromFile(c *gin.Context) {
 		return
 	}
 
-	// Use user.ID as tenant ID (user IS the tenant in user mode)
-	tenantID := user.ID
+	tenantID := GetTenantID(c)
 
 	// Get the document engine and insert
 	docEngine := engine.Get()
