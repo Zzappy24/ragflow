@@ -18,17 +18,15 @@ package handler
 
 import (
 	"net/http"
-	"ragflow/internal/dao"
-	"ragflow/internal/entity"
 
 	"ragflow/internal/service"
 
 	"github.com/gin-gonic/gin"
 )
 
-// ListTokens list all API tokens for the current user's tenant
+// ListTokens list all API tokens for the active workspace tenant.
 // @Summary List API Tokens
-// @Description List all API tokens for the current user's tenant
+// @Description List all API tokens for the active workspace tenant
 // @Tags system
 // @Accept json
 // @Produce json
@@ -36,58 +34,25 @@ import (
 // @Success 200 {object} map[string]interface{}
 // @Router /api/v1/system/tokens [get]
 func (h *SystemHandler) ListTokens(c *gin.Context) {
-	// Get current user from context
-	user, exists := c.Get("user")
-	if !exists {
-		c.JSON(http.StatusUnauthorized, gin.H{
-			"code":    401,
-			"message": "Unauthorized",
-		})
+	_, errorCode, errorMessage := GetUser(c)
+	if errorCode != 0 {
+		c.JSON(http.StatusUnauthorized, gin.H{"code": errorCode, "message": errorMessage})
 		return
 	}
+	tenantID := GetTenantID(c)
 
-	userModel, ok := user.(*entity.User)
-	if !ok {
-		c.JSON(http.StatusInternalServerError, gin.H{
-			"code":    500,
-			"message": "Invalid user data",
-		})
-		return
-	}
-
-	// Get user's tenant with owner role
-	userTenantDAO := dao.NewUserTenantDAO()
-	tenants, err := userTenantDAO.GetByUserIDAndRole(userModel.ID, "owner")
-	if err != nil || len(tenants) == 0 {
-		c.JSON(http.StatusBadRequest, gin.H{
-			"code":    400,
-			"message": "Tenant not found",
-		})
-		return
-	}
-
-	tenantID := tenants[0].TenantID
-
-	// Get tokens for the tenant
 	tokens, err := h.systemService.ListAPITokens(tenantID)
 	if err != nil {
-		c.JSON(http.StatusInternalServerError, gin.H{
-			"code":    500,
-			"message": "Failed to list tokens",
-		})
+		c.JSON(http.StatusInternalServerError, gin.H{"code": 500, "message": "Failed to list tokens"})
 		return
 	}
 
-	c.JSON(http.StatusOK, gin.H{
-		"code":    0,
-		"message": "success",
-		"data":    tokens,
-	})
+	c.JSON(http.StatusOK, gin.H{"code": 0, "message": "success", "data": tokens})
 }
 
-// CreateToken creates a new API token for the current user's tenant
+// CreateToken creates a new API token for the active workspace tenant.
 // @Summary Create API Token
-// @Description Generate a new API token for the current user's tenant
+// @Description Generate a new API token for the active workspace tenant
 // @Tags system
 // @Accept json
 // @Produce json
@@ -96,68 +61,31 @@ func (h *SystemHandler) ListTokens(c *gin.Context) {
 // @Success 200 {object} map[string]interface{}
 // @Router /api/v1/system/tokens [post]
 func (h *SystemHandler) CreateToken(c *gin.Context) {
-	// Get current user from context
-	user, exists := c.Get("user")
-	if !exists {
-		c.JSON(http.StatusUnauthorized, gin.H{
-			"code":    401,
-			"message": "Unauthorized",
-		})
+	_, errorCode, errorMessage := GetUser(c)
+	if errorCode != 0 {
+		c.JSON(http.StatusUnauthorized, gin.H{"code": errorCode, "message": errorMessage})
 		return
 	}
+	tenantID := GetTenantID(c)
 
-	userModel, ok := user.(*entity.User)
-	if !ok {
-		c.JSON(http.StatusInternalServerError, gin.H{
-			"code":    500,
-			"message": "Invalid user data",
-		})
-		return
-	}
-
-	// Get user's tenant with owner role
-	userTenantDAO := dao.NewUserTenantDAO()
-	tenants, err := userTenantDAO.GetByUserIDAndRole(userModel.ID, "owner")
-	if err != nil || len(tenants) == 0 {
-		c.JSON(http.StatusBadRequest, gin.H{
-			"code":    400,
-			"message": "Tenant not found",
-		})
-		return
-	}
-
-	tenantID := tenants[0].TenantID
-
-	// Parse request
 	var req service.CreateAPITokenRequest
 	if err := c.ShouldBind(&req); err != nil {
-		c.JSON(http.StatusBadRequest, gin.H{
-			"code":    400,
-			"message": "Invalid request",
-		})
+		c.JSON(http.StatusBadRequest, gin.H{"code": 400, "message": "Invalid request"})
 		return
 	}
 
-	// Create token
 	token, err := h.systemService.CreateAPIToken(tenantID, &req)
 	if err != nil {
-		c.JSON(http.StatusInternalServerError, gin.H{
-			"code":    500,
-			"message": "Failed to create token",
-		})
+		c.JSON(http.StatusInternalServerError, gin.H{"code": 500, "message": "Failed to create token"})
 		return
 	}
 
-	c.JSON(http.StatusOK, gin.H{
-		"code":    0,
-		"message": "success",
-		"data":    token,
-	})
+	c.JSON(http.StatusOK, gin.H{"code": 0, "message": "success", "data": token})
 }
 
-// DeleteToken deletes an API token
+// DeleteToken deletes an API token for the active workspace tenant.
 // @Summary Delete API Token
-// @Description Remove an API token for the current user's tenant
+// @Description Remove an API token for the active workspace tenant
 // @Tags system
 // @Accept json
 // @Produce json
@@ -166,60 +94,23 @@ func (h *SystemHandler) CreateToken(c *gin.Context) {
 // @Success 200 {object} map[string]interface{}
 // @Router /api/v1/system/tokens/{token} [delete]
 func (h *SystemHandler) DeleteToken(c *gin.Context) {
-	// Get current user from context
-	user, exists := c.Get("user")
-	if !exists {
-		c.JSON(http.StatusUnauthorized, gin.H{
-			"code":    401,
-			"message": "Unauthorized",
-		})
+	_, errorCode, errorMessage := GetUser(c)
+	if errorCode != 0 {
+		c.JSON(http.StatusUnauthorized, gin.H{"code": errorCode, "message": errorMessage})
 		return
 	}
+	tenantID := GetTenantID(c)
 
-	userModel, ok := user.(*entity.User)
-	if !ok {
-		c.JSON(http.StatusInternalServerError, gin.H{
-			"code":    500,
-			"message": "Invalid user data",
-		})
-		return
-	}
-
-	// Get user's tenant with owner role
-	userTenantDAO := dao.NewUserTenantDAO()
-	tenants, err := userTenantDAO.GetByUserIDAndRole(userModel.ID, "owner")
-	if err != nil || len(tenants) == 0 {
-		c.JSON(http.StatusBadRequest, gin.H{
-			"code":    400,
-			"message": "Tenant not found",
-		})
-		return
-	}
-
-	tenantID := tenants[0].TenantID
-
-	// Get token from path parameter
 	token := c.Param("token")
 	if token == "" {
-		c.JSON(http.StatusBadRequest, gin.H{
-			"code":    400,
-			"message": "Token is required",
-		})
+		c.JSON(http.StatusBadRequest, gin.H{"code": 400, "message": "Token is required"})
 		return
 	}
 
-	// Delete token
 	if err := h.systemService.DeleteAPIToken(tenantID, token); err != nil {
-		c.JSON(http.StatusInternalServerError, gin.H{
-			"code":    500,
-			"message": "Failed to delete token",
-		})
+		c.JSON(http.StatusInternalServerError, gin.H{"code": 500, "message": "Failed to delete token"})
 		return
 	}
 
-	c.JSON(http.StatusOK, gin.H{
-		"code":    0,
-		"message": "success",
-		"data":    true,
-	})
+	c.JSON(http.StatusOK, gin.H{"code": 0, "message": "success", "data": true})
 }

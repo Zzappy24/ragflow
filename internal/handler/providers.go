@@ -114,9 +114,9 @@ func (h *ProviderHandler) AddProvider(c *gin.Context) {
 		return
 	}
 
-	userID := c.GetString("user_id")
+	tenantID := GetTenantID(c)
 
-	errorCode, err := h.modelProviderService.AddModelProvider(req.ProviderName, userID)
+	errorCode, err := h.modelProviderService.AddModelProviderForTenant(req.ProviderName, tenantID)
 	if err != nil {
 		c.JSON(http.StatusOK, gin.H{
 			"code":    errorCode,
@@ -424,9 +424,9 @@ func (h *ProviderHandler) DropProviderInstance(c *gin.Context) {
 		return
 	}
 
-	userID := c.GetString("user_id")
+	tenantID := GetTenantID(c)
 
-	_, err := h.modelProviderService.DropProviderInstances(providerName, userID, req.Instances)
+	_, err := h.modelProviderService.DropProviderInstancesForTenant(providerName, tenantID, req.Instances)
 	if err != nil {
 		c.JSON(http.StatusOK, gin.H{
 			"code":    common.CodeServerError,
@@ -515,9 +515,9 @@ func (h *ProviderHandler) EnableOrDisableModel(c *gin.Context) {
 		return
 	}
 
-	userID := c.GetString("user_id")
+	tenantID := GetTenantID(c)
 
-	_, err := h.modelProviderService.UpdateModelStatus(providerName, instanceName, modelName, userID, req.Status)
+	_, err := h.modelProviderService.UpdateModelStatusForTenant(providerName, instanceName, modelName, tenantID, req.Status)
 	if err != nil {
 		c.JSON(http.StatusOK, gin.H{
 			"code":    common.CodeServerError,

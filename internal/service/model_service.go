@@ -180,6 +180,36 @@ func (m *ModelProviderService) AddModelProvider(providerName, userID string) (co
 	return common.CodeSuccess, nil
 }
 
+// AddModelProviderForTenant adds a model provider directly by tenant_id (workspace-safe).
+func (m *ModelProviderService) AddModelProviderForTenant(providerName, tenantID string) (common.ErrorCode, error) {
+	_, err := dao.GetModelProviderManager().GetProviderByName(providerName)
+	if err != nil {
+		return common.CodeNotFound, err
+	}
+
+	providerID, err := generateUUID1Hex()
+	if err != nil {
+		return common.CodeServerError, errors.New("fail to get UUID")
+	}
+
+	now := time.Now().Unix()
+	nowDate := time.Now().Truncate(time.Second)
+	tenantModelProvider := &entity.TenantModelProvider{
+		ID:           providerID,
+		ProviderName: providerName,
+		TenantID:     tenantID,
+	}
+	tenantModelProvider.CreateTime = &now
+	tenantModelProvider.UpdateTime = &now
+	tenantModelProvider.CreateDate = &nowDate
+	tenantModelProvider.UpdateDate = &nowDate
+	err = m.modelProviderDAO.Create(tenantModelProvider)
+	if err != nil {
+		return common.CodeServerError, errors.New("fail to create model provider")
+	}
+	return common.CodeSuccess, nil
+}
+
 func (m *ModelProviderService) ListProvidersOfTenant(userID string) ([]map[string]interface{}, common.ErrorCode, error) {
 
 	tenants, err := m.userTenantDAO.GetByUserIDAndRole(userID, "owner")
@@ -385,6 +415,25 @@ func (m *ModelProviderService) DropProviderInstances(providerName, userID string
 	return common.CodeSuccess, nil
 }
 
+// DropProviderInstancesForTenant drops provider instances directly by tenant_id (workspace-safe).
+func (m *ModelProviderService) DropProviderInstancesForTenant(providerName, tenantID string, instances []string) (common.ErrorCode, error) {
+	provider, err := m.modelProviderDAO.GetByTenantIDAndProviderName(tenantID, providerName)
+	if err != nil {
+		return common.CodeServerError, err
+	}
+
+	for _, instanceName := range instances {
+		count, err := m.modelInstanceDAO.DeleteByProviderIDAndInstanceName(provider.ID, instanceName)
+		if err != nil {
+			return common.CodeServerError, err
+		}
+		if count == 0 {
+			return common.CodeNotFound, errors.New("provider instance not found")
+		}
+	}
+	return common.CodeSuccess, nil
+}
+
 func (m *ModelProviderService) ListInstanceModels(providerName, instanceName, userID string) ([]map[string]interface{}, error) {
 	// Get tenant ID from user
 	tenants, err := m.userTenantDAO.GetByUserIDAndRole(userID, "owner")
@@ -478,6 +527,58 @@ func (m *ModelProviderService) UpdateModelStatus(providerName, instanceName, mod
 		}
 
 		// Get model info from provider
+		model = &entity.TenantModel{
+			ID:         modelID,
+			ModelName:  modelName,
+			ModelType:  modelSchema.ModelTypes[0],
+			ProviderID: provider.ID,
+			InstanceID: instance.ID,
+			Status:     status,
+		}
+		err = m.modelDAO.Create(model)
+		if err != nil {
+			return common.CodeServerError, errors.New("fail to create model")
+		}
+		return common.CodeSuccess, nil
+	}
+
+	count, err := m.modelDAO.DeleteByModelID(model.ID)
+	if err != nil {
+		return common.CodeServerError, err
+	}
+	if count == 0 {
+		return common.CodeNotFound, errors.New("model not found")
+	}
+
+	return common.CodeSuccess, nil
+}
+
+// UpdateModelStatusForTenant updates model status directly by tenant_id (workspace-safe).
+func (m *ModelProviderService) UpdateModelStatusForTenant(providerName, instanceName, modelName, tenantID, status string) (common.ErrorCode, error) {
+	provider, err := m.modelProviderDAO.GetByTenantIDAndProviderName(tenantID, providerName)
+	if err != nil {
+		return common.CodeServerError, err
+	}
+
+	instance, err := m.modelInstanceDAO.GetByProviderIDAndInstanceName(provider.ID, instanceName)
+	if err != nil {
+		return common.CodeServerError, err
+	}
+
+	model, err := m.modelDAO.GetModelByProviderIDAndInstanceIDAndModelName(provider.ID, instance.ID, modelName)
+	if err != nil {
+		var modelID string
+		modelID, err = generateUUID1Hex()
+		if err != nil {
+			return common.CodeServerError, errors.New("fail to get UUID")
+		}
+
+		var modelSchema *entity.Model
+		modelSchema, err = dao.GetModelProviderManager().GetModelByName(providerName, modelName)
+		if err != nil {
+			return common.CodeNotFound, errors.New(fmt.Sprintf("provider %s model %s not found", providerName, modelName))
+		}
+
 		model = &entity.TenantModel{
 			ID:         modelID,
 			ModelName:  modelName,
