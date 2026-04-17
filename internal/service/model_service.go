@@ -487,6 +487,137 @@ func (m *ModelProviderService) ListInstanceModels(providerName, instanceName, us
 	return allModels, nil
 }
 
+// ListProvidersOfTenantByID lists providers directly by tenant_id (workspace-safe).
+func (m *ModelProviderService) ListProvidersOfTenantByID(tenantID string) ([]map[string]interface{}, common.ErrorCode, error) {
+	providerNames, err := m.modelProviderDAO.ListByID(tenantID)
+	if err != nil {
+		return nil, common.CodeServerError, err
+	}
+	var result []map[string]interface{}
+	for _, providerName := range providerNames {
+		provider, err := dao.GetModelProviderManager().GetProviderByName(providerName)
+		if err != nil {
+			return nil, common.CodeServerError, err
+		}
+		result = append(result, provider)
+	}
+	return result, common.CodeSuccess, nil
+}
+
+// DeleteModelProviderForTenant deletes a provider directly by tenant_id (workspace-safe).
+func (m *ModelProviderService) DeleteModelProviderForTenant(providerName, tenantID string) (common.ErrorCode, error) {
+	_, err := m.modelProviderDAO.DeleteByTenantIDAndProviderName(tenantID, providerName)
+	if err != nil {
+		return common.CodeServerError, err
+	}
+	return common.CodeSuccess, nil
+}
+
+// CreateProviderInstanceForTenant creates a provider instance directly by tenant_id (workspace-safe).
+func (m *ModelProviderService) CreateProviderInstanceForTenant(providerName, instanceName, apiKey, tenantID string) (common.ErrorCode, error) {
+	provider, err := m.modelProviderDAO.GetByTenantIDAndProviderName(tenantID, providerName)
+	if err != nil {
+		return common.CodeServerError, err
+	}
+	instanceID, err := generateUUID1Hex()
+	if err != nil {
+		return common.CodeServerError, errors.New("fail to get UUID")
+	}
+	now := time.Now().Unix()
+	nowDate := time.Now().Truncate(time.Second)
+	tenantModelProvider := &entity.TenantModelInstance{
+		ID:           instanceID,
+		InstanceName: instanceName,
+		ProviderID:   provider.ID,
+		APIKey:       apiKey,
+		Status:       "active",
+	}
+	tenantModelProvider.CreateTime = &now
+	tenantModelProvider.UpdateTime = &now
+	tenantModelProvider.CreateDate = &nowDate
+	tenantModelProvider.UpdateDate = &nowDate
+	err = m.modelInstanceDAO.Create(tenantModelProvider)
+	if err != nil {
+		return common.CodeServerError, errors.New("fail to create model provider")
+	}
+	return common.CodeSuccess, nil
+}
+
+// ListProviderInstancesForTenant lists provider instances directly by tenant_id (workspace-safe).
+func (m *ModelProviderService) ListProviderInstancesForTenant(providerName, tenantID string) ([]map[string]interface{}, common.ErrorCode, error) {
+	provider, err := m.modelProviderDAO.GetByTenantIDAndProviderName(tenantID, providerName)
+	if err != nil {
+		return nil, common.CodeServerError, err
+	}
+	instances, err := m.modelInstanceDAO.GetAllInstancesByProviderID(provider.ID)
+	if err != nil {
+		return nil, common.CodeServerError, err
+	}
+	var result []map[string]interface{}
+	for _, instance := range instances {
+		result = append(result, map[string]interface{}{
+			"id":           instance.ID,
+			"instanceName": instance.InstanceName,
+			"providerID":   instance.ProviderID,
+			"apiKey":       instance.APIKey,
+			"status":       instance.Status,
+		})
+	}
+	return result, common.CodeSuccess, nil
+}
+
+// ShowProviderInstanceForTenant shows a provider instance directly by tenant_id (workspace-safe).
+func (m *ModelProviderService) ShowProviderInstanceForTenant(providerName, instanceName, tenantID string) (map[string]interface{}, common.ErrorCode, error) {
+	provider, err := m.modelProviderDAO.GetByTenantIDAndProviderName(tenantID, providerName)
+	if err != nil {
+		return nil, common.CodeServerError, err
+	}
+	instance, err := m.modelInstanceDAO.GetByProviderIDAndInstanceName(provider.ID, instanceName)
+	if err != nil {
+		return nil, common.CodeServerError, err
+	}
+	result := map[string]interface{}{
+		"id":           instance.ID,
+		"instanceName": instance.InstanceName,
+		"providerID":   instance.ProviderID,
+		"status":       instance.Status,
+	}
+	return result, common.CodeSuccess, nil
+}
+
+// ListInstanceModelsForTenant lists instance models directly by tenant_id (workspace-safe).
+func (m *ModelProviderService) ListInstanceModelsForTenant(providerName, instanceName, tenantID string) ([]map[string]interface{}, error) {
+	provider, err := m.modelProviderDAO.GetByTenantIDAndProviderName(tenantID, providerName)
+	if err != nil {
+		return nil, err
+	}
+	instance, err := m.modelInstanceDAO.GetByProviderIDAndInstanceName(provider.ID, instanceName)
+	if err != nil {
+		return nil, err
+	}
+	disabledModels, err := m.modelDAO.GetModelsByInstanceID(instance.ID)
+	if err != nil {
+		return nil, err
+	}
+	modelNames := make(map[string]bool)
+	for _, model := range disabledModels {
+		modelNames[model.ModelName] = true
+	}
+	allModels, err := dao.GetModelProviderManager().ListModels(providerName)
+	if err != nil {
+		return nil, err
+	}
+	for _, model := range allModels {
+		modelName := model["name"].(string)
+		if modelNames[modelName] {
+			model["status"] = "disabled"
+		} else {
+			model["status"] = "enabled"
+		}
+	}
+	return allModels, nil
+}
+
 func (m *ModelProviderService) UpdateModelStatus(providerName, instanceName, modelName, userID, status string) (common.ErrorCode, error) {
 
 	// Get tenant ID from user
@@ -771,5 +902,64 @@ func (m *ModelProviderService) ChatToModelStreamWithSender(providerName, instanc
 		return common.CodeSuccess
 	}
 
+	return common.CodeServerError
+}
+
+// ChatToModelForTenant chats with a model directly by tenant_id (workspace-safe).
+func (m *ModelProviderService) ChatToModelForTenant(providerName, instanceName, modelName, tenantID, message string) (*string, common.ErrorCode, error) {
+	provider, err := m.modelProviderDAO.GetByTenantIDAndProviderName(tenantID, providerName)
+	if err != nil {
+		return nil, common.CodeServerError, err
+	}
+	instance, err := m.modelInstanceDAO.GetByProviderIDAndInstanceName(provider.ID, instanceName)
+	if err != nil {
+		return nil, common.CodeServerError, err
+	}
+	_, err = m.modelDAO.GetModelByProviderIDAndInstanceIDAndModelName(provider.ID, instance.ID, modelName)
+	if err != nil {
+		providerInfo := dao.GetModelProviderManager().FindProvider(providerName)
+		if providerInfo == nil {
+			return nil, common.CodeNotFound, errors.New("provider not found")
+		}
+		_, err = dao.GetModelProviderManager().GetModelByName(providerName, modelName)
+		if err != nil {
+			return nil, common.CodeNotFound, errors.New(fmt.Sprintf("provider %s model %s not found", providerName, modelName))
+		}
+		var response string
+		response, err = providerInfo.ModelDriver.Chat(&modelName, &instance.APIKey, &message, nil)
+		if err != nil {
+			return nil, common.CodeServerError, err
+		}
+		return &response, common.CodeSuccess, nil
+	}
+	return nil, common.CodeServerError, errors.New("model is disabled")
+}
+
+// ChatToModelStreamWithSenderForTenant streams chat directly by tenant_id (workspace-safe).
+func (m *ModelProviderService) ChatToModelStreamWithSenderForTenant(providerName, instanceName, modelName, tenantID, message string, modelConfig *modelModule.ChatConfig, sender func(*string, *string) error) common.ErrorCode {
+	provider, err := m.modelProviderDAO.GetByTenantIDAndProviderName(tenantID, providerName)
+	if err != nil {
+		return common.CodeServerError
+	}
+	instance, err := m.modelInstanceDAO.GetByProviderIDAndInstanceName(provider.ID, instanceName)
+	if err != nil {
+		return common.CodeServerError
+	}
+	_, err = m.modelDAO.GetModelByProviderIDAndInstanceIDAndModelName(provider.ID, instance.ID, modelName)
+	if err != nil {
+		providerInfo := dao.GetModelProviderManager().FindProvider(providerName)
+		if providerInfo == nil {
+			return common.CodeNotFound
+		}
+		_, err = dao.GetModelProviderManager().GetModelByName(providerName, modelName)
+		if err != nil {
+			return common.CodeNotFound
+		}
+		err := providerInfo.ModelDriver.ChatStreamlyWithSender(&modelName, &instance.APIKey, &message, modelConfig, sender)
+		if err != nil {
+			return common.CodeServerError
+		}
+		return common.CodeSuccess
+	}
 	return common.CodeServerError
 }

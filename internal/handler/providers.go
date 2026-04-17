@@ -77,10 +77,10 @@ func (h *ProviderHandler) ListProviders(c *gin.Context) {
 		return
 	}
 
-	userID := c.GetString("user_id")
+	tenantID := GetTenantID(c)
 
 	// list tenant providers
-	providers, errorCode, err := h.modelProviderService.ListProvidersOfTenant(userID)
+	providers, errorCode, err := h.modelProviderService.ListProvidersOfTenantByID(tenantID)
 	if err != nil {
 		c.JSON(http.StatusOK, gin.H{
 			"code":    errorCode,
@@ -141,9 +141,9 @@ func (h *ProviderHandler) DeleteProvider(c *gin.Context) {
 		return
 	}
 
-	userID := c.GetString("user_id")
+	tenantID := GetTenantID(c)
 
-	errorCode, err := h.modelProviderService.DeleteModelProvider(providerName, userID)
+	errorCode, err := h.modelProviderService.DeleteModelProviderForTenant(providerName, tenantID)
 	if err != nil {
 		c.JSON(http.StatusOK, gin.H{
 			"code":    errorCode,
@@ -272,9 +272,9 @@ func (h *ProviderHandler) CreateProviderInstance(c *gin.Context) {
 		return
 	}
 
-	userID := c.GetString("user_id")
+	tenantID := GetTenantID(c)
 
-	_, err := h.modelProviderService.CreateProviderInstance(providerName, req.InstanceName, req.APIKey, userID)
+	_, err := h.modelProviderService.CreateProviderInstanceForTenant(providerName, req.InstanceName, req.APIKey, tenantID)
 	if err != nil {
 		c.JSON(http.StatusOK, gin.H{
 			"code":    common.CodeServerError,
@@ -299,9 +299,9 @@ func (h *ProviderHandler) ListProviderInstances(c *gin.Context) {
 		return
 	}
 
-	userID := c.GetString("user_id")
+	tenantID := GetTenantID(c)
 
-	instances, errorCode, err := h.modelProviderService.ListProviderInstances(providerName, userID)
+	instances, errorCode, err := h.modelProviderService.ListProviderInstancesForTenant(providerName, tenantID)
 	if err != nil {
 		c.JSON(http.StatusOK, gin.H{
 			"code":    errorCode,
@@ -336,10 +336,9 @@ func (h *ProviderHandler) ShowProviderInstance(c *gin.Context) {
 		return
 	}
 
-	userID := c.GetString("user_id")
+	tenantID := GetTenantID(c)
 
-	// Get tenant ID from user
-	instance, errorCode, err := h.modelProviderService.ShowProviderInstance(providerName, instanceName, userID)
+	instance, errorCode, err := h.modelProviderService.ShowProviderInstanceForTenant(providerName, instanceName, tenantID)
 	if err != nil {
 		c.JSON(http.StatusOK, gin.H{
 			"code":    errorCode,
@@ -383,15 +382,6 @@ func (h *ProviderHandler) AlterProviderInstance(c *gin.Context) {
 		c.JSON(http.StatusOK, gin.H{
 			"code":    common.CodeBadRequest,
 			"message": err.Error(),
-		})
-		return
-	}
-
-	userID := c.GetString("user_id")
-	if userID == "" {
-		c.JSON(http.StatusOK, gin.H{
-			"code":    common.CodeUnauthorized,
-			"message": "Unauthorized",
 		})
 		return
 	}
@@ -458,7 +448,7 @@ func (h *ProviderHandler) ListInstanceModels(c *gin.Context) {
 		})
 		return
 	}
-	models, err := h.modelProviderService.ListInstanceModels(providerName, instanceName, c.GetString("user_id"))
+	models, err := h.modelProviderService.ListInstanceModelsForTenant(providerName, instanceName, GetTenantID(c))
 	if err != nil {
 		c.JSON(http.StatusOK, gin.H{
 			"code":    common.CodeNotFound,
@@ -576,7 +566,7 @@ func (h *ProviderHandler) ChatToModel(c *gin.Context) {
 		return
 	}
 
-	userID := c.GetString("user_id")
+	tenantID := GetTenantID(c)
 
 	// Check if it's a stream request
 	if req.Stream {
@@ -621,7 +611,7 @@ func (h *ProviderHandler) ChatToModel(c *gin.Context) {
 		}
 
 		// Stream response using sender function (best performance, no channel)
-		errorCode := h.modelProviderService.ChatToModelStreamWithSender(providerName, instanceName, modelName, userID, req.Message, &chatConfig, sender)
+		errorCode := h.modelProviderService.ChatToModelStreamWithSenderForTenant(providerName, instanceName, modelName, tenantID, req.Message, &chatConfig, sender)
 
 		if errorCode != common.CodeSuccess {
 			c.SSEvent("error", "stream failed")
@@ -630,7 +620,7 @@ func (h *ProviderHandler) ChatToModel(c *gin.Context) {
 	}
 
 	// Non-stream response
-	response, errorCode, err := h.modelProviderService.ChatToModel(providerName, instanceName, modelName, userID, req.Message)
+	response, errorCode, err := h.modelProviderService.ChatToModelForTenant(providerName, instanceName, modelName, tenantID, req.Message)
 	if err != nil {
 		c.JSON(http.StatusOK, gin.H{
 			"code":    errorCode,
