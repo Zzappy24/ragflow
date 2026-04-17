@@ -257,6 +257,8 @@ func (r *Router) Setup(engine *gin.Engine) {
 		// Knowledge base routes
 		kb := authorized.Group("/v1/kb")
 		{
+			kb.POST("/list", r.knowledgebaseHandler.ListKbs)
+			kb.POST("/rm", r.knowledgebaseHandler.DeleteKB)
 			kb.POST("/update", r.knowledgebaseHandler.UpdateKB)
 			kb.POST("/update_metadata_setting", r.knowledgebaseHandler.UpdateMetadataSetting)
 			kb.GET("/detail", r.knowledgebaseHandler.GetDetail)
