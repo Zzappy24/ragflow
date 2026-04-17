@@ -295,6 +295,14 @@ func (h *KnowledgebaseHandler) ListKbs(c *gin.Context) {
 		ownerIDs = *req.OwnerIDs
 	}
 
+	// In workspace mode, scope listing to the active workspace tenant only.
+	// Without this, GetTenantIDsByUserID would leak KBs from all the user's workspaces.
+	if len(ownerIDs) == 0 {
+		if tid := GetTenantID(c); tid != user.ID {
+			ownerIDs = []string{tid}
+		}
+	}
+
 	result, code, err := h.kbService.ListKbs(keywords, page, pageSize, parserID, orderby, desc, ownerIDs, user.ID)
 	if err != nil {
 		jsonError(c, code, err.Error())

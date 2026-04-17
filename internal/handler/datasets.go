@@ -92,6 +92,15 @@ func (h *DatasetsHandler) ListDatasets(c *gin.Context) {
 		ownerIDs = ext.OwnerIDs
 	}
 
+	// In workspace mode, scope listing to the active workspace tenant only.
+	// Without this, GetJoinedTenantsByUserID would leak datasets from all the
+	// user's other workspaces.
+	if len(ownerIDs) == 0 {
+		if tid := GetTenantID(c); tid != user.ID {
+			ownerIDs = []string{tid}
+		}
+	}
+
 	data, total, code, err := h.datasetsService.ListDatasets(
 		c.Query("id"),
 		c.Query("name"),

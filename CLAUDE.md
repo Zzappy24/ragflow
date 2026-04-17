@@ -154,7 +154,17 @@ isolation. On every upstream merge that touches `internal/`:
    grep -rn "user\.ID" internal/handler/*.go
    ```
 2. **Any new handler using `user.ID` for data-scoping must be changed to `GetTenantID(c)`.**
-   - Exceptions: `Accessible(kbID, user.ID)` and listing ops that JOIN `user_tenant` are fine.
+   - Exception OK: `Accessible(kbID, user.ID)` access-check calls — these verify per-user KB visibility.
+   - Exception OK: `memory.go` comparison `GetTenantID(c) != user.ID` — detects workspace mode.
+   - **DANGER — listing ops**: When a service calls `GetTenantIDsByUserID(userID)` or `GetJoinedTenantsByUserID(userID)` with no `ownerIDs`, it leaks data from ALL the user's workspaces. Fix: in the handler, before calling the service, inject the active workspace tenant when `ownerIDs` is empty:
+     ```go
+     if len(ownerIDs) == 0 {
+         if tid := GetTenantID(c); tid != user.ID {
+             ownerIDs = []string{tid}
+         }
+     }
+     ```
+     Already applied to: `ListKbs` (kb.go), `ListDatasets` (datasets.go).
    - Ownership/create ops (`CreateXxx`, `UpdateXxx`, `DeleteXxx`) must use `GetTenantID(c)`.
 3. **New router groups added to `authorized` automatically get workspace isolation** via the
    single `authorized.Use(middleware.NewWorkspaceMiddleware().Resolve())` line — no action needed
