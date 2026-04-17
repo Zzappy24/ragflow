@@ -68,14 +68,17 @@ def token_list():
 
 
 @manager.route('/rm', methods=['POST'])  # noqa: F821
-@validate_request("tokens", "tenant_id")
+@validate_request("tokens")
 @login_required
 async def rm():
     req = await get_request_json()
     try:
+        # CUSTOM B2B SaaS: scope deletion to the active workspace — ignore any
+        # caller-supplied tenant_id to prevent cross-workspace token deletion.
+        tid = active_tenant_id()
         for token in req["tokens"]:
             APITokenService.filter_delete(
-                [APIToken.tenant_id == req["tenant_id"], APIToken.token == token])
+                [APIToken.tenant_id == tid, APIToken.token == token])
         return get_json_result(data=True)
     except Exception as e:
         return server_error_response(e)

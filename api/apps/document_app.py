@@ -23,6 +23,7 @@ from quart import make_response, request
 
 from api.apps import current_user, login_required
 from api.apps.extensions.rbac import require_permission, Permission
+from api.utils.tenant_context import active_tenant_id
 from api.common.check_team_permission import check_kb_team_permission
 from api.constants import FILE_NAME_LEN_LIMIT, IMG_BASE64_PREFIX
 from api.db import VALID_FILE_TYPES, FileType
@@ -34,7 +35,7 @@ from api.db.services.file2document_service import File2DocumentService
 from api.db.services.file_service import FileService
 from api.db.services.knowledgebase_service import KnowledgebaseService
 from api.db.services.task_service import TaskService, cancel_all_task_of
-from api.db.services.user_service import UserTenantService
+
 from api.utils.api_utils import (
     get_data_error_result,
     get_json_result,
@@ -203,6 +204,9 @@ async def create():
         e, kb = KnowledgebaseService.get_by_id(kb_id)
         if not e:
             return get_data_error_result(message="Can't find this dataset!")
+        # CUSTOM B2B SaaS: verify KB belongs to the active workspace
+        if not KnowledgebaseService.query(tenant_id=active_tenant_id(), id=kb_id):
+            return get_json_result(data=False, message="No authorization.", code=RetCode.AUTHENTICATION_ERROR)
 
         if DocumentService.query(name=req["name"], kb_id=kb_id):
             return get_data_error_result(message="Duplicated document name in the same dataset.")
@@ -248,11 +252,9 @@ async def list_docs():
     kb_id = request.args.get("kb_id")
     if not kb_id:
         return get_json_result(data=False, message='Lack of "KB ID"', code=RetCode.ARGUMENT_ERROR)
-    tenants = UserTenantService.query(user_id=current_user.id)
-    for tenant in tenants:
-        if KnowledgebaseService.query(tenant_id=tenant.tenant_id, id=kb_id):
-            break
-    else:
+    # CUSTOM B2B SaaS: scope strictly to the active workspace — prevents cross-workspace
+    # document access when a user is a member of multiple workspaces.
+    if not KnowledgebaseService.query(tenant_id=active_tenant_id(), id=kb_id):
         return get_json_result(data=False, message="Only owner of dataset authorized for this operation.", code=RetCode.OPERATING_ERROR)
     keywords = request.args.get("keywords", "")
 
@@ -384,11 +386,9 @@ async def get_filter():
     kb_id = req.get("kb_id")
     if not kb_id:
         return get_json_result(data=False, message='Lack of "KB ID"', code=RetCode.ARGUMENT_ERROR)
-    tenants = UserTenantService.query(user_id=current_user.id)
-    for tenant in tenants:
-        if KnowledgebaseService.query(tenant_id=tenant.tenant_id, id=kb_id):
-            break
-    else:
+    # CUSTOM B2B SaaS: scope strictly to the active workspace — prevents cross-workspace
+    # document access when a user is a member of multiple workspaces.
+    if not KnowledgebaseService.query(tenant_id=active_tenant_id(), id=kb_id):
         return get_json_result(data=False, message="Only owner of dataset authorized for this operation.", code=RetCode.OPERATING_ERROR)
 
     keywords = req.get("keywords", "")
@@ -421,7 +421,10 @@ async def doc_infos():
     req = await get_request_json()
     doc_ids = req["doc_ids"]
     for doc_id in doc_ids:
-        if not DocumentService.accessible(doc_id, current_user.id):
+        # CUSTOM B2B SaaS: workspace-scoped check — DocumentService.accessible() uses a
+        # multi-workspace JOIN that leaks documents across workspaces.
+        e, doc = DocumentService.get_by_id(doc_id)
+        if not e or not KnowledgebaseService.query(tenant_id=active_tenant_id(), id=doc.kb_id):
             return get_json_result(data=False, message="No authorization.", code=RetCode.AUTHENTICATION_ERROR)
     docs = DocumentService.get_by_ids(doc_ids)
     docs_list = list(docs.dicts())
@@ -441,11 +444,9 @@ async def metadata_summary():
     if not kb_id:
         return get_json_result(data=False, message='Lack of "KB ID"', code=RetCode.ARGUMENT_ERROR)
 
-    tenants = UserTenantService.query(user_id=current_user.id)
-    for tenant in tenants:
-        if KnowledgebaseService.query(tenant_id=tenant.tenant_id, id=kb_id):
-            break
-    else:
+    # CUSTOM B2B SaaS: scope strictly to the active workspace — prevents cross-workspace
+    # document access when a user is a member of multiple workspaces.
+    if not KnowledgebaseService.query(tenant_id=active_tenant_id(), id=kb_id):
         return get_json_result(data=False, message="Only owner of dataset authorized for this operation.", code=RetCode.OPERATING_ERROR)
 
     try:
@@ -469,6 +470,10 @@ async def metadata_update():
     if not kb_id:
         return get_json_result(data=False, message='Lack of "KB ID"', code=RetCode.ARGUMENT_ERROR)
 
+    # CUSTOM B2B SaaS: verify KB belongs to the active workspace
+    if not KnowledgebaseService.query(tenant_id=active_tenant_id(), id=kb_id):
+        return get_json_result(data=False, message="No authorization.", code=RetCode.AUTHENTICATION_ERROR)
+
     if not isinstance(updates, list) or not isinstance(deletes, list):
         return get_json_result(data=False, message="updates and deletes must be lists.", code=RetCode.ARGUMENT_ERROR)
 
@@ -489,12 +494,11 @@ async def metadata_update():
 @validate_request("doc_id", "metadata")
 async def update_metadata_setting():
     req = await get_request_json()
-    if not DocumentService.accessible(req["doc_id"], current_user.id):
-        return get_json_result(data=False, message="No authorization.", code=RetCode.AUTHENTICATION_ERROR)
-
+    # CUSTOM B2B SaaS: workspace-scoped check — DocumentService.accessible() uses a
+    # multi-workspace JOIN that leaks documents across workspaces.
     e, doc = DocumentService.get_by_id(req["doc_id"])
-    if not e:
-        return get_data_error_result(message="Document not found!")
+    if not e or not KnowledgebaseService.query(tenant_id=active_tenant_id(), id=doc.kb_id):
+        return get_json_result(data=False, message="No authorization.", code=RetCode.AUTHENTICATION_ERROR)
 
     DocumentService.update_parser_config(doc.id, {"metadata": req["metadata"]})
     e, doc = DocumentService.get_by_id(doc.id)
@@ -505,7 +509,7 @@ async def update_metadata_setting():
 
 
 @manager.route("/thumbnails", methods=["GET"])  # noqa: F821
-# @login_required
+@login_required  # RBAC: re-enabled (was commented out upstream — unauthenticated access)
 @require_permission(Permission.DOCUMENT_READ)
 def thumbnails():
     doc_ids = request.args.getlist("doc_ids")
@@ -539,14 +543,11 @@ async def change_status():
     result = {}
     has_error = False
     for doc_id in doc_ids:
-        if not DocumentService.accessible(doc_id, current_user.id):
-            result[doc_id] = {"error": "No authorization."}
-            has_error = True
-            continue
-
+        # CUSTOM B2B SaaS: workspace-scoped check — DocumentService.accessible() uses a
+        # multi-workspace JOIN that leaks documents across workspaces.
         try:
             e, doc = DocumentService.get_by_id(doc_id)
-            if not e:
+            if not e or not KnowledgebaseService.query(tenant_id=active_tenant_id(), id=doc.kb_id):
                 result[doc_id] = {"error": "No authorization."}
                 has_error = True
                 continue
@@ -606,7 +607,10 @@ async def rm():
         doc_ids = [doc_ids]
 
     for doc_id in doc_ids:
-        if not DocumentService.accessible4deletion(doc_id, current_user.id):
+        # CUSTOM B2B SaaS: workspace-scoped check — DocumentService.accessible4deletion()
+        # uses a multi-workspace JOIN that leaks documents across workspaces.
+        e, doc = DocumentService.get_by_id(doc_id)
+        if not e or not KnowledgebaseService.query(tenant_id=active_tenant_id(), id=doc.kb_id):
             return get_json_result(data=False, message="No authorization.", code=RetCode.AUTHENTICATION_ERROR)
 
     errors = await thread_pool_exec(FileService.delete_docs, doc_ids, current_user.id)
@@ -628,7 +632,10 @@ async def run():
 
         def _run_sync():
             for doc_id in req["doc_ids"]:
-                if not DocumentService.accessible(doc_id, uid):
+                # CUSTOM B2B SaaS: workspace-scoped check — DocumentService.accessible()
+                # uses a multi-workspace JOIN that leaks documents across workspaces.
+                e, _doc = DocumentService.get_by_id(doc_id)
+                if not e or not KnowledgebaseService.query(tenant_id=active_tenant_id(), id=_doc.kb_id):
                     return get_json_result(data=False, message="No authorization.", code=RetCode.AUTHENTICATION_ERROR)
 
             kb_table_num_map = {}
@@ -691,12 +698,11 @@ async def rename():
     try:
 
         def _rename_sync():
-            if not DocumentService.accessible(req["doc_id"], uid):
-                return get_json_result(data=False, message="No authorization.", code=RetCode.AUTHENTICATION_ERROR)
-
+            # CUSTOM B2B SaaS: workspace-scoped check — DocumentService.accessible()
+            # uses a multi-workspace JOIN that leaks documents across workspaces.
             e, doc = DocumentService.get_by_id(req["doc_id"])
-            if not e:
-                return get_data_error_result(message="Document not found!")
+            if not e or not KnowledgebaseService.query(tenant_id=active_tenant_id(), id=doc.kb_id):
+                return get_json_result(data=False, message="No authorization.", code=RetCode.AUTHENTICATION_ERROR)
             if pathlib.Path(req["name"].lower()).suffix != pathlib.Path(doc.name.lower()).suffix:
                 return get_json_result(data=False, message="The extension of file can't be changed", code=RetCode.ARGUMENT_ERROR)
             if len(req["name"].encode("utf-8")) > FILE_NAME_LEN_LIMIT:
@@ -744,6 +750,9 @@ async def get(doc_id):
         e, doc = DocumentService.get_by_id(doc_id)
         if not e:
             return get_data_error_result(message="Document not found!")
+        # CUSTOM B2B SaaS: verify document's KB belongs to the active workspace
+        if not KnowledgebaseService.query(tenant_id=active_tenant_id(), id=doc.kb_id):
+            return get_data_error_result(message="Document not found!")
 
         b, n = File2DocumentService.get_storage_address(doc_id=doc_id)
         data = await thread_pool_exec(settings.STORAGE_IMPL.get, b, n)
@@ -784,12 +793,11 @@ async def download_attachment(attachment_id):
 @validate_request("doc_id")
 async def change_parser():
     req = await get_request_json()
-    if not DocumentService.accessible(req["doc_id"], current_user.id):
-        return get_json_result(data=False, message="No authorization.", code=RetCode.AUTHENTICATION_ERROR)
-
+    # CUSTOM B2B SaaS: workspace-scoped check — DocumentService.accessible() uses a
+    # multi-workspace JOIN that leaks documents across workspaces.
     e, doc = DocumentService.get_by_id(req["doc_id"])
-    if not e:
-        return get_data_error_result(message="Document not found!")
+    if not e or not KnowledgebaseService.query(tenant_id=active_tenant_id(), id=doc.kb_id):
+        return get_json_result(data=False, message="No authorization.", code=RetCode.AUTHENTICATION_ERROR)
 
     def reset_doc():
         nonlocal doc
@@ -974,7 +982,10 @@ async def parse():
 @validate_request("doc_id", "meta")
 async def set_meta():
     req = await get_request_json()
-    if not DocumentService.accessible(req["doc_id"], current_user.id):
+    # CUSTOM B2B SaaS: workspace-scoped check — DocumentService.accessible() uses a
+    # multi-workspace JOIN that leaks documents across workspaces.
+    _e, _set_meta_doc = DocumentService.get_by_id(req["doc_id"])
+    if not _e or not KnowledgebaseService.query(tenant_id=active_tenant_id(), id=_set_meta_doc.kb_id):
         return get_json_result(data=False, message="No authorization.", code=RetCode.AUTHENTICATION_ERROR)
     try:
         meta = json.loads(req["meta"])

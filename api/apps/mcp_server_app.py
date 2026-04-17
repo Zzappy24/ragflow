@@ -193,10 +193,14 @@ async def rm() -> Response:
     mcp_ids = req.get("mcp_ids", [])
 
     try:
-        req["tenant_id"] = active_tenant_id()
+        tid = active_tenant_id()
+        # CUSTOM B2B SaaS: only delete MCP servers that belong to the active workspace
+        owned = [s.id for s in MCPServerService.query(tenant_id=tid) if s.id in set(mcp_ids)]
+        if not owned:
+            return get_json_result(data=True)
 
-        if not MCPServerService.delete_by_ids(mcp_ids):
-            return get_data_error_result(message=f"Failed to delete MCP servers {mcp_ids}")
+        if not MCPServerService.delete_by_ids(owned):
+            return get_data_error_result(message=f"Failed to delete MCP servers {owned}")
 
         return get_json_result(data=True)
     except Exception as e:

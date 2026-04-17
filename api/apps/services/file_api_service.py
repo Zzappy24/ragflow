@@ -173,30 +173,38 @@ def list_files(tenant_id: str, args: dict):
 
 
 
-def get_parent_folder(file_id: str):
+def get_parent_folder(file_id: str, tenant_id: str = None):
     """
     Get parent folder of a file.
 
     :param file_id: file ID
+    :param tenant_id: workspace tenant ID for scoped access check
     :return: (success, result) or (success, error_message)
     """
     e, file = FileService.get_by_id(file_id)
     if not e:
+        return False, "Folder not found!"
+    # CUSTOM B2B SaaS: verify file belongs to the active workspace
+    if tenant_id and file.tenant_id != tenant_id:
         return False, "Folder not found!"
 
     parent_folder = FileService.get_parent_folder(file_id)
     return True, {"parent_folder": parent_folder.to_json()}
 
 
-def get_all_parent_folders(file_id: str):
+def get_all_parent_folders(file_id: str, tenant_id: str = None):
     """
     Get all ancestor folders of a file.
 
     :param file_id: file ID
+    :param tenant_id: workspace tenant ID for scoped access check
     :return: (success, result) or (success, error_message)
     """
     e, file = FileService.get_by_id(file_id)
     if not e:
+        return False, "Folder not found!"
+    # CUSTOM B2B SaaS: verify file belongs to the active workspace
+    if tenant_id and file.tenant_id != tenant_id:
         return False, "Folder not found!"
 
     parent_folders = FileService.get_all_parent_folders(file_id)

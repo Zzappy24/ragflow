@@ -594,7 +594,9 @@ async def list_agent_session(tenant_id, agent_id):
     if not UserCanvasService.query(user_id=tenant_id, id=agent_id):
         return get_error_data_result(message=f"You don't own the agent {agent_id}.")
     id = request.args.get("id")
-    user_id = request.args.get("user_id")
+    # CUSTOM B2B SaaS: in API-key context tenant_id == user_id (upstream assumption).
+    # Always scope to the token's owner — callers cannot impersonate other users.
+    user_id = tenant_id
     page_number = int(request.args.get("page", 1))
     items_per_page = int(request.args.get("page_size", 30))
     orderby = request.args.get("orderby", "update_time")
@@ -668,7 +670,8 @@ async def delete_agent_session(tenant_id, agent_id):
     ids = req.get("ids")
     if not ids:
         if req.get("delete_all") is True:
-            ids = [conv.id for conv in API4ConversationService.query(dialog_id=agent_id)]
+            # CUSTOM B2B SaaS: in API-key context tenant_id == user_id — scope delete_all to token owner's sessions only
+            ids = [conv.id for conv in API4ConversationService.query(dialog_id=agent_id, user_id=tenant_id)]
             if not ids:
                 return get_result()
         else:
@@ -680,7 +683,8 @@ async def delete_agent_session(tenant_id, agent_id):
     conv_list = unique_conv_ids
 
     for session_id in conv_list:
-        conv = API4ConversationService.query(id=session_id, dialog_id=agent_id)
+        # CUSTOM B2B SaaS: verify session belongs to this agent AND to the token owner
+        conv = API4ConversationService.query(id=session_id, dialog_id=agent_id, user_id=tenant_id)
         if not conv:
             errors.append(f"The agent doesn't own the session {session_id}")
             continue
@@ -718,7 +722,8 @@ async def ask_about(tenant_id):
         return get_error_data_result("`dataset_ids` should be a list.")
     req["kb_ids"] = req.pop("dataset_ids")
     for kb_id in req["kb_ids"]:
-        if not KnowledgebaseService.accessible(kb_id, tenant_id):
+        # CUSTOM B2B SaaS: direct workspace scope — accessible() uses multi-workspace JOIN
+        if not KnowledgebaseService.query(tenant_id=tenant_id, id=kb_id):
             return get_error_data_result(f"You don't own the dataset {kb_id}.")
         kbs = KnowledgebaseService.query(id=kb_id)
         kb = kbs[0]

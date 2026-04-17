@@ -390,6 +390,9 @@ async def upload(canvas_id):
     e, cvs = UserCanvasService.get_by_canvas_id(canvas_id)
     if not e:
         return get_data_error_result(message="canvas not found.")
+    # CUSTOM B2B SaaS: verify canvas belongs to the active workspace
+    if not UserCanvasService.accessible(canvas_id, active_tenant_id()):
+        return get_data_error_result(message="canvas not found.")
 
     user_id = cvs["user_id"]
     files = await request.files
@@ -655,6 +658,10 @@ async def setting():
 async def trace():
     cvs_id = request.args.get("canvas_id")
     msg_id = request.args.get("message_id")
+    # CUSTOM B2B SaaS: verify caller has access to this canvas before returning execution logs
+    if not cvs_id or not UserCanvasService.accessible(cvs_id, active_tenant_id()):
+        return get_json_result(data=False, message='Has no permission for this operation.',
+                               code=RetCode.OPERATING_ERROR), 403
     try:
         binary = REDIS_CONN.get(f"{cvs_id}-{msg_id}-logs")
         if not binary:
@@ -675,7 +682,6 @@ def sessions(canvas_id):
             data=False, message='Only owner of canvas authorized for this operation.',
             code=RetCode.OPERATING_ERROR)
 
-    user_id = request.args.get("user_id")
     page_number = int(request.args.get("page", 1))
     items_per_page = int(request.args.get("page_size", 30))
     keywords = request.args.get("keywords")
@@ -691,7 +697,16 @@ def sessions(canvas_id):
     if exp_user_id:
         sess = API4ConversationService.get_names(canvas_id, exp_user_id)
         return get_json_result(data={"total": len(sess), "sessions": sess})
-    
+
+    # CUSTOM B2B SaaS: sessions are private per user — non-admins only see their own.
+    # ws_admins with AUDIT_READ can pass an explicit user_id to inspect any user's sessions.
+    from api.apps.extensions.rbac import has_permission, Permission as _Perm
+    requested_user_id = request.args.get("user_id")
+    if has_permission(current_user.id, tenant_id, _Perm.AUDIT_READ) and requested_user_id:
+        user_id = requested_user_id
+    else:
+        user_id = current_user.id
+
     # dsl defaults to True in all cases except for False and false
     include_dsl = request.args.get("dsl") != "False" and request.args.get("dsl") != "false"
     total, sess = API4ConversationService.get_list(canvas_id, tenant_id, page_number, items_per_page, orderby, desc,
@@ -721,8 +736,9 @@ async def set_session(canvas_id):
         "id": session_id,
         "name": req.get("name", ""),
         "dialog_id": cvs.id,
-        "user_id": tenant_id,
-        "exp_user_id": tenant_id,
+        # CUSTOM B2B SaaS: sessions are private per user — store individual user ID, not workspace tenant ID.
+        "user_id": current_user.id,
+        "exp_user_id": current_user.id,
         "message": [],
         "source": "agent",
         "dsl": cvs.dsl,
@@ -742,7 +758,14 @@ def get_session(canvas_id, session_id):
         return get_json_result(
             data=False, message='Only owner of canvas authorized for this operation.',
             code=RetCode.OPERATING_ERROR)
-    _, conv = API4ConversationService.get_by_id(session_id)
+    e, conv = API4ConversationService.get_by_id(session_id)
+    if not e or not conv:
+        return get_json_result(data=False, message='Session not found.', code=RetCode.NOT_FOUND)
+    # CUSTOM B2B SaaS: enforce per-user ownership — non-owners get 404
+    from api.apps.extensions.rbac import has_permission, Permission as _Perm
+    if not has_permission(current_user.id, tenant_id, _Perm.AUDIT_READ):
+        if conv.user_id != current_user.id:
+            return get_json_result(data=False, message='Session not found.', code=RetCode.NOT_FOUND)
     return get_json_result(data=conv.to_dict())
 
 
@@ -755,6 +778,12 @@ def del_session(canvas_id, session_id):
         return get_json_result(
             data=False, message='Only owner of canvas authorized for this operation.',
             code=RetCode.OPERATING_ERROR)
+    # CUSTOM B2B SaaS: enforce per-user ownership — non-owners cannot delete others' sessions
+    from api.apps.extensions.rbac import has_permission, Permission as _Perm
+    if not has_permission(current_user.id, tenant_id, _Perm.AUDIT_READ):
+        e, conv = API4ConversationService.get_by_id(session_id)
+        if not e or not conv or conv.user_id != current_user.id:
+            return get_json_result(data=False, message='Session not found.', code=RetCode.NOT_FOUND)
     return get_json_result(data=API4ConversationService.delete_by_id(session_id))
 
 
@@ -775,8 +804,10 @@ def prompts():
 
 
 @manager.route('/download', methods=['GET'])  # noqa: F821
+@login_required
 async def download():
     id = request.args.get("id")
-    created_by = request.args.get("created_by")
-    blob = FileService.get_blob(created_by, id)
+    # CUSTOM B2B SaaS: always fetch from the current user's bucket — ignore any
+    # caller-supplied created_by to prevent unauthenticated cross-user file access.
+    blob = FileService.get_blob(current_user.id, id)
     return await make_response(blob)

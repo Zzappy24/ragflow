@@ -65,6 +65,9 @@ async def list_chunk():
         e, doc = DocumentService.get_by_id(doc_id)
         if not e:
             return get_data_error_result(message="Document not found!")
+        # CUSTOM B2B SaaS: verify the document belongs to the active workspace
+        if not KnowledgebaseService.query(tenant_id=active_tenant_id(), id=doc.kb_id):
+            return get_data_error_result(message="Document not found!")
         kb_ids = KnowledgebaseService.get_kb_ids(tenant_id)
         query = {
             "doc_ids": [doc_id], "page": page, "size": size, "question": question, "sort": True
@@ -173,6 +176,9 @@ async def set():
             e, doc = DocumentService.get_by_id(req["doc_id"])
             if not e:
                 return get_data_error_result(message="Document not found!")
+            # CUSTOM B2B SaaS: verify the document belongs to the active workspace
+            if not KnowledgebaseService.query(tenant_id=active_tenant_id(), id=doc.kb_id):
+                return get_data_error_result(message="Document not found!")
 
             tenant_embd_id = DocumentService.get_tenant_embd_id(req["doc_id"])
             if tenant_embd_id:
@@ -225,6 +231,9 @@ async def switch():
             e, doc = DocumentService.get_by_id(req["doc_id"])
             if not e:
                 return get_data_error_result(message="Document not found!")
+            # CUSTOM B2B SaaS: verify the document belongs to the active workspace
+            if not KnowledgebaseService.query(tenant_id=active_tenant_id(), id=doc.kb_id):
+                return get_data_error_result(message="Document not found!")
             for cid in req["chunk_ids"]:
                 if not settings.docStoreConn.update({"id": cid},
                                                     {"available_int": int(req["available_int"])},
@@ -261,6 +270,9 @@ async def rm():
                     e, doc = DocumentService.get_by_id(req["doc_id"])
                     if not e:
                         return get_data_error_result(message="Document not found!")
+                    # CUSTOM B2B SaaS: verify the document belongs to the active workspace
+                    if not KnowledgebaseService.query(tenant_id=active_tenant_id(), id=doc.kb_id):
+                        return get_data_error_result(message="Document not found!")
                     tenant_id = DocumentService.get_tenant_id(req["doc_id"])
                     # Clean up storage assets while index rows still exist for discovery
                     DocumentService.delete_chunk_images(doc, tenant_id)
@@ -276,6 +288,9 @@ async def rm():
 
             e, doc = DocumentService.get_by_id(req["doc_id"])
             if not e:
+                return get_data_error_result(message="Document not found!")
+            # CUSTOM B2B SaaS: verify the document belongs to the active workspace
+            if not KnowledgebaseService.query(tenant_id=active_tenant_id(), id=doc.kb_id):
                 return get_data_error_result(message="Document not found!")
             condition = {"id": req["chunk_ids"], "doc_id": req["doc_id"]}
             try:
@@ -346,6 +361,11 @@ async def create():
         def _create_sync():
             e, doc = DocumentService.get_by_id(req["doc_id"])
             if not e:
+                resp = get_data_error_result(message="Document not found!")
+                _log_response(resp, RetCode.DATA_ERROR, "Document not found!")
+                return resp
+            # CUSTOM B2B SaaS: verify the document belongs to the active workspace
+            if not KnowledgebaseService.query(tenant_id=active_tenant_id(), id=doc.kb_id):
                 resp = get_data_error_result(message="Document not found!")
                 _log_response(resp, RetCode.DATA_ERROR, "Document not found!")
                 return resp

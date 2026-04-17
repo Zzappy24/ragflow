@@ -17,7 +17,6 @@ from api.apps import current_user
 from api.db import TenantPermission
 from api.db.services.memory_service import MemoryService
 from api.db.services.user_service import UserTenantService
-from api.utils.tenant_context import active_tenant_id
 from api.db.services.canvas_service import UserCanvasService
 from api.db.services.task_service import TaskService
 from api.db.joint_services.memory_message_service import get_memory_size_cache, judge_system_prompt_is_default, queue_save_to_memory_task, query_message
@@ -56,8 +55,11 @@ async def create_memory(memory_info: dict):
     if invalid_type:
         raise ArgumentException(f"Memory type '{invalid_type}' is not supported.")
     memory_type = list(memory_type)
+    # CUSTOM B2B SaaS: memories are PRIVATE per user — store user_id as tenant_id
+    # This preserves the upstream JOIN semantics (Memory.tenant_id == User.id)
+    # while ensuring cross-user isolation within a shared workspace.
     success, res = MemoryService.create_memory(
-        tenant_id=active_tenant_id(),
+        tenant_id=current_user.id,
         name=memory_name,
         memory_type=memory_type,
         embd_id=memory_info["embd_id"],
@@ -141,6 +143,9 @@ async def update_memory(memory_id: str, new_memory_setting: dict):
     current_memory = MemoryService.get_by_memory_id(memory_id)
     if not current_memory:
         raise NotFoundException(f"Memory '{memory_id}' not found.")
+    # CUSTOM B2B SaaS: enforce per-user ownership — non-owners see "not found"
+    if current_memory.tenant_id != current_user.id:
+        raise NotFoundException(f"Memory '{memory_id}' not found.")
 
     memory_dict = current_memory.to_dict()
     memory_dict.update({"memory_type": get_memory_type_human(current_memory.memory_type)})
@@ -172,6 +177,9 @@ async def delete_memory(memory_id):
     memory = MemoryService.get_by_memory_id(memory_id)
     if not memory:
         raise NotFoundException(f"Memory '{memory_id}' not found.")
+    # CUSTOM B2B SaaS: enforce per-user ownership — non-owners see "not found"
+    if memory.tenant_id != current_user.id:
+        raise NotFoundException(f"Memory '{memory_id}' not found.")
     MemoryService.delete_memory(memory_id)
     if MessageService.has_index(memory.tenant_id, memory_id):
         MessageService.delete_message({"memory_id": memory_id}, memory.tenant_id, memory_id)
@@ -190,8 +198,8 @@ async def list_memory(filter_params: dict, keywords: str, page: int=1, page_size
     :param page_size: int
     """
     filter_dict: dict = {"storage_type": filter_params.get("storage_type")}
-    # Workspace isolation: scope to active workspace tenant only.
-    filter_dict["tenant_id"] = [active_tenant_id()]
+    # CUSTOM B2B SaaS: memories are private per user — scope to current user only.
+    filter_dict["tenant_id"] = [current_user.id]
     memory_types = filter_params.get("memory_type")
     if memory_types and len(memory_types) == 1 and ',' in memory_types[0]:
         memory_types = memory_types[0].split(',')
@@ -205,15 +213,22 @@ async def list_memory(filter_params: dict, keywords: str, page: int=1, page_size
 
 
 async def get_memory_config(memory_id):
-    memory = MemoryService.get_with_owner_name_by_id(memory_id)
-    if not memory:
+    # CUSTOM B2B SaaS: check ownership before returning config
+    raw = MemoryService.get_by_memory_id(memory_id)
+    if not raw:
         raise NotFoundException(f"Memory '{memory_id}' not found.")
+    if raw.tenant_id != current_user.id:
+        raise NotFoundException(f"Memory '{memory_id}' not found.")
+    memory = MemoryService.get_with_owner_name_by_id(memory_id)
     return format_ret_data_from_memory(memory)
 
 
 async def get_memory_messages(memory_id, agent_ids: list[str], keywords: str, page: int=1, page_size: int = 50):
     memory = MemoryService.get_by_memory_id(memory_id)
     if not memory:
+        raise NotFoundException(f"Memory '{memory_id}' not found.")
+    # CUSTOM B2B SaaS: enforce per-user ownership
+    if memory.tenant_id != current_user.id:
         raise NotFoundException(f"Memory '{memory_id}' not found.")
     messages = MessageService.list_message(
         memory.tenant_id, memory_id, agent_ids, keywords, page, page_size)
@@ -254,6 +269,9 @@ async def forget_message(memory_id: str, message_id: int):
     memory = MemoryService.get_by_memory_id(memory_id)
     if not memory:
         raise NotFoundException(f"Memory '{memory_id}' not found.")
+    # CUSTOM B2B SaaS: enforce per-user ownership
+    if memory.tenant_id != current_user.id:
+        raise NotFoundException(f"Memory '{memory_id}' not found.")
 
     forget_time = timestamp_to_date(current_timestamp())
     update_succeed = MessageService.update_message(
@@ -268,6 +286,9 @@ async def forget_message(memory_id: str, message_id: int):
 async def update_message_status(memory_id: str, message_id: int, status: bool):
     memory = MemoryService.get_by_memory_id(memory_id)
     if not memory:
+        raise NotFoundException(f"Memory '{memory_id}' not found.")
+    # CUSTOM B2B SaaS: enforce per-user ownership
+    if memory.tenant_id != current_user.id:
         raise NotFoundException(f"Memory '{memory_id}' not found.")
 
     update_succeed = MessageService.update_message(
@@ -294,6 +315,11 @@ async def search_message(filter_dict: dict, params: dict):
         "top_n": int
     }
     """
+    # CUSTOM B2B SaaS: restrict search to memory IDs owned by current user
+    raw_ids = filter_dict.get("memory_id") or []
+    if raw_ids:
+        owned = {m.id for m in MemoryService.get_by_ids(raw_ids) if m.tenant_id == current_user.id}
+        filter_dict = {**filter_dict, "memory_id": [mid for mid in raw_ids if mid in owned]}
     return query_message(filter_dict, params)
 
 
@@ -308,6 +334,8 @@ async def get_messages(memory_ids: list[str], agent_id: str = "", session_id: st
     :return: list of recent messages
     """
     memory_list = MemoryService.get_by_ids(memory_ids)
+    # CUSTOM B2B SaaS: silently drop memory IDs that don't belong to the current user
+    memory_list = [m for m in memory_list if m.tenant_id == current_user.id]
     uids = [memory.tenant_id for memory in memory_list]
     res = MessageService.get_recent_messages(
         uids,
@@ -330,6 +358,9 @@ async def get_message_content(memory_id: str, message_id: int):
     """
     memory = MemoryService.get_by_memory_id(memory_id)
     if not memory:
+        raise NotFoundException(f"Memory '{memory_id}' not found.")
+    # CUSTOM B2B SaaS: enforce per-user ownership
+    if memory.tenant_id != current_user.id:
         raise NotFoundException(f"Memory '{memory_id}' not found.")
 
     res = MessageService.get_by_message_id(memory_id, message_id, memory.tenant_id)

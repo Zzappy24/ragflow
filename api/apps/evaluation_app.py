@@ -120,7 +120,10 @@ async def get_dataset(dataset_id):
                 message="Dataset not found",
                 code=RetCode.DATA_ERROR
             )
-        
+        # CUSTOM B2B SaaS: scope to active workspace
+        if dataset.get("tenant_id") != active_tenant_id():
+            return get_data_error_result(message="Dataset not found", code=RetCode.DATA_ERROR)
+
         return get_json_result(data=dataset)
     except Exception as e:
         return server_error_response(e)
@@ -131,7 +134,7 @@ async def get_dataset(dataset_id):
 async def update_dataset(dataset_id):
     """
     Update dataset.
-    
+
     Request body:
     {
         "name": "New name",
@@ -140,19 +143,24 @@ async def update_dataset(dataset_id):
     }
     """
     try:
+        # CUSTOM B2B SaaS: verify ownership before update
+        existing = EvaluationService.get_dataset(dataset_id)
+        if not existing or existing.get("tenant_id") != active_tenant_id():
+            return get_data_error_result(message="Dataset not found", code=RetCode.DATA_ERROR)
+
         req = await get_request_json()
-        
+
         # Remove fields that shouldn't be updated
         req.pop("id", None)
         req.pop("tenant_id", None)
         req.pop("created_by", None)
         req.pop("create_time", None)
-        
+
         success = EvaluationService.update_dataset(dataset_id, **req)
-        
+
         if not success:
             return get_data_error_result(message="Failed to update dataset")
-        
+
         return get_json_result(data={"dataset_id": dataset_id})
     except Exception as e:
         return server_error_response(e)
@@ -163,11 +171,16 @@ async def update_dataset(dataset_id):
 async def delete_dataset(dataset_id):
     """Delete dataset (soft delete)"""
     try:
+        # CUSTOM B2B SaaS: verify ownership before delete
+        existing = EvaluationService.get_dataset(dataset_id)
+        if not existing or existing.get("tenant_id") != active_tenant_id():
+            return get_data_error_result(message="Dataset not found", code=RetCode.DATA_ERROR)
+
         success = EvaluationService.delete_dataset(dataset_id)
-        
+
         if not success:
             return get_data_error_result(message="Failed to delete dataset")
-        
+
         return get_json_result(data={"dataset_id": dataset_id})
     except Exception as e:
         return server_error_response(e)
@@ -181,7 +194,7 @@ async def delete_dataset(dataset_id):
 async def add_test_case(dataset_id):
     """
     Add a test case to a dataset.
-    
+
     Request body:
     {
         "question": "Test question",
@@ -192,6 +205,11 @@ async def add_test_case(dataset_id):
     }
     """
     try:
+        # CUSTOM B2B SaaS: verify dataset ownership
+        ds = EvaluationService.get_dataset(dataset_id)
+        if not ds or ds.get("tenant_id") != active_tenant_id():
+            return get_data_error_result(message="Dataset not found", code=RetCode.DATA_ERROR)
+
         req = await get_request_json()
         question = req.get("question", "").strip()
         
@@ -221,7 +239,7 @@ async def add_test_case(dataset_id):
 async def import_test_cases(dataset_id):
     """
     Bulk import test cases.
-    
+
     Request body:
     {
         "cases": [
@@ -238,6 +256,11 @@ async def import_test_cases(dataset_id):
     }
     """
     try:
+        # CUSTOM B2B SaaS: verify dataset ownership
+        ds = EvaluationService.get_dataset(dataset_id)
+        if not ds or ds.get("tenant_id") != active_tenant_id():
+            return get_data_error_result(message="Dataset not found", code=RetCode.DATA_ERROR)
+
         req = await get_request_json()
         cases = req.get("cases", [])
         
@@ -263,6 +286,11 @@ async def import_test_cases(dataset_id):
 async def get_test_cases(dataset_id):
     """Get all test cases for a dataset"""
     try:
+        # CUSTOM B2B SaaS: verify dataset ownership
+        ds = EvaluationService.get_dataset(dataset_id)
+        if not ds or ds.get("tenant_id") != active_tenant_id():
+            return get_data_error_result(message="Dataset not found", code=RetCode.DATA_ERROR)
+
         cases = EvaluationService.get_test_cases(dataset_id)
         return get_json_result(data={"cases": cases, "total": len(cases)})
     except Exception as e:
@@ -274,11 +302,19 @@ async def get_test_cases(dataset_id):
 async def delete_test_case(case_id):
     """Delete a test case"""
     try:
+        # CUSTOM B2B SaaS: verify case belongs to a dataset owned by active workspace
+        case = EvaluationService.get_test_case(case_id)
+        if not case:
+            return get_data_error_result(message="Test case not found", code=RetCode.DATA_ERROR)
+        ds = EvaluationService.get_dataset(case.get("dataset_id", ""))
+        if not ds or ds.get("tenant_id") != active_tenant_id():
+            return get_data_error_result(message="Test case not found", code=RetCode.DATA_ERROR)
+
         success = EvaluationService.delete_test_case(case_id)
-        
+
         if not success:
             return get_data_error_result(message="Failed to delete test case")
-        
+
         return get_json_result(data={"case_id": case_id})
     except Exception as e:
         return server_error_response(e)
@@ -305,7 +341,12 @@ async def start_evaluation():
         dataset_id = req.get("dataset_id")
         dialog_id = req.get("dialog_id")
         name = req.get("name")
-        
+
+        # CUSTOM B2B SaaS: verify dataset belongs to active workspace
+        ds = EvaluationService.get_dataset(dataset_id)
+        if not ds or ds.get("tenant_id") != active_tenant_id():
+            return get_data_error_result(message="Dataset not found", code=RetCode.DATA_ERROR)
+
         success, result = EvaluationService.start_evaluation(
             dataset_id=dataset_id,
             dialog_id=dialog_id,
@@ -326,14 +367,18 @@ async def start_evaluation():
 async def get_evaluation_run(run_id):
     """Get evaluation run details"""
     try:
+        # CUSTOM B2B SaaS: verify run belongs to active workspace via its dataset
+        run = EvaluationService.get_run(run_id)
+        if not run:
+            return get_data_error_result(message="Evaluation run not found", code=RetCode.DATA_ERROR)
+        ds = EvaluationService.get_dataset(run.dataset_id)
+        if not ds or ds.get("tenant_id") != active_tenant_id():
+            return get_data_error_result(message="Evaluation run not found", code=RetCode.DATA_ERROR)
+
         result = EvaluationService.get_run_results(run_id)
-        
         if not result:
-            return get_data_error_result(
-                message="Evaluation run not found",
-                code=RetCode.DATA_ERROR
-            )
-        
+            return get_data_error_result(message="Evaluation run not found", code=RetCode.DATA_ERROR)
+
         return get_json_result(data=result)
     except Exception as e:
         return server_error_response(e)
@@ -344,14 +389,18 @@ async def get_evaluation_run(run_id):
 async def get_run_results(run_id):
     """Get detailed results for an evaluation run"""
     try:
+        # CUSTOM B2B SaaS: verify run belongs to active workspace via its dataset
+        run = EvaluationService.get_run(run_id)
+        if not run:
+            return get_data_error_result(message="Evaluation run not found", code=RetCode.DATA_ERROR)
+        ds = EvaluationService.get_dataset(run.dataset_id)
+        if not ds or ds.get("tenant_id") != active_tenant_id():
+            return get_data_error_result(message="Evaluation run not found", code=RetCode.DATA_ERROR)
+
         result = EvaluationService.get_run_results(run_id)
-        
         if not result:
-            return get_data_error_result(
-                message="Evaluation run not found",
-                code=RetCode.DATA_ERROR
-            )
-        
+            return get_data_error_result(message="Evaluation run not found", code=RetCode.DATA_ERROR)
+
         return get_json_result(data=result)
     except Exception as e:
         return server_error_response(e)
@@ -381,6 +430,14 @@ async def list_evaluation_runs():
 async def delete_evaluation_run(run_id):
     """Delete an evaluation run"""
     try:
+        # CUSTOM B2B SaaS: verify run belongs to active workspace via its dataset
+        run = EvaluationService.get_run(run_id)
+        if not run:
+            return get_data_error_result(message="Evaluation run not found", code=RetCode.DATA_ERROR)
+        ds = EvaluationService.get_dataset(run.dataset_id)
+        if not ds or ds.get("tenant_id") != active_tenant_id():
+            return get_data_error_result(message="Evaluation run not found", code=RetCode.DATA_ERROR)
+
         # TODO: Implement delete_run in EvaluationService
         return get_json_result(data={"run_id": run_id})
     except Exception as e:
@@ -394,6 +451,14 @@ async def delete_evaluation_run(run_id):
 async def get_recommendations(run_id):
     """Get configuration recommendations based on evaluation results"""
     try:
+        # CUSTOM B2B SaaS: verify run belongs to active workspace
+        run = EvaluationService.get_run(run_id)
+        if not run:
+            return get_data_error_result(message="Evaluation run not found", code=RetCode.DATA_ERROR)
+        ds = EvaluationService.get_dataset(run.dataset_id)
+        if not ds or ds.get("tenant_id") != active_tenant_id():
+            return get_data_error_result(message="Evaluation run not found", code=RetCode.DATA_ERROR)
+
         recommendations = EvaluationService.get_recommendations(run_id)
         return get_json_result(data={"recommendations": recommendations})
     except Exception as e:
@@ -432,16 +497,19 @@ async def compare_runs():
 async def export_results(run_id):
     """Export evaluation results as JSON/CSV"""
     try:
+        # CUSTOM B2B SaaS: verify run belongs to active workspace
+        run = EvaluationService.get_run(run_id)
+        if not run:
+            return get_data_error_result(message="Evaluation run not found", code=RetCode.DATA_ERROR)
+        ds = EvaluationService.get_dataset(run.dataset_id)
+        if not ds or ds.get("tenant_id") != active_tenant_id():
+            return get_data_error_result(message="Evaluation run not found", code=RetCode.DATA_ERROR)
+
         # format_type = request.args.get("format", "json")  # TODO: Use for CSV export
-        
         result = EvaluationService.get_run_results(run_id)
-        
         if not result:
-            return get_data_error_result(
-                message="Evaluation run not found",
-                code=RetCode.DATA_ERROR
-            )
-        
+            return get_data_error_result(message="Evaluation run not found", code=RetCode.DATA_ERROR)
+
         # TODO: Implement CSV export
         return get_json_result(data=result)
     except Exception as e:

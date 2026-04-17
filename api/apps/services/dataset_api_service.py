@@ -343,7 +343,8 @@ async def get_knowledge_graph(dataset_id: str, tenant_id: str):
     :param tenant_id: tenant ID
     :return: (success, result) or (success, error_message)
     """
-    if not KnowledgebaseService.accessible(dataset_id, tenant_id):
+    # CUSTOM B2B SaaS: direct workspace scope — accessible() uses multi-workspace JOIN
+    if not KnowledgebaseService.query(tenant_id=tenant_id, id=dataset_id):
         return False, "No authorization."
     _, kb = KnowledgebaseService.get_by_id(dataset_id)
 
@@ -387,7 +388,8 @@ def delete_knowledge_graph(dataset_id: str, tenant_id: str):
     :param tenant_id: tenant ID
     :return: (success, result) or (success, error_message)
     """
-    if not KnowledgebaseService.accessible(dataset_id, tenant_id):
+    # CUSTOM B2B SaaS: direct workspace scope — accessible() uses multi-workspace JOIN
+    if not KnowledgebaseService.query(tenant_id=tenant_id, id=dataset_id):
         return False, "No authorization."
     _, kb = KnowledgebaseService.get_by_id(dataset_id)
     from rag.nlp import search
@@ -407,7 +409,8 @@ def run_graphrag(dataset_id: str, tenant_id: str):
     """
     if not dataset_id:
         return False, 'Lack of "Dataset ID"'
-    if not KnowledgebaseService.accessible(dataset_id, tenant_id):
+    # CUSTOM B2B SaaS: direct workspace scope — accessible() uses multi-workspace JOIN
+    if not KnowledgebaseService.query(tenant_id=tenant_id, id=dataset_id):
         return False, "No authorization."
 
     ok, kb = KnowledgebaseService.get_by_id(dataset_id)
@@ -458,7 +461,8 @@ def trace_graphrag(dataset_id: str, tenant_id: str):
     """
     if not dataset_id:
         return False, 'Lack of "Dataset ID"'
-    if not KnowledgebaseService.accessible(dataset_id, tenant_id):
+    # CUSTOM B2B SaaS: direct workspace scope — accessible() uses multi-workspace JOIN
+    if not KnowledgebaseService.query(tenant_id=tenant_id, id=dataset_id):
         return False, "No authorization."
 
     ok, kb = KnowledgebaseService.get_by_id(dataset_id)
@@ -486,7 +490,8 @@ def run_raptor(dataset_id: str, tenant_id: str):
     """
     if not dataset_id:
         return False, 'Lack of "Dataset ID"'
-    if not KnowledgebaseService.accessible(dataset_id, tenant_id):
+    # CUSTOM B2B SaaS: direct workspace scope — accessible() uses multi-workspace JOIN
+    if not KnowledgebaseService.query(tenant_id=tenant_id, id=dataset_id):
         return False, "No authorization."
 
     ok, kb = KnowledgebaseService.get_by_id(dataset_id)
@@ -538,7 +543,8 @@ def trace_raptor(dataset_id: str, tenant_id: str):
     if not dataset_id:
         return False, 'Lack of "Dataset ID"'
 
-    if not KnowledgebaseService.accessible(dataset_id, tenant_id):
+    # CUSTOM B2B SaaS: direct workspace scope — accessible() uses multi-workspace JOIN
+    if not KnowledgebaseService.query(tenant_id=tenant_id, id=dataset_id):
         return False, "No authorization."
 
     ok, kb = KnowledgebaseService.get_by_id(dataset_id)

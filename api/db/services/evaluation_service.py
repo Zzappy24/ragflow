@@ -201,6 +201,18 @@ class EvaluationService(CommonService):
             return []
 
     @classmethod
+    def get_test_case(cls, case_id: str) -> Optional[Dict[str, Any]]:
+        """Get a single test case by ID"""
+        try:
+            case = EvaluationCase.get_by_id(case_id)
+            if case:
+                return case.to_dict()
+            return None
+        except Exception as e:
+            logging.error(f"Error getting test case {case_id}: {e}")
+            return None
+
+    @classmethod
     def delete_test_case(cls, case_id: str) -> bool:
         """Delete a test case"""
         try:
@@ -567,6 +579,15 @@ class EvaluationService(CommonService):
         return summary
 
     # ==================== Results & Analysis ====================
+
+    @classmethod
+    def get_run(cls, run_id: str) -> Optional[Any]:
+        """Get a run model instance by ID"""
+        try:
+            return EvaluationRun.get_by_id(run_id)
+        except Exception as e:
+            logging.error(f"Error getting run {run_id}: {e}")
+            return None
 
     @classmethod
     def get_run_results(cls, run_id: str) -> Dict[str, Any]:

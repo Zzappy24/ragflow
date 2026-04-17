@@ -166,6 +166,9 @@ async def update(search_id):
 @login_required
 @require_permission(Permission.DATASET_DELETE)
 def delete_search(search_id):
+    # CUSTOM B2B SaaS: workspace-scoped check before deletion
+    if not SearchService.query(tenant_id=active_tenant_id(), id=search_id):
+        return get_json_result(data=False, message="No authorization.", code=RetCode.AUTHENTICATION_ERROR)
     # accessible4deletion checks created_by — that's user identity, not tenant.
     if not SearchService.accessible4deletion(search_id, current_user.id):
         return get_json_result(data=False, message="No authorization.", code=RetCode.AUTHENTICATION_ERROR)

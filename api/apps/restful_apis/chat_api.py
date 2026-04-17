@@ -178,7 +178,8 @@ def _validate_dataset_ids(dataset_ids, tenant_id):
     normalized_ids = [dataset_id for dataset_id in dataset_ids if dataset_id]
     kbs = []
     for dataset_id in normalized_ids:
-        if not KnowledgebaseService.accessible(kb_id=dataset_id, user_id=tenant_id):
+        # CUSTOM B2B SaaS: direct workspace scope — accessible() uses multi-workspace JOIN
+        if not KnowledgebaseService.query(tenant_id=tenant_id, id=dataset_id):
             return f"You don't own the dataset {dataset_id}"
         matches = KnowledgebaseService.query(id=dataset_id)
         if not matches:
@@ -687,7 +688,13 @@ def list_sessions(chat_id):
         desc = request.args.get("desc", "true").lower() != "false"
         session_id = request.args.get("id")
         name = request.args.get("name")
-        user_id = request.args.get("user_id")
+        # CUSTOM B2B SaaS: conversations are private per user.
+        # Admins can optionally query another user's sessions; members always see only their own.
+        requested_user_id = request.args.get("user_id")
+        if has_permission(current_user.id, active_tenant_id(), Permission.AUDIT_READ) and requested_user_id:
+            user_id = requested_user_id
+        else:
+            user_id = current_user.id
         convs = ConversationService.get_list(
             chat_id, page_number, items_per_page, orderby, desc, session_id, name, user_id
         )
@@ -710,6 +717,10 @@ async def get_session(chat_id, session_id):
             return get_data_error_result(message="Session not found!")
         if conv.dialog_id != chat_id:
             return get_data_error_result(message="Session does not belong to this chat!")
+        # CUSTOM B2B SaaS: enforce per-user ownership — non-admins cannot read others' sessions
+        if not has_permission(current_user.id, active_tenant_id(), Permission.AUDIT_READ):
+            if conv.user_id != current_user.id:
+                return get_data_error_result(message="Session not found!")
         dialog = _ensure_owned_chat(chat_id)
         avatar = dialog[0].icon if dialog else ""
         for ref in conv.reference:
@@ -730,8 +741,13 @@ async def update_session(chat_id, session_id):
         return get_json_result(data=False, message="No authorization.", code=RetCode.AUTHENTICATION_ERROR)
     try:
         req = await get_request_json()
-        if not ConversationService.query(id=session_id, dialog_id=chat_id):
+        convs = ConversationService.query(id=session_id, dialog_id=chat_id)
+        if not convs:
             return get_data_error_result(message="Session not found!")
+        # CUSTOM B2B SaaS: enforce per-user ownership — non-admins cannot modify others' sessions
+        if not has_permission(current_user.id, active_tenant_id(), Permission.AUDIT_READ):
+            if convs[0].user_id != current_user.id:
+                return get_data_error_result(message="Session not found!")
         if "message" in req or "messages" in req:
             return get_data_error_result(message="`messages` cannot be changed.")
         if "reference" in req:
@@ -765,7 +781,8 @@ async def delete_sessions(chat_id):
         session_ids = req.get("ids")
         if not session_ids:
             if req.get("delete_all") is True:
-                session_ids = [conv.id for conv in ConversationService.query(dialog_id=chat_id)]
+                # CUSTOM B2B SaaS: only delete the current user's own sessions
+                session_ids = [conv.id for conv in ConversationService.query(dialog_id=chat_id, user_id=current_user.id)]
                 if not session_ids:
                     return get_json_result(data={})
             else:
@@ -774,9 +791,15 @@ async def delete_sessions(chat_id):
         errors = []
         success_count = 0
         for sid in unique_ids:
-            if not ConversationService.query(id=sid, dialog_id=chat_id):
+            conv_matches = ConversationService.query(id=sid, dialog_id=chat_id)
+            if not conv_matches:
                 errors.append(f"The chat doesn't own the session {sid}")
                 continue
+            # CUSTOM B2B SaaS: enforce per-user ownership — non-admins cannot delete others' sessions
+            if not has_permission(current_user.id, active_tenant_id(), Permission.AUDIT_READ):
+                if conv_matches[0].user_id != current_user.id:
+                    errors.append(f"The chat doesn't own the session {sid}")
+                    continue
             ConversationService.delete_by_id(sid)
             success_count += 1
         all_errors = errors + duplicate_messages

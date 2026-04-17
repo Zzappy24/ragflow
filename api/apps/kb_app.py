@@ -104,7 +104,8 @@ async def update():
                 data=False,
             )
 
-    if not KnowledgebaseService.accessible4deletion(update_dict["kb_id"], current_user.id):
+    # CUSTOM B2B SaaS: workspace-scoped check — accessible4deletion() uses multi-workspace JOIN
+    if not KnowledgebaseService.query(tenant_id=active_tenant_id(), id=update_dict["kb_id"]):
         return get_json_result(
             data=False,
             message='No authorization.',
@@ -190,6 +191,9 @@ async def update():
 @validate_request("kb_id", "metadata")
 async def update_metadata_setting():
     req = await get_request_json()
+    # CUSTOM B2B SaaS: verify KB belongs to active workspace before update
+    if not KnowledgebaseService.query(tenant_id=active_tenant_id(), id=req["kb_id"]):
+        return get_json_result(data=False, message='No authorization.', code=RetCode.AUTHENTICATION_ERROR)
     e, kb = KnowledgebaseService.get_by_id(req["kb_id"])
     if not e:
         return get_data_error_result(
@@ -279,7 +283,8 @@ async def list_kbs():
 async def rm():
     req = await get_request_json()
     uid = current_user.id
-    if not KnowledgebaseService.accessible4deletion(req["kb_id"], uid):
+    # CUSTOM B2B SaaS: workspace-scoped check — accessible4deletion() uses multi-workspace JOIN
+    if not KnowledgebaseService.query(tenant_id=active_tenant_id(), id=req["kb_id"]):
         return get_json_result(
             data=False,
             message='No authorization.',
@@ -336,7 +341,8 @@ async def rm():
 @login_required
 @require_permission(Permission.DATASET_READ)
 def list_tags(kb_id):
-    if not KnowledgebaseService.accessible(kb_id, current_user.id):
+    # CUSTOM B2B SaaS: scope to active workspace, not all workspaces user belongs to
+    if not KnowledgebaseService.query(tenant_id=active_tenant_id(), id=kb_id):
         return get_json_result(
             data=False,
             message='No authorization.',
@@ -353,8 +359,10 @@ def list_tags(kb_id):
 @require_permission(Permission.DATASET_READ)
 def list_tags_from_kbs():
     kb_ids = request.args.get("kb_ids", "").split(",")
+    tid = active_tenant_id()
     for kb_id in kb_ids:
-        if not KnowledgebaseService.accessible(kb_id, current_user.id):
+        # CUSTOM B2B SaaS: scope to active workspace
+        if not KnowledgebaseService.query(tenant_id=tid, id=kb_id):
             return get_json_result(
                 data=False,
                 message='No authorization.',
@@ -371,7 +379,8 @@ def list_tags_from_kbs():
 @require_permission(Permission.DATASET_UPDATE)
 async def rm_tags(kb_id):
     req = await get_request_json()
-    if not KnowledgebaseService.accessible(kb_id, current_user.id):
+    # CUSTOM B2B SaaS: scope to active workspace
+    if not KnowledgebaseService.query(tenant_id=active_tenant_id(), id=kb_id):
         return get_json_result(
             data=False,
             message='No authorization.',
@@ -392,7 +401,8 @@ async def rm_tags(kb_id):
 @require_permission(Permission.DATASET_UPDATE)
 async def rename_tags(kb_id):
     req = await get_request_json()
-    if not KnowledgebaseService.accessible(kb_id, current_user.id):
+    # CUSTOM B2B SaaS: scope to active workspace
+    if not KnowledgebaseService.query(tenant_id=active_tenant_id(), id=kb_id):
         return get_json_result(
             data=False,
             message='No authorization.',
@@ -468,8 +478,10 @@ def delete_knowledge_graph(kb_id):
 @require_permission(Permission.DATASET_READ)
 def get_meta():
     kb_ids = request.args.get("kb_ids", "").split(",")
+    tid = active_tenant_id()
     for kb_id in kb_ids:
-        if not KnowledgebaseService.accessible(kb_id, current_user.id):
+        # CUSTOM B2B SaaS: scope to active workspace only
+        if not KnowledgebaseService.query(tenant_id=tid, id=kb_id):
             return get_json_result(
                 data=False,
                 message='No authorization.',
@@ -483,7 +495,8 @@ def get_meta():
 @require_permission(Permission.DATASET_READ)
 def get_basic_info():
     kb_id = request.args.get("kb_id", "")
-    if not KnowledgebaseService.accessible(kb_id, current_user.id):
+    # CUSTOM B2B SaaS: scope to active workspace only
+    if not KnowledgebaseService.query(tenant_id=active_tenant_id(), id=kb_id):
         return get_json_result(
             data=False,
             message='No authorization.',
@@ -502,6 +515,9 @@ async def list_pipeline_logs():
     kb_id = request.args.get("kb_id")
     if not kb_id:
         return get_json_result(data=False, message='Lack of "KB ID"', code=RetCode.ARGUMENT_ERROR)
+    # CUSTOM B2B SaaS: verify KB belongs to active workspace before exposing logs
+    if not KnowledgebaseService.query(tenant_id=active_tenant_id(), id=kb_id):
+        return get_json_result(data=False, message='No authorization.', code=RetCode.AUTHENTICATION_ERROR)
 
     keywords = request.args.get("keywords", "")
 
@@ -547,6 +563,9 @@ async def list_pipeline_dataset_logs():
     kb_id = request.args.get("kb_id")
     if not kb_id:
         return get_json_result(data=False, message='Lack of "KB ID"', code=RetCode.ARGUMENT_ERROR)
+    # CUSTOM B2B SaaS: verify KB belongs to active workspace
+    if not KnowledgebaseService.query(tenant_id=active_tenant_id(), id=kb_id):
+        return get_json_result(data=False, message='No authorization.', code=RetCode.AUTHENTICATION_ERROR)
 
     page_number = int(request.args.get("page", 0))
     items_per_page = int(request.args.get("page_size", 0))
@@ -582,6 +601,9 @@ async def delete_pipeline_logs():
     kb_id = request.args.get("kb_id")
     if not kb_id:
         return get_json_result(data=False, message='Lack of "KB ID"', code=RetCode.ARGUMENT_ERROR)
+    # CUSTOM B2B SaaS: verify KB belongs to active workspace before deleting logs
+    if not KnowledgebaseService.query(tenant_id=active_tenant_id(), id=kb_id):
+        return get_json_result(data=False, message='No authorization.', code=RetCode.AUTHENTICATION_ERROR)
 
     req = await get_request_json()
     log_ids = req.get("log_ids", [])
@@ -602,6 +624,9 @@ def pipeline_log_detail():
     ok, log = PipelineOperationLogService.get_by_id(log_id)
     if not ok:
         return get_data_error_result(message="Invalid pipeline log ID")
+    # CUSTOM B2B SaaS: verify the log's KB belongs to the active workspace
+    if not KnowledgebaseService.query(tenant_id=active_tenant_id(), id=log.kb_id):
+        return get_json_result(data=False, message='No authorization.', code=RetCode.AUTHENTICATION_ERROR)
 
     return get_json_result(data=log.to_dict())
 

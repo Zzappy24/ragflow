@@ -165,6 +165,9 @@ async def upload(dataset_id, tenant_id):
     e, kb = KnowledgebaseService.get_by_id(dataset_id)
     if not e:
         return server_error_response(LookupError(f"Can't find the dataset with ID {dataset_id}!"))
+    # CUSTOM B2B SaaS: verify dataset belongs to this token's tenant
+    if not KnowledgebaseService.query(tenant_id=tenant_id, id=dataset_id):
+        return get_error_data_result(message=f"You don't own the dataset {dataset_id}.")
     err, files = FileService.upload_document(kb, file_objs, tenant_id, parent_path=form.get("parent_path"))
     if err:
         return get_result(message="\n".join(err), code=RetCode.SERVER_ERROR)
@@ -437,11 +440,16 @@ async def download_doc(document_id):
     objs = APIToken.query(beta=token)
     if not objs:
         return get_error_data_result(message='Authentication error: API key is invalid!"')
+    api_tenant_id = objs[0].tenant_id
 
     if not document_id:
         return get_error_data_result(message="Specify document_id please.")
     doc = DocumentService.query(id=document_id)
     if not doc:
+        return get_error_data_result(message=f"The dataset not own the document {document_id}.")
+    # CUSTOM B2B SaaS: CRITICAL — verify document's KB belongs to this API token's tenant
+    # Without this, any valid API key can download any document by guessing its ID.
+    if not KnowledgebaseService.query(tenant_id=api_tenant_id, id=doc[0].kb_id):
         return get_error_data_result(message=f"The dataset not own the document {document_id}.")
     # The process of downloading
     doc_id, doc_location = File2DocumentService.get_storage_address(doc_id=document_id)  # minio address
@@ -571,7 +579,8 @@ def list_docs(dataset_id, tenant_id):
                     type: string
                     description: Processing status.
     """
-    if not KnowledgebaseService.accessible(kb_id=dataset_id, user_id=tenant_id):
+    # CUSTOM B2B SaaS: direct workspace scope — accessible() uses multi-workspace JOIN that leaks across workspaces
+    if not KnowledgebaseService.query(tenant_id=tenant_id, id=dataset_id):
         return get_error_data_result(message=f"You don't own the dataset {dataset_id}. ")
 
     q = request.args
@@ -644,7 +653,8 @@ def list_docs(dataset_id, tenant_id):
 @token_required
 @require_permission(Permission.DOCUMENT_READ)
 async def metadata_summary(dataset_id, tenant_id):
-    if not KnowledgebaseService.accessible(kb_id=dataset_id, user_id=tenant_id):
+    # CUSTOM B2B SaaS: direct workspace scope — accessible() uses multi-workspace JOIN that leaks across workspaces
+    if not KnowledgebaseService.query(tenant_id=tenant_id, id=dataset_id):
         return get_error_data_result(message=f"You don't own the dataset {dataset_id}. ")
     req = await get_request_json()
     try:
@@ -658,7 +668,8 @@ async def metadata_summary(dataset_id, tenant_id):
 @token_required
 @require_permission(Permission.DOCUMENT_CREATE)
 async def metadata_batch_update(dataset_id, tenant_id):
-    if not KnowledgebaseService.accessible(kb_id=dataset_id, user_id=tenant_id):
+    # CUSTOM B2B SaaS: direct workspace scope — accessible() uses multi-workspace JOIN that leaks across workspaces
+    if not KnowledgebaseService.query(tenant_id=tenant_id, id=dataset_id):
         return get_error_data_result(message=f"You don't own the dataset {dataset_id}. ")
 
     req = await get_request_json()
@@ -748,7 +759,8 @@ async def delete(tenant_id, dataset_id):
         schema:
           type: object
     """
-    if not KnowledgebaseService.accessible(kb_id=dataset_id, user_id=tenant_id):
+    # CUSTOM B2B SaaS: direct workspace scope — accessible() uses multi-workspace JOIN that leaks across workspaces
+    if not KnowledgebaseService.query(tenant_id=tenant_id, id=dataset_id):
         return get_error_data_result(message=f"You don't own the dataset {dataset_id}. ")
     req = await get_request_json()
     if not req:
@@ -865,7 +877,8 @@ async def parse(tenant_id, dataset_id):
         schema:
           type: object
     """
-    if not KnowledgebaseService.accessible(kb_id=dataset_id, user_id=tenant_id):
+    # CUSTOM B2B SaaS: direct workspace scope — accessible() uses multi-workspace JOIN that leaks across workspaces
+    if not KnowledgebaseService.query(tenant_id=tenant_id, id=dataset_id):
         return get_error_data_result(message=f"You don't own the dataset {dataset_id}.")
     req = await get_request_json()
     if not req.get("document_ids"):
@@ -957,7 +970,8 @@ async def stop_parsing(tenant_id, dataset_id):
         schema:
           type: object
     """
-    if not KnowledgebaseService.accessible(kb_id=dataset_id, user_id=tenant_id):
+    # CUSTOM B2B SaaS: direct workspace scope — accessible() uses multi-workspace JOIN that leaks across workspaces
+    if not KnowledgebaseService.query(tenant_id=tenant_id, id=dataset_id):
         return get_error_data_result(message=f"You don't own the dataset {dataset_id}.")
     req = await get_request_json()
 
@@ -1080,7 +1094,8 @@ async def list_chunks(tenant_id, dataset_id, document_id):
               type: object
               description: Document details.
     """
-    if not KnowledgebaseService.accessible(kb_id=dataset_id, user_id=tenant_id):
+    # CUSTOM B2B SaaS: direct workspace scope — accessible() uses multi-workspace JOIN that leaks across workspaces
+    if not KnowledgebaseService.query(tenant_id=tenant_id, id=dataset_id):
         return get_error_data_result(message=f"You don't own the dataset {dataset_id}.")
     doc = DocumentService.query(id=document_id, kb_id=dataset_id)
     if not doc:
@@ -1245,7 +1260,8 @@ async def add_chunk(tenant_id, dataset_id, document_id):
                     type: string
                   description: Important keywords.
     """
-    if not KnowledgebaseService.accessible(kb_id=dataset_id, user_id=tenant_id):
+    # CUSTOM B2B SaaS: direct workspace scope — accessible() uses multi-workspace JOIN that leaks across workspaces
+    if not KnowledgebaseService.query(tenant_id=tenant_id, id=dataset_id):
         return get_error_data_result(message=f"You don't own the dataset {dataset_id}.")
     doc = DocumentService.query(id=document_id, kb_id=dataset_id)
     if not doc:
@@ -1379,7 +1395,8 @@ async def rm_chunk(tenant_id, dataset_id, document_id):
         schema:
           type: object
     """
-    if not KnowledgebaseService.accessible(kb_id=dataset_id, user_id=tenant_id):
+    # CUSTOM B2B SaaS: direct workspace scope — accessible() uses multi-workspace JOIN that leaks across workspaces
+    if not KnowledgebaseService.query(tenant_id=tenant_id, id=dataset_id):
         return get_error_data_result(message=f"You don't own the dataset {dataset_id}.")
     docs = DocumentService.get_by_ids([document_id])
     if not docs:
@@ -1485,7 +1502,8 @@ async def update_chunk(tenant_id, dataset_id, document_id, chunk_id):
     chunk = settings.docStoreConn.get(chunk_id, search.index_name(tenant_id), [dataset_id])
     if chunk is None:
         return get_error_data_result(f"Can't find this chunk {chunk_id}")
-    if not KnowledgebaseService.accessible(kb_id=dataset_id, user_id=tenant_id):
+    # CUSTOM B2B SaaS: direct workspace scope — accessible() uses multi-workspace JOIN that leaks across workspaces
+    if not KnowledgebaseService.query(tenant_id=tenant_id, id=dataset_id):
         return get_error_data_result(message=f"You don't own the dataset {dataset_id}.")
     doc = DocumentService.query(id=document_id, kb_id=dataset_id)
     if not doc:
@@ -1593,7 +1611,8 @@ async def switch_chunks(tenant_id, dataset_id, document_id):
       200:
         description: Chunks availability switched successfully.
     """
-    if not KnowledgebaseService.accessible(kb_id=dataset_id, user_id=tenant_id):
+    # CUSTOM B2B SaaS: direct workspace scope — accessible() uses multi-workspace JOIN that leaks across workspaces
+    if not KnowledgebaseService.query(tenant_id=tenant_id, id=dataset_id):
         return get_error_data_result(message=f"You don't own the dataset {dataset_id}.")
     req = await get_request_json()
     if not req.get("chunk_ids"):
@@ -1714,7 +1733,8 @@ async def retrieval_test(tenant_id):
     if not isinstance(kb_ids, list):
         return get_error_data_result("`dataset_ids` should be a list")
     for id in kb_ids:
-        if not KnowledgebaseService.accessible(kb_id=id, user_id=tenant_id):
+        # CUSTOM B2B SaaS: direct workspace scope — accessible() uses multi-workspace JOIN that leaks across workspaces
+        if not KnowledgebaseService.query(tenant_id=tenant_id, id=id):
             return get_error_data_result(f"You don't own the dataset {id}.")
     kbs = KnowledgebaseService.get_by_ids(kb_ids)
     embd_nms = list(set([TenantLLMService.split_model_name_and_factory(kb.embd_id)[0] for kb in kbs]))  # remove vendor suffix for comparison
