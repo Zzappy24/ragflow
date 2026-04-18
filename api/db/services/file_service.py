@@ -36,7 +36,7 @@ from common.misc_utils import get_uuid
 from common.constants import TaskStatus, FileSource, ParserType
 from api.db.services.knowledgebase_service import KnowledgebaseService
 from api.db.services.task_service import TaskService
-from api.utils.file_utils import filename_type, read_potential_broken_pdf, thumbnail_img, sanitize_path
+from api.utils.file_utils import filename_type, read_potential_broken_pdf, thumbnail_img, sanitize_path, validate_upload_mime
 from rag.llm.cv_model import GptV4
 from common import settings
 
@@ -481,6 +481,9 @@ class FileService(CommonService):
                     location += "_"
 
                 blob = file.read()
+                mime_error = validate_upload_mime(filename, blob)
+                if mime_error:
+                    raise RuntimeError(mime_error)
                 if filetype == FileType.PDF.value:
                     blob = read_potential_broken_pdf(blob)
                 settings.STORAGE_IMPL.put(kb.id, location, blob)

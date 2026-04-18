@@ -63,8 +63,10 @@ const PdfPreview = ({
     };
   }, [state]);
 
-  const httpHeaders = {
+  const activeWorkspaceId = localStorage.getItem('active_workspace_id');
+  const httpHeaders: Record<string, string> = {
     [Authorization]: getAuthorization(),
+    ...(activeWorkspaceId ? { 'X-Workspace-Id': activeWorkspaceId } : {}),
   };
 
   return (
@@ -112,8 +114,8 @@ const PdfPreview = ({
                 screenshot,
                 isScrolledTo,
               ) => {
-                const isTextHighlight = !Boolean(
-                  highlight.content && highlight.content.image,
+                const isTextHighlight = !(
+                  highlight.content && highlight.content.image
                 );
 
                 const component = isTextHighlight ? (

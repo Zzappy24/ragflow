@@ -6319,6 +6319,15 @@ wheels = [
 ]
 
 [[package]]
+name = "python-magic"
+version = "0.4.27"
+source = { registry = "https://mirrors.aliyun.com/pypi/simple" }
+sdist = { url = "https://mirrors.aliyun.com/pypi/packages/da/db/0b3e28ac047452d079d375ec6798bf76a036a08182dbb39ed38116a49130/python-magic-0.4.27.tar.gz", hash = "sha256:c1ba14b08e4a5f5c31a302b7721239695b2f0f058d125bd5ce1ee36b9d9d3c3b" }
+wheels = [
+    { url = "https://mirrors.aliyun.com/pypi/packages/6c/73/9f872cb81fc5c3bb48f7227872c28975f998f3e7c2b1c16e95e6432bbb90/python_magic-0.4.27-py2.py3-none-any.whl", hash = "sha256:c212960ad306f700aa0d01e5d7a325d20548ff97eb9920dcd29513174f0294d3" },
+]
+
+[[package]]
 name = "python-multipart"
 version = "0.0.22"
 source = { registry = "https://mirrors.aliyun.com/pypi/simple" }
@@ -6616,6 +6625,7 @@ dependencies = [
     { name = "python-calamine" },
     { name = "python-docx" },
     { name = "python-gitlab" },
+    { name = "python-magic" },
     { name = "python-pptx" },
     { name = "qianfan" },
     { name = "quart-auth" },
@@ -6759,6 +6769,7 @@ requires-dist = [
     { name = "python-calamine", specifier = ">=0.4.0" },
     { name = "python-docx", specifier = ">=1.1.2,<2.0.0" },
     { name = "python-gitlab", specifier = ">=7.0.0" },
+    { name = "python-magic", specifier = ">=0.4.27" },
     { name = "python-pptx", specifier = ">=1.0.2,<2.0.0" },
     { name = "qianfan", specifier = "==0.4.6" },
     { name = "quart-auth", specifier = "==0.11.0" },

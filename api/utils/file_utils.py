@@ -36,6 +36,55 @@ from api.db import FileType
 # Robustness and resource limits: reject oversized inputs to avoid DoS and OOM.
 MAX_BLOB_SIZE_THUMBNAIL = 50 * 1024 * 1024  # 50 MiB for thumbnail generation
 MAX_BLOB_SIZE_PDF = 100 * 1024 * 1024  # 100 MiB for PDF repair / read
+
+# Magic-byte MIME prefixes for extensions that carry real risk if spoofed.
+# Keys are lowercase extensions; values are sets of allowed magic.from_buffer() MIME types.
+_EXTENSION_MIME_ALLOWLIST: dict[str, set[str]] = {
+    "pdf": {"application/pdf"},
+    "jpg": {"image/jpeg"},
+    "jpeg": {"image/jpeg"},
+    "png": {"image/png"},
+    "gif": {"image/gif"},
+    "webp": {"image/webp"},
+    "tif": {"image/tiff"},
+    "tiff": {"image/tiff"},
+    "zip": {"application/zip", "application/x-zip-compressed"},
+    "docx": {"application/zip", "application/vnd.openxmlformats-officedocument.wordprocessingml.document"},
+    "xlsx": {"application/zip", "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet"},
+    "pptx": {"application/zip", "application/vnd.openxmlformats-officedocument.presentationml.presentation"},
+    "mp3": {"audio/mpeg"},
+    "wav": {"audio/x-wav", "audio/wav"},
+    "mp4": {"video/mp4"},
+    "mkv": {"video/x-matroska"},
+}
+
+
+def validate_upload_mime(filename: str, blob: bytes) -> str | None:
+    """Check that the file's magic bytes match its declared extension.
+
+    Returns None if the file passes validation, or an error message string if it fails.
+    Only validates extensions listed in _EXTENSION_MIME_ALLOWLIST; unknown extensions are
+    allowed through (they are rejected later by filename_type if unsupported).
+    Gracefully degrades to no-op if python-magic is not installed.
+    """
+    if not blob or not filename:
+        return None
+    ext = os.path.splitext(filename)[-1].lstrip(".").lower()
+    allowed_mimes = _EXTENSION_MIME_ALLOWLIST.get(ext)
+    if not allowed_mimes:
+        return None  # Extension not in allowlist — skip deep validation
+    try:
+        import magic  # python-magic
+        detected = magic.from_buffer(blob[:4096], mime=True)
+    except ImportError:
+        return None  # python-magic not available — degrade gracefully
+    except Exception:
+        return None  # Unexpected error from libmagic — let it through
+    if detected not in allowed_mimes:
+        return f"File content does not match its extension (.{ext}): detected '{detected}'."
+    return None
+
+
 GHOSTSCRIPT_TIMEOUT_SEC = 120  # Timeout for Ghostscript subprocess
 
 LOCK_KEY_pdfplumber = "global_shared_lock_pdfplumber"

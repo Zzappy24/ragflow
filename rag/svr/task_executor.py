@@ -672,6 +672,10 @@ async def run_dataflow(task: dict):
         try:
             set_progress(task_id, prog=0.82, msg="\n-------------------------------------\nStart to embedding...")
             e, kb = KnowledgebaseService.get_by_id(task["kb_id"])
+            # SECURITY: verify KB belongs to this task's tenant (cross-tenant isolation)
+            if not e or not kb or str(kb.tenant_id) != str(task["tenant_id"]):
+                logging.warning("Dataflow: kb_id %s does not belong to tenant %s — aborting", task["kb_id"], task["tenant_id"])
+                return
             embedding_id = kb.embd_id
             embd_model_config = get_model_config_by_type_and_name(task["tenant_id"], LLMType.EMBEDDING, embedding_id)
             embedding_model = LLMBundle(task["tenant_id"], embd_model_config)
@@ -816,6 +820,10 @@ async def run_raptor_for_kb(row, kb_parser_config, chat_mdl, embd_mdl, vector_si
     for doc_id in set(doc_ids):
         ok, source_doc = DocumentService.get_by_id(doc_id)
         if not ok or not source_doc:
+            continue
+        # SECURITY: verify document belongs to this task's KB (cross-tenant isolation)
+        if str(source_doc.kb_id) != str(kb_id):
+            logging.warning("RAPTOR: doc_id %s does not belong to kb_id %s — skipping", doc_id, kb_id)
             continue
         source_name = getattr(source_doc, "name", "")
         if source_name:
@@ -1061,8 +1069,13 @@ async def do_handle_task(task):
 
     if task_type == "raptor":
         ok, kb = KnowledgebaseService.get_by_id(task_dataset_id)
-        if not ok:
+        if not ok or not kb:
             progress_callback(prog=-1.0, msg="Cannot found valid dataset for RAPTOR task")
+            return
+        # SECURITY: verify KB belongs to this task's tenant (cross-tenant isolation)
+        if str(kb.tenant_id) != str(task_tenant_id):
+            logging.warning("RAPTOR: kb_id %s does not belong to tenant %s — aborting", task_dataset_id, task_tenant_id)
+            progress_callback(prog=-1.0, msg="Dataset does not belong to this tenant")
             return
 
         kb_parser_config = kb.parser_config
@@ -1114,8 +1127,13 @@ async def do_handle_task(task):
     # Either using graphrag or Standard chunking methods
     elif task_type == "graphrag":
         ok, kb = KnowledgebaseService.get_by_id(task_dataset_id)
-        if not ok:
+        if not ok or not kb:
             progress_callback(prog=-1.0, msg="Cannot found valid dataset for GraphRAG task")
+            return
+        # SECURITY: verify KB belongs to this task's tenant (cross-tenant isolation)
+        if str(kb.tenant_id) != str(task_tenant_id):
+            logging.warning("GraphRAG: kb_id %s does not belong to tenant %s — aborting", task_dataset_id, task_tenant_id)
+            progress_callback(prog=-1.0, msg="Dataset does not belong to this tenant")
             return
 
         kb_parser_config = kb.parser_config

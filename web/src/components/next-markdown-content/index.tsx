@@ -1,5 +1,4 @@
 import Image from '@/components/image';
-import SvgIcon from '@/components/svg-icon';
 import { IReferenceChunk, IReferenceObject } from '@/interfaces/database/chat';
 import { getExtension } from '@/utils/document-util';
 import { downloadFileFromBlob } from '@/utils/file-util';
@@ -28,6 +27,7 @@ import {
 import { citationMarkerReg } from '@/utils/citation-utils';
 import { getDirAttribute } from '@/utils/text-direction';
 
+import { AuthThumbnail } from '@/components/image';
 import { useFetchDocumentThumbnailsByIds } from '@/hooks/use-document-request';
 import { cn } from '@/lib/utils';
 import classNames from 'classnames';
@@ -291,18 +291,11 @@ function MarkdownContent({
             ></div>
             {documentId && (
               <div className="flex gap-1">
-                {fileThumbnail ? (
-                  <img
-                    src={fileThumbnail}
-                    alt=""
-                    className={styles.fileThumbnail}
-                  />
-                ) : (
-                  <SvgIcon
-                    name={`file-icon/${fileExtension}`}
-                    width={24}
-                  ></SvgIcon>
-                )}
+                <AuthThumbnail
+                  url={fileThumbnail}
+                  extension={fileExtension}
+                  className={styles.fileThumbnail}
+                />
                 <Button
                   variant="link"
                   onClick={handleDocumentButtonClick(

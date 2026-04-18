@@ -1,6 +1,6 @@
 import { getExtension } from '@/utils/document-util';
-import SvgIcon from '../svg-icon';
 
+import { AuthThumbnail } from '@/components/image';
 import { useFetchDocumentThumbnailsByIds } from '@/hooks/use-document-request';
 import { useEffect } from 'react';
 import styles from './index.module.less';
@@ -23,10 +23,12 @@ const FileIcon = ({ name, id }: IProps) => {
     }
   }, [id, setDocumentIds]);
 
-  return fileThumbnail ? (
-    <img src={fileThumbnail} className={styles.thumbnailImg}></img>
-  ) : (
-    <SvgIcon name={`file-icon/${fileExtension}`} width={24}></SvgIcon>
+  return (
+    <AuthThumbnail
+      url={fileThumbnail}
+      extension={fileExtension}
+      className={styles.thumbnailImg}
+    />
   );
 };
 

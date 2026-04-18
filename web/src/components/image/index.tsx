@@ -1,22 +1,17 @@
 import { Authorization } from '@/constants/authorization';
-import { api_host } from '@/utils/api';
 import { getAuthorization } from '@/utils/authorization-util';
 import classNames from 'classnames';
-import React, { useEffect, useState } from 'react';
+import React, { forwardRef, useEffect, useState } from 'react';
+import SvgIcon from '../svg-icon';
 import { Popover, PopoverContent, PopoverTrigger } from '../ui/popover';
 
-interface IImage extends React.ImgHTMLAttributes<HTMLImageElement> {
-  id: string;
-  t?: string | number;
-  label?: string;
-}
-
-const Image = ({ id, t, label, className, ...props }: IImage) => {
+function useAuthBlobUrl(url: string) {
   const [blobUrl, setBlobUrl] = useState<string>();
 
   useEffect(() => {
-    let revoked = false;
-    const url = `${api_host}/document/image/${id}${t ? `?_t=${t}` : ''}`;
+    if (!url) return;
+    let objectUrl: string | undefined;
+    let cancelled = false;
     const activeWorkspaceId = localStorage.getItem('active_workspace_id');
     const headers: Record<string, string> = {
       [Authorization]: getAuthorization(),
@@ -26,46 +21,83 @@ const Image = ({ id, t, label, className, ...props }: IImage) => {
     }
 
     fetch(url, { headers })
-      .then((res) => {
-        if (res.ok) return res.blob();
-        return null;
-      })
+      .then((res) => (res.ok ? res.blob() : null))
       .then((blob) => {
-        if (blob && !revoked) {
-          setBlobUrl(URL.createObjectURL(blob));
+        if (blob && !cancelled) {
+          objectUrl = URL.createObjectURL(blob);
+          setBlobUrl(objectUrl);
         }
       })
       .catch(() => {});
 
     return () => {
-      revoked = true;
-      if (blobUrl) URL.revokeObjectURL(blobUrl);
+      cancelled = true;
+      if (objectUrl) URL.revokeObjectURL(objectUrl);
     };
-  }, [id, t]);
+  }, [url]);
 
-  const imageElement = (
-    <img
-      {...props}
-      src={blobUrl}
-      className={classNames('max-w-[45vw] max-h-[40wh] block', className)}
-    />
-  );
+  return blobUrl;
+}
 
-  if (!label) {
-    return imageElement;
-  }
+export function useImageBlobUrl(id: string, t?: string | number) {
+  return useAuthBlobUrl(`/v1/document/image/${id}${t ? `?_t=${t}` : ''}`);
+}
 
-  return (
-    <div className="relative inline-block w-full">
-      {imageElement}
-      <div className="absolute bottom-2 right-2 bg-accent-primary text-white px-2 py-0.5 rounded-xl text-xs font-normal backdrop-blur-sm">
-        {label}
+export function useThumbnailBlobUrl(thumbnailUrl: string) {
+  return useAuthBlobUrl(thumbnailUrl);
+}
+
+interface IImage extends React.ImgHTMLAttributes<HTMLImageElement> {
+  id: string;
+  t?: string | number;
+  label?: string;
+}
+
+const Image = forwardRef<HTMLImageElement, IImage>(
+  ({ id, t, label, className, ...props }, ref) => {
+    const blobUrl = useImageBlobUrl(id, t);
+
+    const imageElement = (
+      <img
+        {...props}
+        ref={ref}
+        src={blobUrl}
+        className={classNames('max-w-[45vw] max-h-[40wh] block', className)}
+      />
+    );
+
+    if (!label) {
+      return imageElement;
+    }
+
+    return (
+      <div className="relative inline-block w-full">
+        {imageElement}
+        <div className="absolute bottom-2 right-2 bg-accent-primary text-white px-2 py-0.5 rounded-xl text-xs font-normal backdrop-blur-sm">
+          {label}
+        </div>
       </div>
-    </div>
-  );
-};
+    );
+  },
+);
+
+Image.displayName = 'Image';
 
 export default Image;
+
+export function AuthThumbnail({
+  url,
+  extension,
+  className,
+}: {
+  url?: string;
+  extension?: string;
+  className?: string;
+}) {
+  const blobUrl = useThumbnailBlobUrl(url ?? '');
+  if (blobUrl) return <img src={blobUrl} alt="" className={className} />;
+  return <SvgIcon name={`file-icon/${extension}`} width={24} />;
+}
 
 export const ImageWithPopover = ({ id }: { id: string }) => {
   return (

@@ -1,5 +1,4 @@
-import Image from '@/components/image';
-import SvgIcon from '@/components/svg-icon';
+import Image, { AuthThumbnail } from '@/components/image';
 import { IReference, IReferenceChunk } from '@/interfaces/database/chat';
 import { citationMarkerReg } from '@/utils/citation-utils';
 import { getExtension } from '@/utils/document-util';
@@ -7,12 +6,35 @@ import { getDirAttribute } from '@/utils/text-direction';
 import DOMPurify from 'dompurify';
 import { useCallback, useEffect, useMemo } from 'react';
 import Markdown from 'react-markdown';
-import SyntaxHighlighter from 'react-syntax-highlighter';
+import { Light as SyntaxHighlighter } from 'react-syntax-highlighter';
+import bash from 'react-syntax-highlighter/dist/esm/languages/hljs/bash';
+import css from 'react-syntax-highlighter/dist/esm/languages/hljs/css';
+import javascript from 'react-syntax-highlighter/dist/esm/languages/hljs/javascript';
+import json from 'react-syntax-highlighter/dist/esm/languages/hljs/json';
+import markdown from 'react-syntax-highlighter/dist/esm/languages/hljs/markdown';
+import python from 'react-syntax-highlighter/dist/esm/languages/hljs/python';
+import sql from 'react-syntax-highlighter/dist/esm/languages/hljs/sql';
+import typescript from 'react-syntax-highlighter/dist/esm/languages/hljs/typescript';
+import xml from 'react-syntax-highlighter/dist/esm/languages/hljs/xml';
 import rehypeKatex from 'rehype-katex';
 import rehypeRaw from 'rehype-raw';
 import remarkGfm from 'remark-gfm';
 import remarkMath from 'remark-math';
 import { visitParents } from 'unist-util-visit-parents';
+
+SyntaxHighlighter.registerLanguage('bash', bash);
+SyntaxHighlighter.registerLanguage('css', css);
+SyntaxHighlighter.registerLanguage('javascript', javascript);
+SyntaxHighlighter.registerLanguage('js', javascript);
+SyntaxHighlighter.registerLanguage('json', json);
+SyntaxHighlighter.registerLanguage('markdown', markdown);
+SyntaxHighlighter.registerLanguage('python', python);
+SyntaxHighlighter.registerLanguage('py', python);
+SyntaxHighlighter.registerLanguage('sql', sql);
+SyntaxHighlighter.registerLanguage('typescript', typescript);
+SyntaxHighlighter.registerLanguage('ts', typescript);
+SyntaxHighlighter.registerLanguage('xml', xml);
+SyntaxHighlighter.registerLanguage('html', xml);
 
 import { useTranslation } from 'react-i18next';
 
@@ -176,18 +198,11 @@ const MarkdownContent = ({
             ></div>
             {documentId && (
               <section className="flex gap-1">
-                {fileThumbnail ? (
-                  <img
-                    src={fileThumbnail}
-                    alt=""
-                    className={styles.fileThumbnail}
-                  />
-                ) : (
-                  <SvgIcon
-                    name={`file-icon/${fileExtension}`}
-                    width={24}
-                  ></SvgIcon>
-                )}
+                <AuthThumbnail
+                  url={fileThumbnail}
+                  extension={fileExtension}
+                  className={styles.fileThumbnail}
+                />
                 <Button
                   variant="link"
                   className={'text-wrap p-0 flex-1 h-auto'}

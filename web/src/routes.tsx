@@ -100,7 +100,7 @@ const withLazyRoute = (
     LazyComponent.name ||
     'Component'
   })`;
-  return process.env.NODE_ENV === 'development' ? LazyComponent : memo(Wrapped);
+  return memo(Wrapped);
 };
 
 const routeConfigOptions = [

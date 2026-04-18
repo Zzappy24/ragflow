@@ -66,7 +66,13 @@ export const useGetDocumentUrl = (isAgent: boolean) => {
 export const useCatchError = (api: string) => {
   const [error, setError] = useState('');
   const fetchDocument = useCallback(async () => {
-    const ret = await axios.get(api);
+    const activeWorkspaceId = localStorage.getItem('active_workspace_id');
+    const ret = await axios.get(api, {
+      headers: {
+        [Authorization]: getAuthorization(),
+        ...(activeWorkspaceId ? { 'X-Workspace-Id': activeWorkspaceId } : {}),
+      },
+    });
     const { data } = ret;
     if (!(data instanceof ArrayBuffer) && data.code !== 0) {
       setError(data.message);
@@ -83,9 +89,11 @@ export const useCatchError = (api: string) => {
 
 export const useFetchDocument = () => {
   const fetchDocument = useCallback(async (api: string) => {
+    const activeWorkspaceId = localStorage.getItem('active_workspace_id');
     const ret = await axios.get(api, {
       headers: {
         [Authorization]: getAuthorization(),
+        ...(activeWorkspaceId ? { 'X-Workspace-Id': activeWorkspaceId } : {}),
       },
       responseType: 'arraybuffer',
     });
@@ -110,7 +118,7 @@ export const useFetchExcel = (filePath: string) => {
     myExcelPreviewer
       ?.preview(jsonFile.data)
       .then(() => {
-        console.log('succeed');
+        // preview succeeded
         setStatus(true);
       })
       .catch((e) => {
@@ -168,8 +176,10 @@ export const useFetchDocx = (filePath: string) => {
 
 export const useCatchDocumentError = (url: string) => {
   const httpHeaders = useMemo(() => {
+    const activeWorkspaceId = localStorage.getItem('active_workspace_id');
     return {
       [Authorization]: getAuthorization(),
+      ...(activeWorkspaceId ? { 'X-Workspace-Id': activeWorkspaceId } : {}),
     };
   }, []);
   const [error, setError] = useState<string>('');

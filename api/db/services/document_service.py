@@ -753,21 +753,28 @@ class DocumentService(CommonService):
 
     @classmethod
     @DB.connection_context()
-    def get_doc_id_by_doc_name(cls, doc_name):
+    def get_doc_id_by_doc_name(cls, doc_name, tenant_id: str):
+        # SECURITY: tenant_id is mandatory to prevent cross-tenant document lookup
+        from api.db.db_models import Knowledgebase
         fields = [cls.model.id]
-        doc_id = cls.model.select(*fields).where(cls.model.name == doc_name)
-        doc_id = doc_id.dicts()
-        if not doc_id:
+        docs = (cls.model.select(*fields)
+                .join(Knowledgebase, on=(cls.model.kb_id == Knowledgebase.id))
+                .where((cls.model.name == doc_name) & (Knowledgebase.tenant_id == tenant_id))
+                .dicts())
+        if not docs:
             return None
-        return doc_id[0]["id"]
+        return docs[0]["id"]
 
     @classmethod
     @DB.connection_context()
-    def get_doc_ids_by_doc_names(cls, doc_names):
+    def get_doc_ids_by_doc_names(cls, doc_names, tenant_id: str):
+        # SECURITY: tenant_id is mandatory to prevent cross-tenant document lookup
         if not doc_names:
             return []
-
-        query = cls.model.select(cls.model.id).where(cls.model.name.in_(doc_names))
+        from api.db.db_models import Knowledgebase
+        query = (cls.model.select(cls.model.id)
+                 .join(Knowledgebase, on=(cls.model.kb_id == Knowledgebase.id))
+                 .where(cls.model.name.in_(doc_names) & (Knowledgebase.tenant_id == tenant_id)))
         return list(query.scalars().iterator())
 
     @classmethod

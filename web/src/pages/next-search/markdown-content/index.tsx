@@ -1,5 +1,4 @@
-import Image from '@/components/image';
-import SvgIcon from '@/components/svg-icon';
+import Image, { AuthThumbnail } from '@/components/image';
 import { IReference, IReferenceChunk } from '@/interfaces/database/chat';
 import { getExtension } from '@/utils/document-util';
 import DOMPurify from 'dompurify';
@@ -84,15 +83,9 @@ const MarkdownContent = ({
   }, [reference, setDocumentIds]);
 
   const handleDocumentButtonClick = useCallback(
-    (
-      documentId: string,
-      chunk: IReferenceChunk,
-      isPdf: boolean = false,
-      documentUrl?: string,
-    ) =>
-      () => {
-        clickDocumentButton?.(documentId, chunk);
-      },
+    (documentId: string, chunk: IReferenceChunk) => () => {
+      clickDocumentButton?.(documentId, chunk);
+    },
     [clickDocumentButton],
   );
 
@@ -177,18 +170,11 @@ const MarkdownContent = ({
             ></div>
             {documentId && (
               <div className="flex gap-2">
-                {fileThumbnail ? (
-                  <img
-                    src={fileThumbnail}
-                    alt=""
-                    className={styles.fileThumbnail}
-                  />
-                ) : (
-                  <SvgIcon
-                    name={`file-icon/${fileExtension}`}
-                    width={24}
-                  ></SvgIcon>
-                )}
+                <AuthThumbnail
+                  url={fileThumbnail}
+                  extension={fileExtension}
+                  className={styles.fileThumbnail}
+                />
                 <Button
                   variant="link"
                   className={classNames(
@@ -249,6 +235,7 @@ const MarkdownContent = ({
         remarkPlugins={[remarkGfm, remarkMath]}
         components={
           {
+            // eslint-disable-next-line @typescript-eslint/no-unused-vars
             p: ({ children, node, ...props }: any) => (
               <p {...props}>{children}</p>
             ),
