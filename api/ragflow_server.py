@@ -65,36 +65,38 @@ def flush_token_usage():
                         keys.extend(batch)
                         if cursor == 0:
                             break
-                    for key in keys:
-                        # key format: token_usage:{date}:{tenant_id}:{llm_factory}:{model_type}:{llm_name}
-                        parts = key.split(":", 6)
-                        if len(parts) != 6:
-                            continue
-                        _, day, tenant_id, llm_factory, model_type, llm_name = parts
 
-                        # Atomically get and reset the counter
+                    if keys:
+                        # CUSTOM PERF: one pipeline for all GET+DELETE instead of N pipelines.
+                        # key format: token_usage:{date}:{tenant_id}:{llm_factory}:{model_type}:{llm_name}
                         pipe = REDIS_CONN.REDIS.pipeline()
-                        pipe.get(key)
-                        pipe.delete(key)
-                        results = pipe.execute()
-                        tokens = int(results[0] or 0)
-                        if tokens <= 0:
-                            continue
+                        for key in keys:
+                            pipe.get(key)
+                            pipe.delete(key)
+                        results = pipe.execute()  # [get0, del0, get1, del1, ...]
 
                         with DB.connection_context():
-                            (TokenUsageDaily
-                             .insert(
-                                 tenant_id=tenant_id,
-                                 llm_factory=llm_factory,
-                                 model_type=model_type,
-                                 llm_name=llm_name,
-                                 date=day,
-                                 tokens=tokens,
-                             )
-                             .on_conflict(
-                                 update={TokenUsageDaily.tokens: TokenUsageDaily.tokens + tokens},
-                             )
-                             .execute())
+                            for i, key in enumerate(keys):
+                                parts = key.split(":", 6)
+                                if len(parts) != 6:
+                                    continue
+                                _, day, tenant_id, llm_factory, model_type, llm_name = parts
+                                tokens = int(results[i * 2] or 0)
+                                if tokens <= 0:
+                                    continue
+                                (TokenUsageDaily
+                                 .insert(
+                                     tenant_id=tenant_id,
+                                     llm_factory=llm_factory,
+                                     model_type=model_type,
+                                     llm_name=llm_name,
+                                     date=day,
+                                     tokens=tokens,
+                                 )
+                                 .on_conflict(
+                                     update={TokenUsageDaily.tokens: TokenUsageDaily.tokens + tokens},
+                                 )
+                                 .execute())
                 finally:
                     redis_lock.release()
         except Exception:
