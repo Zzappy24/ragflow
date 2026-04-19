@@ -142,22 +142,6 @@ chunk_limiter = asyncio.Semaphore(MAX_CONCURRENT_CHUNK_BUILDERS)
 embed_limiter = asyncio.Semaphore(MAX_CONCURRENT_CHUNK_BUILDERS)
 minio_limiter = asyncio.Semaphore(MAX_CONCURRENT_MINIO)
 kg_limiter = asyncio.Semaphore(2)
-
-# CUSTOM PERF: per-tenant embed concurrency cap — prevents one org from monopolizing
-# all embed_limiter slots (noisy-neighbor problem in multi-org deployments).
-# A tenant can hold at most half the global slots; the global cap still applies on top.
-# Semaphores are created lazily and never evicted (one per active tenant — negligible memory).
-_MAX_EMBED_PER_TENANT: int = max(1, MAX_CONCURRENT_CHUNK_BUILDERS // 2)
-_tenant_embed_limiters: dict[str, asyncio.Semaphore] = {}
-
-
-def _get_tenant_embed_limiter(tenant_id: str) -> asyncio.Semaphore:
-    """Return the per-tenant embed semaphore, creating it lazily if needed.
-    Safe without a lock: asyncio is single-threaded and CPython dict ops are GIL-protected."""
-    sem = _tenant_embed_limiters.get(tenant_id)
-    if sem is None:
-        _tenant_embed_limiters[tenant_id] = sem = asyncio.Semaphore(_MAX_EMBED_PER_TENANT)
-    return sem
 WORKER_HEARTBEAT_TIMEOUT = int(os.environ.get('WORKER_HEARTBEAT_TIMEOUT', '120'))
 stop_event = threading.Event()
 
@@ -725,9 +709,8 @@ async def run_dataflow(task: dict):
             delta = 0.20 / (len(texts) // settings.EMBEDDING_BATCH_SIZE + 1)
             prog = 0.8
             for i in range(0, len(texts), settings.EMBEDDING_BATCH_SIZE):
-                async with _get_tenant_embed_limiter(task["tenant_id"]):
-                    async with embed_limiter:
-                        vts, c = await thread_pool_exec(batch_encode, texts[i: i + settings.EMBEDDING_BATCH_SIZE])
+                async with embed_limiter:
+                    vts, c = await thread_pool_exec(batch_encode, texts[i: i + settings.EMBEDDING_BATCH_SIZE])
                 vects_batches.append(vts)
                 embedding_token_consumption += c
                 prog += delta
@@ -1040,9 +1023,8 @@ async def _embed_insert_pipelined(
         batch = chunks[i:i + settings.EMBEDDING_BATCH_SIZE]
         txts = [_get_content(d) for d in batch]
 
-        async with _get_tenant_embed_limiter(task_tenant_id):
-            async with embed_limiter:
-                vts, c = await thread_pool_exec(batch_encode, txts)
+        async with embed_limiter:
+            vts, c = await thread_pool_exec(batch_encode, txts)
         tk_count += c
 
         for j, d in enumerate(batch):
