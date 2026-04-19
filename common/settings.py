@@ -121,7 +121,7 @@ OS = {}
 GCS = {}
 
 DOC_MAXIMUM_SIZE: int = 128 * 1024 * 1024
-DOC_BULK_SIZE: int = 4
+DOC_BULK_SIZE: int = 32  # CUSTOM PERF: upstream default was 4
 EMBEDDING_BATCH_SIZE: int = 16
 
 PARALLEL_DEVICES: int = 0
@@ -361,7 +361,7 @@ def init_settings():
 
     global DOC_MAXIMUM_SIZE, DOC_BULK_SIZE, EMBEDDING_BATCH_SIZE
     DOC_MAXIMUM_SIZE = int(os.environ.get("MAX_CONTENT_LENGTH", 128 * 1024 * 1024))
-    DOC_BULK_SIZE = int(os.environ.get("DOC_BULK_SIZE", 4))
+    DOC_BULK_SIZE = int(os.environ.get("DOC_BULK_SIZE", 32))  # CUSTOM PERF: upstream default was 4
     EMBEDDING_BATCH_SIZE = int(os.environ.get("EMBEDDING_BATCH_SIZE", 16))
 
     os.environ["DOTNET_SYSTEM_GLOBALIZATION_INVARIANT"] = "1"

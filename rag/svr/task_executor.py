@@ -120,9 +120,11 @@ DONE_TASKS = 0
 FAILED_TASKS = 0
 
 CURRENT_TASKS = {}
+# CUSTOM PERF: cache vector_size by (tenant, model) — avoids one warm-up API call per document
+_vector_size_cache: dict[str, int] = {}
 
 MAX_CONCURRENT_TASKS = int(os.environ.get('MAX_CONCURRENT_TASKS', "5"))
-MAX_CONCURRENT_CHUNK_BUILDERS = int(os.environ.get('MAX_CONCURRENT_CHUNK_BUILDERS', "1"))
+MAX_CONCURRENT_CHUNK_BUILDERS = int(os.environ.get('MAX_CONCURRENT_CHUNK_BUILDERS', "4"))  # CUSTOM PERF: upstream default was 1
 MAX_CONCURRENT_MINIO = int(os.environ.get('MAX_CONCURRENT_MINIO', '10'))
 task_limiter = asyncio.Semaphore(MAX_CONCURRENT_TASKS)
 chunk_limiter = asyncio.Semaphore(MAX_CONCURRENT_CHUNK_BUILDERS)
@@ -597,17 +599,14 @@ async def embedding(docs, mdl, parser_config=None, callback=None):
         nonlocal mdl
         return mdl.encode([truncate(c, mdl.max_length - 10) for c in txts])
 
-    cnts_ = np.array([])
+    cnts_batches = []
     for i in range(0, len(cnts), settings.EMBEDDING_BATCH_SIZE):
         async with embed_limiter:
             vts, c = await thread_pool_exec(batch_encode, cnts[i: i + settings.EMBEDDING_BATCH_SIZE])
-        if len(cnts_) == 0:
-            cnts_ = vts
-        else:
-            cnts_ = np.concatenate((cnts_, vts), axis=0)
+        cnts_batches.append(vts)
         tk_count += c
         callback(prog=0.7 + 0.2 * (i + 1) / len(cnts), msg="")
-    cnts = cnts_
+    cnts = np.vstack(cnts_batches) if cnts_batches else np.array([])
     filename_embd_weight = parser_config.get("filename_embd_weight", 0.1)  # due to the db support none value
     if not filename_embd_weight:
         filename_embd_weight = 0.1
@@ -685,21 +684,19 @@ async def run_dataflow(task: dict):
                 nonlocal embedding_model
                 return embedding_model.encode([truncate(c, embedding_model.max_length - 10) for c in txts])
 
-            vects = np.array([])
+            vects_batches = []
             texts = [o.get("questions", o.get("summary", o["text"])) for o in chunks]
             delta = 0.20 / (len(texts) // settings.EMBEDDING_BATCH_SIZE + 1)
             prog = 0.8
             for i in range(0, len(texts), settings.EMBEDDING_BATCH_SIZE):
                 async with embed_limiter:
                     vts, c = await thread_pool_exec(batch_encode, texts[i: i + settings.EMBEDDING_BATCH_SIZE])
-                if len(vects) == 0:
-                    vects = vts
-                else:
-                    vects = np.concatenate((vects, vts), axis=0)
+                vects_batches.append(vts)
                 embedding_token_consumption += c
                 prog += delta
                 if i % (len(texts) // settings.EMBEDDING_BATCH_SIZE / 100 + 1) == 1:
                     set_progress(task_id, prog=prog, msg=f"{i + 1} / {len(texts) // settings.EMBEDDING_BATCH_SIZE}")
+            vects = np.vstack(vects_batches) if vects_batches else np.array([])
 
             assert len(vects) == len(chunks)
             for i, ck in enumerate(chunks):
@@ -985,13 +982,15 @@ async def insert_chunks(task_id, task_tenant_id, task_dataset_id, chunks, progre
             error_message = f"Insert chunk error: {doc_store_result}, please check log file and Elasticsearch/Infinity status!"
             progress_callback(-1, msg=error_message)
             raise Exception(error_message)
-        chunk_ids = [chunk["id"] for chunk in chunks[:b + settings.DOC_BULK_SIZE]]
-        chunk_ids_str = " ".join(chunk_ids)
-        try:
-            TaskService.update_chunk_ids(task_id, chunk_ids_str)
-        except DoesNotExist:
-            logging.warning(f"do_handle_task update_chunk_ids failed since task {task_id} is unknown.")
-            doc_store_result = await thread_pool_exec(settings.docStoreConn.delete, {"id": chunk_ids},
+
+    # update chunk IDs once after all inserts instead of per-batch
+    chunk_ids = [chunk["id"] for chunk in chunks]
+    chunk_ids_str = " ".join(chunk_ids)
+    try:
+        TaskService.update_chunk_ids(task_id, chunk_ids_str)
+    except DoesNotExist:
+        logging.warning(f"do_handle_task update_chunk_ids failed since task {task_id} is unknown.")
+        doc_store_result = await thread_pool_exec(settings.docStoreConn.delete, {"id": chunk_ids},
                                                        search.index_name(task_tenant_id), task_dataset_id, )
             tasks = []
             for chunk_id in chunk_ids:
@@ -1053,8 +1052,11 @@ async def do_handle_task(task):
         else:
             embd_model_config = get_tenant_default_model_by_type(task_tenant_id, LLMType.EMBEDDING)
         embedding_model = LLMBundle(task_tenant_id, embd_model_config, lang=task_language)
-        vts, _ = embedding_model.encode(["ok"])
-        vector_size = len(vts[0])
+        _cache_key = f"{task_tenant_id}:{task_embedding_id}"
+        if _cache_key not in _vector_size_cache:
+            vts, _ = embedding_model.encode(["ok"])
+            _vector_size_cache[_cache_key] = len(vts[0])
+        vector_size = _vector_size_cache[_cache_key]
     except Exception as e:
         error_message = f'Fail to bind embedding model: {str(e)}'
         progress_callback(-1, msg=error_message)

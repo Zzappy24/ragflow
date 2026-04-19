@@ -16,10 +16,29 @@
 import logging
 import os
 import enum
+import time
 from common import settings
 from common.constants import LLMType
 from api.db.services.llm_service import LLMService
 from api.db.services.tenant_llm_service import TenantLLMService, TenantService
+
+# CUSTOM PERF: TTL cache for model config lookups — config changes rarely, avoids repeated MySQL SELECTs
+# Upstream has no cache here; every chat request and every embedding batch hit the DB.
+_MODEL_CONFIG_CACHE: dict[str, tuple[dict, float]] = {}
+_MODEL_CONFIG_TTL = 300  # 5 minutes
+
+
+def _model_config_cache_key(tenant_id: str, model_type: str, model_name: str) -> str:
+    return f"{tenant_id}:{model_type}:{model_name}"
+
+
+def _invalidate_model_config_cache(tenant_id: str | None = None):
+    if tenant_id is None:
+        _MODEL_CONFIG_CACHE.clear()
+    else:
+        for k in list(_MODEL_CONFIG_CACHE.keys()):
+            if k.startswith(f"{tenant_id}:"):
+                del _MODEL_CONFIG_CACHE[k]
 
 
 # CUSTOM B2B SaaS – graceful fallback from workspace tenant to creator's personal
@@ -52,6 +71,10 @@ def get_model_config_by_type_and_name(tenant_id: str, model_type: str, model_nam
     if not model_name:
         raise Exception("Model Name is required")
     model_type_val = model_type.value if hasattr(model_type, "value") else model_type
+    cache_key = _model_config_cache_key(tenant_id, model_type_val, model_name)
+    cached = _MODEL_CONFIG_CACHE.get(cache_key)
+    if cached and time.monotonic() - cached[1] < _MODEL_CONFIG_TTL:
+        return cached[0]
     model_config = TenantLLMService.get_api_key(tenant_id, model_name, model_type_val)
     if not model_config:
         # model_name in format 'name@factory', split model_name and try again
@@ -99,6 +122,7 @@ def get_model_config_by_type_and_name(tenant_id: str, model_type: str, model_nam
     llm = LLMService.query(llm_name=config_dict["llm_name"])
     if llm:
         config_dict["is_tools"] = llm[0].is_tools
+    _MODEL_CONFIG_CACHE[cache_key] = (config_dict, time.monotonic())
     return config_dict
 
 
