@@ -309,13 +309,8 @@ def token_required(func):
             err.code = RetCode.SUCCESS
             raise err
 
-        authorization_list = authorization_str.split()
-        if len(authorization_list) < 2:
-            err = WerkzeugUnauthorized(description="Please check your authorization format.")
-            err.code = RetCode.AUTHENTICATION_ERROR
-            raise err
-
-        token = authorization_list[1]
+        parts = authorization_str.split(maxsplit=1)
+        token = parts[1] if len(parts) >= 2 else parts[0]
 
         # First try API token (explicit API token authentication)
         objs = APIToken.query(token=token)
@@ -355,17 +350,33 @@ def token_required(func):
             raw_token = str(jwt.loads(token))
             user = UserService.query(access_token=raw_token, status=StatusEnum.VALID.value)
             if user:
-                # On success, inject tenant_id from user's tenant
+                # Resolve tenant: prefer workspace tenant (X-Workspace-Id) over personal tenant
                 from api.db.services.user_service import UserTenantService
-                tenants = UserTenantService.query(user_id=user[0].id)
-                if tenants:
-                    kwargs["tenant_id"] = tenants[0].tenant_id
+                from quart import g as _g
+                resolved_tenant = None
+                ws_id = getattr(_g, "_ws_header", None)
+                if ws_id:
+                    try:
+                        from api.db.services.workspace_service import WorkspaceService, WsMemberService
+                        ok, ws = WorkspaceService.get_by_id(ws_id)
+                        if ok and ws and ws.status == "1":
+                            membership = WsMemberService.get_membership(ws_id, user[0].id)
+                            if membership or getattr(user[0], "is_superuser", False):
+                                resolved_tenant = ws.tenant_id
+                    except Exception as e:
+                        logging.debug("[token_required] ws resolve error: %s", e)
+                if resolved_tenant is None:
+                    tenants = UserTenantService.query(user_id=user[0].id)
+                    if tenants:
+                        resolved_tenant = tenants[0].tenant_id
+                if resolved_tenant:
+                    kwargs["tenant_id"] = resolved_tenant
                     result = func(*args, **kwargs)
                     if inspect.iscoroutine(result):
                         return await result
                     return result
-        except Exception:
-            pass
+        except Exception as e:
+            logging.debug("[token_required] JWT fallback failed: %s", e)
 
         err = WerkzeugUnauthorized(description="Authentication error: API key is invalid!")
         err.code = RetCode.AUTHENTICATION_ERROR

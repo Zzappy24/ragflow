@@ -43,16 +43,24 @@ export default function WorkspaceDetailPage() {
 
   const onLaunch = async () => {
     if (!wsId) return;
+    // Open synchronously in the click handler to preserve user-gesture context
+    const tab = window.open('about:blank', '_blank');
     setLaunching(true);
     try {
       const res = await api.post(`/workspaces/${wsId}/launch`);
       const url = res.data?.bridge_url;
       if (!url) {
+        tab?.close();
         message.error('Launch failed: no bridge URL returned');
         return;
       }
-      window.open(url, '_blank', 'noopener,noreferrer');
+      if (tab) {
+        tab.location.href = url;
+      } else {
+        window.location.href = url;
+      }
     } catch (err: unknown) {
+      tab?.close();
       const msg = (err as { response?: { data?: { detail?: string } } })?.response?.data?.detail;
       message.error(msg || 'Launch failed');
     } finally {

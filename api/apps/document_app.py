@@ -626,6 +626,7 @@ async def rm():
 async def run():
     req = await get_request_json()
     uid = current_user.id
+    ws_tenant_id = active_tenant_id()  # resolve in async context before thread pool
     try:
 
         def _run_sync():
@@ -633,7 +634,7 @@ async def run():
                 # CUSTOM B2B SaaS: workspace-scoped check — DocumentService.accessible()
                 # uses a multi-workspace JOIN that leaks documents across workspaces.
                 e, _doc = DocumentService.get_by_id(doc_id)
-                if not e or not KnowledgebaseService.query(tenant_id=active_tenant_id(), id=_doc.kb_id):
+                if not e or not KnowledgebaseService.query(tenant_id=ws_tenant_id, id=_doc.kb_id):
                     return get_json_result(data=False, message="No authorization.", code=RetCode.AUTHENTICATION_ERROR)
 
             kb_table_num_map = {}
@@ -694,13 +695,14 @@ async def run():
 async def rename():
     req = await get_request_json()
     uid = current_user.id
+    ws_tenant_id = active_tenant_id()  # resolve in async context before thread pool
     try:
 
         def _rename_sync():
             # CUSTOM B2B SaaS: workspace-scoped check — DocumentService.accessible()
             # uses a multi-workspace JOIN that leaks documents across workspaces.
             e, doc = DocumentService.get_by_id(req["doc_id"])
-            if not e or not KnowledgebaseService.query(tenant_id=active_tenant_id(), id=doc.kb_id):
+            if not e or not KnowledgebaseService.query(tenant_id=ws_tenant_id, id=doc.kb_id):
                 return get_json_result(data=False, message="No authorization.", code=RetCode.AUTHENTICATION_ERROR)
             if pathlib.Path(req["name"].lower()).suffix != pathlib.Path(doc.name.lower()).suffix:
                 return get_json_result(data=False, message="The extension of file can't be changed", code=RetCode.ARGUMENT_ERROR)
