@@ -145,19 +145,57 @@ kg_limiter = asyncio.Semaphore(2)
 
 # CUSTOM PERF: per-tenant embed concurrency cap — prevents one org from monopolizing
 # all embed_limiter slots (noisy-neighbor problem in multi-org deployments).
-# A tenant can hold at most half the global slots; the global cap still applies on top.
-# Semaphores are created lazily and never evicted (one per active tenant — negligible memory).
+# Uses Redis as the coordination layer so the cap is enforced cluster-wide across all K8s pods.
+# Each tenant is limited to _MAX_EMBED_PER_TENANT concurrent embed batches across the entire cluster;
+# the pod-local embed_limiter still enforces the per-pod global cap on top.
 _MAX_EMBED_PER_TENANT: int = max(1, MAX_CONCURRENT_CHUNK_BUILDERS // 2)
-_tenant_embed_limiters: dict[str, asyncio.Semaphore] = {}
+
+# Lua script: atomically increment the per-tenant counter iff below the cap.
+# Returns 1 (slot acquired) or 0 (at capacity, caller must retry).
+# EXPIRE is refreshed on every acquire as a crash-safety TTL: if a pod dies without
+# releasing its slot, the key auto-expires after _EMBED_SLOT_TTL seconds.
+_EMBED_SLOT_ACQUIRE_LUA = """
+local cur = tonumber(redis.call('GET', KEYS[1])) or 0
+if cur < tonumber(ARGV[1]) then
+    redis.call('INCR', KEYS[1])
+    redis.call('EXPIRE', KEYS[1], tonumber(ARGV[2]))
+    return 1
+end
+return 0
+"""
+_EMBED_SLOT_TTL = 300  # 5 min — safely above the 60s embed timeout
 
 
-def _get_tenant_embed_limiter(tenant_id: str) -> asyncio.Semaphore:
-    """Return the per-tenant embed semaphore, creating it lazily if needed.
-    Safe without a lock: asyncio is single-threaded and CPython dict ops are GIL-protected."""
-    sem = _tenant_embed_limiters.get(tenant_id)
-    if sem is None:
-        _tenant_embed_limiters[tenant_id] = sem = asyncio.Semaphore(_MAX_EMBED_PER_TENANT)
-    return sem
+class _TenantEmbedSlot:
+    """Async context manager: distributed per-tenant embed slot backed by Redis.
+
+    Acquiring polls Redis with exponential backoff (50ms → 1s) until a slot opens.
+    Releasing decrements the Redis counter. A TTL on the counter key ensures crashed
+    pods don't permanently block a tenant's quota.
+    """
+
+    __slots__ = ("_key", "_acquired")
+
+    def __init__(self, tenant_id: str):
+        self._key = f"embed_slot:{tenant_id}"
+        self._acquired = False
+
+    async def __aenter__(self):
+        backoff = 0.05
+        while True:
+            result = REDIS_CONN.REDIS.eval(
+                _EMBED_SLOT_ACQUIRE_LUA, 1,
+                self._key, _MAX_EMBED_PER_TENANT, _EMBED_SLOT_TTL,
+            )
+            if result:
+                self._acquired = True
+                return self
+            await asyncio.sleep(backoff)
+            backoff = min(backoff * 1.5, 1.0)
+
+    async def __aexit__(self, *_exc):
+        if self._acquired:
+            REDIS_CONN.REDIS.decr(self._key)
 WORKER_HEARTBEAT_TIMEOUT = int(os.environ.get('WORKER_HEARTBEAT_TIMEOUT', '120'))
 stop_event = threading.Event()
 
@@ -725,7 +763,7 @@ async def run_dataflow(task: dict):
             delta = 0.20 / (len(texts) // settings.EMBEDDING_BATCH_SIZE + 1)
             prog = 0.8
             for i in range(0, len(texts), settings.EMBEDDING_BATCH_SIZE):
-                async with _get_tenant_embed_limiter(task["tenant_id"]):
+                async with _TenantEmbedSlot(task["tenant_id"]):
                     async with embed_limiter:
                         vts, c = await thread_pool_exec(batch_encode, texts[i: i + settings.EMBEDDING_BATCH_SIZE])
                 vects_batches.append(vts)
@@ -1040,7 +1078,7 @@ async def _embed_insert_pipelined(
         batch = chunks[i:i + settings.EMBEDDING_BATCH_SIZE]
         txts = [_get_content(d) for d in batch]
 
-        async with _get_tenant_embed_limiter(task_tenant_id):
+        async with _TenantEmbedSlot(task_tenant_id):
             async with embed_limiter:
                 vts, c = await thread_pool_exec(batch_encode, txts)
         tk_count += c
