@@ -156,7 +156,8 @@ async def set_api_key():
                 api_base=llm_config["api_base"],
                 max_tokens=llm_config["max_tokens"],
             )
-
+    from api.db.joint_services.tenant_model_service import _invalidate_model_config_cache
+    _invalidate_model_config_cache(active_tenant_id())
     return get_json_result(data=True)
 
 
@@ -357,7 +358,8 @@ async def add_llm():
 
     if not TenantLLMService.filter_update([TenantLLM.tenant_id == active_tenant_id(), TenantLLM.llm_factory == factory, TenantLLM.llm_name == llm["llm_name"]], llm):
         TenantLLMService.save(**llm)
-
+    from api.db.joint_services.tenant_model_service import _invalidate_model_config_cache
+    _invalidate_model_config_cache(active_tenant_id())
     return get_json_result(data=True)
 
 
@@ -368,6 +370,8 @@ async def add_llm():
 async def delete_llm():
     req = await get_request_json()
     TenantLLMService.filter_delete([TenantLLM.tenant_id == active_tenant_id(), TenantLLM.llm_factory == req["llm_factory"], TenantLLM.llm_name == req["llm_name"]])
+    from api.db.joint_services.tenant_model_service import _invalidate_model_config_cache
+    _invalidate_model_config_cache(active_tenant_id())
     return get_json_result(data=True)
 
 
@@ -380,6 +384,8 @@ async def enable_llm():
     TenantLLMService.filter_update(
         [TenantLLM.tenant_id == active_tenant_id(), TenantLLM.llm_factory == req["llm_factory"], TenantLLM.llm_name == req["llm_name"]], {"status": str(req.get("status", "1"))}
     )
+    from api.db.joint_services.tenant_model_service import _invalidate_model_config_cache
+    _invalidate_model_config_cache(active_tenant_id())
     return get_json_result(data=True)
 
 
@@ -390,6 +396,8 @@ async def enable_llm():
 async def delete_factory():
     req = await get_request_json()
     TenantLLMService.filter_delete([TenantLLM.tenant_id == active_tenant_id(), TenantLLM.llm_factory == req["llm_factory"]])
+    from api.db.joint_services.tenant_model_service import _invalidate_model_config_cache
+    _invalidate_model_config_cache(active_tenant_id())
     return get_json_result(data=True)
 
 

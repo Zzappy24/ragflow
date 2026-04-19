@@ -155,7 +155,8 @@ def add_workspace_provider(
     )
     if not existing:
         TenantLLMService.save(**llm_row)
-
+    from api.db.joint_services.tenant_model_service import _invalidate_model_config_cache
+    _invalidate_model_config_cache(tenant_id)
     return WsLlmProviderResponse(
         llm_factory=body.llm_factory,
         llm_name=body.llm_name,
@@ -205,7 +206,8 @@ def update_workspace_provider(
     )
     if not updated:
         raise HTTPException(status_code=404, detail="Model not found")
-
+    from api.db.joint_services.tenant_model_service import _invalidate_model_config_cache
+    _invalidate_model_config_cache(tenant_id)
     # Return updated row
     llms = TenantLLMService.get_my_llms(tenant_id)
     row = next((r for r in llms if r.get("llm_name") == stored and r.get("llm_factory") == factory), None)
@@ -259,7 +261,8 @@ def toggle_workspace_provider_status(
     )
     if not updated:
         raise HTTPException(status_code=404, detail="Model not found")
-
+    from api.db.joint_services.tenant_model_service import _invalidate_model_config_cache
+    _invalidate_model_config_cache(tenant_id)
     llms = TenantLLMService.get_my_llms(tenant_id)
     row = next((r for r in llms if r.get("llm_name") == stored and r.get("llm_factory") == factory), None)
 
