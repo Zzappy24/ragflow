@@ -499,9 +499,17 @@ class BaseDataBase:
         database_config = settings.DATABASE.copy()
         db_name = database_config.pop("name")
 
+        # CUSTOM PERF: pool tuned for K8s multi-pod deployments.
+        # DB_POOL_SIZE controls per-pod connection count; set it so that
+        # pods × DB_POOL_SIZE stays below MySQL max_connections (default 151).
+        # DB_POOL_STALE_TIMEOUT closes idle connections so pods that scale down
+        # release their MySQL slots promptly.
         pool_config = {
             'max_retries': 5,
             'retry_delay': 1,
+            'max_connections': int(os.environ.get('DB_POOL_SIZE', '32')),
+            'stale_timeout': int(os.environ.get('DB_POOL_STALE_TIMEOUT', '300')),
+            'timeout': int(os.environ.get('DB_POOL_TIMEOUT', '10')),
         }
         database_config.update(pool_config)
         self.database_connection = PooledDatabase[settings.DATABASE_TYPE.upper()].value(

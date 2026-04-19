@@ -84,12 +84,14 @@ def _build_chat_response(chat):
 
 
 def _resolve_kb_names(kb_ids):
+    if not kb_ids:
+        return [], []
+    kbs = KnowledgebaseService.get_by_ids(kb_ids)
     ids, names = [], []
-    for kb_id in kb_ids or []:
-        ok, kb = KnowledgebaseService.get_by_id(kb_id)
-        if not ok or kb.status != StatusEnum.VALID.value:
+    for kb in kbs:
+        if kb.status != StatusEnum.VALID.value:
             continue
-        ids.append(kb_id)
+        ids.append(kb.id)
         names.append(kb.name)
     return ids, names
 

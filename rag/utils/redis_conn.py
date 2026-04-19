@@ -137,7 +137,12 @@ class RedisDB:
             if password:
                 conn_params["password"] = password
 
-            self.REDIS = redis.StrictRedis(**conn_params)
+            # CUSTOM PERF: connection pool prevents serialization under concurrent load.
+            # REDIS_POOL_SIZE connections per pod; scale MySQL-style (pods × pool_size < Redis maxclients).
+            import os
+            pool_size = int(os.environ.get('REDIS_POOL_SIZE', '16'))
+            pool = redis.ConnectionPool(**conn_params, max_connections=pool_size)
+            self.REDIS = redis.StrictRedis(connection_pool=pool)
 
             self.register_scripts()
         except Exception as e:
