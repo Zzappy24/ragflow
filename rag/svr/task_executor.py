@@ -127,6 +127,10 @@ _MOTHER_FIELDS = frozenset({"id", "content_with_weight", "doc_id", "docnm_kwd", 
                              "available_int", "position_int", "create_timestamp_flt",
                              "page_num_int", "top_int"})
 
+# CUSTOM PERF: throttle set_progress MySQL UPDATEs to at most 1/s per task
+_SET_PROGRESS_MIN_INTERVAL = 1.0
+_set_progress_last: dict[str, float] = {}
+
 # CUSTOM PERF: shared executor for TOC extraction — avoids creating a new thread pool per task
 _TOC_EXECUTOR = concurrent.futures.ThreadPoolExecutor(max_workers=2)
 
@@ -154,6 +158,15 @@ def set_progress(task_id, from_page=0, to_page=-1, prog=None, msg="Processing...
         if prog is not None and prog < 0:
             msg = "[ERROR]" + msg
         cancel = has_canceled(task_id)
+
+        # CUSTOM PERF: skip MySQL UPDATE if called too recently, unless it's an error/cancel/done
+        is_terminal = cancel or (prog is not None and (prog < 0 or prog >= 1))
+        if not is_terminal:
+            now = time.monotonic()
+            last = _set_progress_last.get(task_id, 0.0)
+            if now - last < _SET_PROGRESS_MIN_INTERVAL:
+                return
+            _set_progress_last[task_id] = now
 
         if cancel:
             msg += " [Canceled]"
@@ -1432,6 +1445,7 @@ async def handle_task():
             pass
         logging.exception(f"handle_task got exception for task {json.dumps(task)}")
     finally:
+        _set_progress_last.pop(task_id, None)
         if not task.get("dataflow_id", ""):
             referred_document_id = None
             if task_type in ["graphrag", "raptor", "mindmap"]:
