@@ -82,9 +82,57 @@ def get_init_tenant_llm(user_id):
     return list(unique.values())
 
 
+class QuotaExceededError(RuntimeError):
+    """Raised when a workspace has exhausted its token quota and allow_overage is False."""
+    def __init__(self, current_usage: int, limit: int, period_start: str, period_end: str):
+        self.current_usage = current_usage
+        self.limit = limit
+        self.period_start = period_start
+        self.period_end = period_end
+        super().__init__(
+            f"Token quota exceeded: {current_usage}/{limit} tokens used "
+            f"for period {period_start} → {period_end}."
+        )
+
+
 class LLMBundle(LLM4Tenant):
     def __init__(self, tenant_id: str, model_config: dict, lang="Chinese", **kwargs):
         super().__init__(tenant_id, model_config, lang, **kwargs)
+        self._quota_status = self._check_token_quota()
+
+    def _check_token_quota(self) -> dict:
+        """Check quota and raise QuotaExceededError if hard limit is active."""
+        try:
+            from api.db.services.quota_service import check_token_quota
+            status = check_token_quota(self.tenant_id)
+        except Exception:
+            logging.warning("LLMBundle: quota check failed for tenant=%s — allowing request", self.tenant_id)
+            return {"enabled": False, "quota_exceeded": False, "allow_overage": True}
+
+        if status.get("quota_exceeded") and not status.get("allow_overage", True):
+            raise QuotaExceededError(
+                current_usage=status["current_usage"],
+                limit=status["limit"],
+                period_start=status.get("period_start", ""),
+                period_end=status.get("period_end", ""),
+            )
+
+        if status.get("quota_exceeded") and status.get("allow_overage", True):
+            logging.warning(
+                "LLMBundle: tenant=%s is in overage (%d/%d tokens) — allowing request",
+                self.tenant_id, status.get("current_usage", 0), status.get("limit", 0),
+            )
+            # Mark overage in Redis so dashboards can flag it
+            try:
+                from rag.utils.redis_conn import REDIS_CONN
+                from datetime import date
+                overage_key = f"quota_overage:{date.today().isoformat()}:{self.tenant_id}"
+                REDIS_CONN.REDIS.incr(overage_key)
+                REDIS_CONN.REDIS.expire(overage_key, 86400 * 35)  # keep 35 days
+            except Exception:
+                pass
+
+        return status
 
     def bind_tools(self, toolcall_session, tools):
         if not self.is_tools:

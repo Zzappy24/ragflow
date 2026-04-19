@@ -1,12 +1,12 @@
-import { useEffect, useState } from 'react';
+import { useEffect, useState, useCallback } from 'react';
 import { useParams, Link, useNavigate } from 'react-router-dom';
-import { Card, Tabs, Spin, Progress, Row, Col, Statistic, Breadcrumb, Typography, Tag, Button, Modal, Input, App, Table, Space, Select } from 'antd';
+import { Card, Tabs, Spin, Progress, Row, Col, Statistic, Breadcrumb, Typography, Tag, Button, Modal, Input, App, Table, Space, Select, Switch, InputNumber, Tooltip, Alert } from 'antd';
 import { DatePicker } from 'antd';
 import type { Dayjs } from 'dayjs';
-import { AppstoreOutlined, TeamOutlined, AuditOutlined, HomeOutlined, DatabaseOutlined, FileOutlined, InboxOutlined, UndoOutlined, FireOutlined, ThunderboltOutlined, BarChartOutlined } from '@ant-design/icons';
+import { AppstoreOutlined, TeamOutlined, AuditOutlined, HomeOutlined, DatabaseOutlined, FileOutlined, InboxOutlined, UndoOutlined, FireOutlined, ThunderboltOutlined, BarChartOutlined, WarningOutlined } from '@ant-design/icons';
 import {
   AreaChart, Area, BarChart, Bar, PieChart, Pie,
-  XAxis, YAxis, CartesianGrid, Tooltip,
+  XAxis, YAxis, CartesianGrid, Tooltip as RechartsTooltip,
   ResponsiveContainer, Cell, Legend,
 } from 'recharts';
 import dayjs from 'dayjs';
@@ -223,7 +223,7 @@ function OrgUsageTab({ orgId }: { orgId: string }) {
                 <CartesianGrid strokeDasharray="3 3" stroke="#f0f0f0" />
                 <XAxis dataKey="date" tick={{ fontSize: 10 }} tickFormatter={shortDate} interval="preserveStartEnd" />
                 <YAxis tickFormatter={fmtTokens} tick={{ fontSize: 10 }} width={48} />
-                <Tooltip formatter={(v: number, name: string) => [fmtTokens(v), data.workspace_id_to_name[name] ?? name]} />
+                <RechartsTooltip formatter={(v: number, name: string) => [fmtTokens(v), data.workspace_id_to_name[name] ?? name]} />
                 <Legend formatter={(id) => data.workspace_id_to_name[id] ?? id} iconSize={10} />
                 {activeWs.map((wsId, i) => (
                   <Area key={wsId} type="monotone" dataKey={wsId} stackId="1"
@@ -240,7 +240,7 @@ function OrgUsageTab({ orgId }: { orgId: string }) {
                 <CartesianGrid strokeDasharray="3 3" stroke="#f0f0f0" />
                 <XAxis dataKey="date" tick={{ fontSize: 10 }} tickFormatter={shortDate} interval="preserveStartEnd" />
                 <YAxis tickFormatter={fmtTokens} tick={{ fontSize: 10 }} width={48} />
-                <Tooltip formatter={(v: number, name: string) =>
+                <RechartsTooltip formatter={(v: number, name: string) =>
                   [fmtTokens(v), data.by_model_type.find((m) => m.type === name)?.type_label ?? name]} />
                 <Legend iconSize={10} />
                 {activeTypes.map((mt) => (
@@ -267,7 +267,7 @@ function OrgUsageTab({ orgId }: { orgId: string }) {
                     labelLine={false} label={DonutLabel}>
                     {filteredModelTypes.map((m) => <Cell key={m.type} fill={typeColor(m.type)} />)}
                   </Pie>
-                  <Tooltip formatter={(v: number, name: string) => [fmtTokens(v), name]} />
+                  <RechartsTooltip formatter={(v: number, name: string) => [fmtTokens(v), name]} />
                   <Legend iconSize={10} formatter={(_, entry: any) => entry.payload.type_label} />
                 </PieChart>
               </ResponsiveContainer>
@@ -281,7 +281,7 @@ function OrgUsageTab({ orgId }: { orgId: string }) {
                 <CartesianGrid strokeDasharray="3 3" stroke="#f0f0f0" horizontal={false} />
                 <XAxis type="number" tickFormatter={fmtTokens} tick={{ fontSize: 10 }} />
                 <YAxis type="category" dataKey="workspace_name" tick={{ fontSize: 11 }} width={90} />
-                <Tooltip formatter={(v: number, k: string) =>
+                <RechartsTooltip formatter={(v: number, k: string) =>
                   [fmtTokens(v), k === 'indexed_tokens' ? 'Tokens indexés' : 'Tokens LLM']} />
                 <Legend iconSize={10} formatter={(k) => k === 'indexed_tokens' ? 'Tokens indexés' : 'Tokens LLM'} />
                 <Bar dataKey="indexed_tokens" fill="#10b981" radius={[0, 2, 2, 0]} />
@@ -446,6 +446,29 @@ interface OrgStats {
   quotas: Record<string, { current: number; max: number }>;
 }
 
+interface WsQuota {
+  workspace_id: string;
+  workspace_name: string;
+  enabled: boolean;
+  quota_exceeded: boolean;
+  allow_overage: boolean;
+  current_usage: number;
+  limit: number;
+  period_start: string | null;
+  period_end: string | null;
+}
+
+interface OrgQuota {
+  org_id: string;
+  org_name: string;
+  max_tokens_monthly: number;
+  allow_overage: boolean;
+  current_period_start: string | null;
+  current_period_end: string | null;
+  workspaces: WsQuota[];
+  overage_today_workspace_ids: string[];
+}
+
 export default function OrgDetailPage() {
   const { orgId } = useParams<{ orgId: string }>();
   const navigate = useNavigate();
@@ -453,12 +476,15 @@ export default function OrgDetailPage() {
   const { user } = useAuthStore();
   const [org, setOrg] = useState<OrgDetail | null>(null);
   const [stats, setStats] = useState<OrgStats | null>(null);
+  const [quota, setQuota] = useState<OrgQuota | null>(null);
   const [loading, setLoading] = useState(true);
   const [archiveModalOpen, setArchiveModalOpen] = useState(false);
   const [archiving, setArchiving] = useState(false);
   const [purgeModalOpen, setPurgeModalOpen] = useState(false);
   const [purgeConfirmText, setPurgeConfirmText] = useState('');
   const [purging, setPurging] = useState(false);
+  const [quotaForm, setQuotaForm] = useState<{ max_tokens_monthly: number; allow_overage: boolean }>({ max_tokens_monthly: 0, allow_overage: true });
+  const [savingQuota, setSavingQuota] = useState(false);
 
   const handleArchive = async () => {
     setArchiving(true);
@@ -495,16 +521,58 @@ export default function OrgDetailPage() {
     api.get(`/orgs/${orgId}/stats`).then((r) => setStats(r.data));
   };
 
+  const handleSaveQuota = async () => {
+    if (!orgId) return;
+    setSavingQuota(true);
+    try {
+      await api.patch(`/orgs/${orgId}/quota`, quotaForm);
+      message.success('Quota settings saved');
+      refreshQuota();
+    } catch (err: any) {
+      message.error(err?.response?.data?.detail ?? 'Failed to save quota');
+    } finally {
+      setSavingQuota(false);
+    }
+  };
+
+  const handleResetPeriod = async () => {
+    if (!orgId) return;
+    modal.confirm({
+      title: 'Reset billing period?',
+      content: 'This will reset the current period to the current calendar month and invalidate quota caches.',
+      onOk: async () => {
+        try {
+          await api.patch(`/orgs/${orgId}/quota`, { reset_period: true });
+          message.success('Billing period reset to current month');
+          refreshQuota();
+        } catch (err: any) {
+          message.error(err?.response?.data?.detail ?? 'Failed to reset period');
+        }
+      },
+    });
+  };
+
+  const refreshQuota = useCallback(() => {
+    if (!orgId) return;
+    api.get(`/orgs/${orgId}/quota`).then((r) => {
+      setQuota(r.data);
+      setQuotaForm({ max_tokens_monthly: r.data.max_tokens_monthly ?? 0, allow_overage: r.data.allow_overage ?? true });
+    }).catch(() => {});
+  }, [orgId]);
+
   useEffect(() => {
     if (!orgId) return;
     setLoading(true);
     Promise.all([
       api.get(`/orgs/${orgId}`),
       api.get(`/orgs/${orgId}/stats`),
+      api.get(`/orgs/${orgId}/quota`),
     ])
-      .then(([orgRes, statsRes]) => {
+      .then(([orgRes, statsRes, quotaRes]) => {
         setOrg(orgRes.data);
         setStats(statsRes.data);
+        setQuota(quotaRes.data);
+        setQuotaForm({ max_tokens_monthly: quotaRes.data.max_tokens_monthly ?? 0, allow_overage: quotaRes.data.allow_overage ?? true });
       })
       .finally(() => setLoading(false));
   }, [orgId]);
@@ -612,21 +680,137 @@ export default function OrgDetailPage() {
             key: 'quotas',
             label: 'Quotas',
             children: (
-              <Card>
-                {quotaItems.map((q) => (
-                  <div key={q.key} className="mb-4">
-                    <div className="flex justify-between mb-1">
-                      <span className="font-medium">{q.label}</span>
-                      <span className="text-gray-500">{q.current} / {q.max}</span>
+              <div className="space-y-4">
+                {/* Resource quotas */}
+                <Card title="Resource limits">
+                  {quotaItems.map((q) => (
+                    <div key={q.key} className="mb-4">
+                      <div className="flex justify-between mb-1">
+                        <span className="font-medium">{q.label}</span>
+                        <span className="text-gray-500">{q.current} / {q.max}</span>
+                      </div>
+                      <Progress
+                        percent={q.percent}
+                        status={q.percent >= 90 ? 'exception' : q.percent >= 75 ? 'active' : 'normal'}
+                        showInfo={false}
+                      />
                     </div>
-                    <Progress
-                      percent={q.percent}
-                      status={q.percent >= 90 ? 'exception' : q.percent >= 75 ? 'active' : 'normal'}
-                      showInfo={false}
-                    />
-                  </div>
-                ))}
-              </Card>
+                  ))}
+                </Card>
+
+                {/* Token quota */}
+                <Card
+                  title={<span>Token quota {quota?.overage_today_workspace_ids?.length ? <Tag color="red" icon={<WarningOutlined />}>Overage today</Tag> : null}</span>}
+                  extra={user?.is_superuser && (
+                    <Space>
+                      <Button size="small" onClick={handleResetPeriod}>Reset period</Button>
+                      <Button size="small" type="primary" loading={savingQuota} onClick={handleSaveQuota}>Save</Button>
+                    </Space>
+                  )}
+                >
+                  {quota?.current_period_start && (
+                    <div className="text-xs text-gray-400 mb-3">
+                      Period: {quota.current_period_start} → {quota.current_period_end}
+                    </div>
+                  )}
+
+                  {/* Config (superuser only) */}
+                  {user?.is_superuser && (
+                    <div className="flex items-center gap-6 mb-4 p-3 bg-gray-50 rounded">
+                      <div className="flex items-center gap-2">
+                        <span className="text-sm text-gray-600">Monthly limit (tokens)</span>
+                        <Tooltip title="0 = unlimited">
+                          <InputNumber
+                            min={0}
+                            step={1_000_000}
+                            value={quotaForm.max_tokens_monthly}
+                            onChange={(v) => setQuotaForm(f => ({ ...f, max_tokens_monthly: v ?? 0 }))}
+                            formatter={(v) => String(v).replace(/\B(?=(\d{3})+(?!\d))/g, ',')}
+                            parser={(v) => Number(v?.replace(/,/g, '') ?? 0) as any}
+                            style={{ width: 160 }}
+                          />
+                        </Tooltip>
+                      </div>
+                      <div className="flex items-center gap-2">
+                        <span className="text-sm text-gray-600">Allow overage</span>
+                        <Switch
+                          checked={quotaForm.allow_overage}
+                          onChange={(v) => setQuotaForm(f => ({ ...f, allow_overage: v }))}
+                          checkedChildren="Soft" unCheckedChildren="Hard"
+                        />
+                      </div>
+                    </div>
+                  )}
+
+                  {/* Global org gauge */}
+                  {quota && quota.max_tokens_monthly > 0 && (() => {
+                    const totalUsed = quota.workspaces.reduce((sum, ws) => sum + (ws.current_usage || 0), 0);
+                    const pct = Math.min(Math.round((totalUsed / quota.max_tokens_monthly) * 100), 100);
+                    const exceeded = totalUsed >= quota.max_tokens_monthly;
+                    return (
+                      <div className="mb-6 p-3 border rounded bg-gray-50">
+                        <div className="flex justify-between mb-1">
+                          <span className="font-semibold text-base">Total organisation</span>
+                          <span className="text-gray-600 text-sm font-medium">
+                            {fmtTokens(totalUsed)} / {fmtTokens(quota.max_tokens_monthly)}
+                            <span className="ml-2 text-gray-400">({pct}%)</span>
+                          </span>
+                        </div>
+                        <Progress
+                          percent={pct}
+                          status={pct >= 100 ? 'exception' : pct >= 80 ? 'active' : 'normal'}
+                          showInfo={false}
+                          strokeColor={pct >= 100 ? '#ef4444' : pct >= 80 ? '#f59e0b' : '#6366f1'}
+                          strokeWidth={12}
+                        />
+                        {exceeded && (
+                          <div className="mt-1 text-xs text-red-500 flex items-center gap-1">
+                            <WarningOutlined />
+                            {quota.allow_overage ? 'Quota dépassé — overage autorisé (soft limit)' : 'Quota dépassé — requêtes bloquées (hard limit)'}
+                          </div>
+                        )}
+                      </div>
+                    );
+                  })()}
+
+                  {/* Per-workspace gauges */}
+                  {quota?.workspaces?.length ? quota.workspaces.map((ws) => {
+                    const isOverage = quota.overage_today_workspace_ids.includes(ws.workspace_id);
+                    const pct = ws.enabled && ws.limit > 0 ? Math.min(Math.round((ws.current_usage / ws.limit) * 100), 100) : 0;
+                    return (
+                      <div key={ws.workspace_id} className="mb-4">
+                        <div className="flex justify-between mb-1">
+                          <span className="font-medium flex items-center gap-2">
+                            {ws.workspace_name}
+                            {isOverage && <Tag color="orange" icon={<WarningOutlined />}>overage</Tag>}
+                            {ws.quota_exceeded && !ws.allow_overage && <Tag color="red">hard limit</Tag>}
+                            {ws.quota_exceeded && ws.allow_overage && <Tag color="orange">soft limit</Tag>}
+                            {!ws.enabled && <Tag color="default">no quota</Tag>}
+                          </span>
+                          <span className="text-gray-500 text-sm">
+                            {fmtTokens(ws.current_usage)}
+                            {ws.enabled && ws.limit > 0 && quota && (
+                              <span className="text-xs text-gray-400 ml-1">
+                                ({Math.round((ws.current_usage / quota.max_tokens_monthly) * 100)}% org quota)
+                              </span>
+                            )}
+                          </span>
+                        </div>
+                        {ws.enabled && ws.limit > 0 && (
+                          <Progress
+                            percent={pct}
+                            status={pct >= 100 ? 'exception' : pct >= 80 ? 'active' : 'normal'}
+                            showInfo={false}
+                            strokeColor={pct >= 100 ? '#ef4444' : pct >= 80 ? '#f59e0b' : '#6366f1'}
+                          />
+                        )}
+                      </div>
+                    );
+                  }) : (
+                    <Alert message="No workspaces in this organisation" type="info" showIcon />
+                  )}
+                </Card>
+              </div>
             ),
           },
           {

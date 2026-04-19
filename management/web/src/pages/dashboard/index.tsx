@@ -1,5 +1,6 @@
 import { useEffect, useState } from 'react';
-import { Card, Row, Col, Statistic, Spin, Table, Select, Tag, Space, Tooltip as AntTooltip } from 'antd';
+import { Card, Row, Col, Statistic, Spin, Table, Select, Tag, Space, Tooltip as AntTooltip, Progress } from 'antd';
+import { WarningOutlined } from '@ant-design/icons';
 import dayjs, { Dayjs } from 'dayjs';
 import { DatePicker } from 'antd';
 import {
@@ -56,6 +57,7 @@ interface ModelItem { model: string; type: string; type_label: string; factory: 
 interface ModelTypeItem { type: string; type_label: string; tokens: number; }
 interface FactoryItem { factory: string; tokens: number; }
 interface OrgItem { org_id: string; org_name: string; tokens: number; indexed_tokens: number; workspaces: number; users: number; }
+interface OrgQuotaSummary { org_id: string; org_name: string; max_tokens_monthly: number; allow_overage: boolean; total_used: number; pct: number; quota_exceeded: boolean; enabled: boolean; current_period_start: string | null; current_period_end: string | null; }
 interface WsItem { workspace_id: string; workspace_name: string; tokens: number; indexed_tokens: number; users: number; }
 
 interface GlobalStats {
@@ -407,6 +409,7 @@ function OrgDashboard({ orgId, orgName }: { orgId: string; orgName: string }) {
 
 function SuperDashboard() {
   const [data, setData] = useState<GlobalStats | null>(null);
+  const [quotas, setQuotas] = useState<Record<string, OrgQuotaSummary>>({});
   const [loading, setLoading] = useState(true);
 
   // Filters
@@ -416,9 +419,16 @@ function SuperDashboard() {
   const [selectedFactory, setSelectedFactory] = useState<string | null>(null);
 
   useEffect(() => {
-    api.get('/stats/overview')
-      .then((r) => setData(r.data))
-      .catch(() => {})
+    Promise.all([
+      api.get('/stats/overview'),
+      api.get('/stats/quotas').catch(() => ({ data: [] })),
+    ])
+      .then(([overviewRes, quotasRes]) => {
+        setData(overviewRes.data);
+        const map: Record<string, OrgQuotaSummary> = {};
+        for (const q of quotasRes.data) map[q.org_id] = q;
+        setQuotas(map);
+      })
       .finally(() => setLoading(false));
   }, []);
 
@@ -481,6 +491,25 @@ function SuperDashboard() {
       render: (v: number) => <span className="text-indigo-600 font-medium">{fmtTokens(v)}</span>,
       defaultSortOrder: 'descend' as const,
       sorter: (a: any, b: any) => a.tokens - b.tokens,
+    },
+    {
+      title: 'Quota mensuel', key: 'quota', width: 180,
+      render: (_: any, row: OrgItem) => {
+        const q = quotas[row.org_id];
+        if (!q || !q.enabled) return <span className="text-gray-300 text-xs">—</span>;
+        const color = q.pct >= 100 ? '#ef4444' : q.pct >= 80 ? '#f59e0b' : '#6366f1';
+        return (
+          <AntTooltip title={`${fmtTokens(q.total_used)} / ${fmtTokens(q.max_tokens_monthly)} (${q.pct}%)${q.quota_exceeded ? (q.allow_overage ? ' — overage' : ' — bloqué') : ''}`}>
+            <div className="flex items-center gap-2">
+              <div className="flex-1">
+                <Progress percent={q.pct} showInfo={false} strokeColor={color} size="small" strokeWidth={6} />
+              </div>
+              <span className="text-xs tabular-nums" style={{ color, minWidth: 32 }}>{q.pct}%</span>
+              {q.quota_exceeded && <WarningOutlined style={{ color: q.allow_overage ? '#f59e0b' : '#ef4444', fontSize: 12 }} />}
+            </div>
+          </AntTooltip>
+        );
+      },
     },
   ];
 

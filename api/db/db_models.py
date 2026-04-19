@@ -1365,6 +1365,10 @@ class Organisation(DataBaseModel):
     max_datasets = IntegerField(default=100)
     max_documents = IntegerField(default=10000)
     max_storage_gb = IntegerField(default=100)
+    max_tokens_monthly = BigIntegerField(default=0, help_text="Monthly token quota (0 = unlimited)")
+    allow_overage = BooleanField(default=True, help_text="Allow usage beyond quota (soft limit)")
+    current_period_start = CharField(max_length=10, null=True, help_text="Billing period start YYYY-MM-DD (inclusive)")
+    current_period_end = CharField(max_length=10, null=True, help_text="Billing period end YYYY-MM-DD (inclusive)")
     llm_config = JSONField(null=True)
     settings_json = JSONField(null=True)
     created_by = CharField(max_length=32, null=False, index=True)
@@ -1725,6 +1729,28 @@ def _update_tenant_llm_to_id_primary_key_postgres():
             DB.execute_sql("ALTER TABLE tenant_llm DROP COLUMN temp_id")
 
 
+def _init_org_billing_periods():
+    """Initialize current_period_start/end for orgs that have none (first migration)."""
+    import calendar
+    from datetime import date
+    today = date.today()
+    first_day = today.replace(day=1)
+    last_day = today.replace(day=calendar.monthrange(today.year, today.month)[1])
+    try:
+        with DB.connection_context():
+            updated = (Organisation
+                       .update(
+                           current_period_start=first_day,
+                           current_period_end=last_day,
+                       )
+                       .where(Organisation.current_period_start.is_null())
+                       .execute())
+            if updated:
+                logging.info("_init_org_billing_periods: initialized %d orgs with period %s → %s", updated, first_day, last_day)
+    except Exception:
+        logging.exception("_init_org_billing_periods failed — skipping")
+
+
 def migrate_db():
     logging.disable(logging.ERROR)
     migrator = DatabaseMigrator[settings.DATABASE_TYPE.upper()].value(DB)
@@ -1794,6 +1820,12 @@ def migrate_db():
     alter_db_add_column(migrator, "api_4_conversation", "version_title", CharField(max_length=255, null=True, help_text="canvas version title when session created", index=False))
     alter_db_column_type(migrator, "document", "size", BigIntegerField(default=0, index=True))
     alter_db_column_type(migrator, "file", "size", BigIntegerField(default=0, index=True))
+    # Token quota fields on organisation
+    alter_db_add_column(migrator, "organisation", "max_tokens_monthly", BigIntegerField(default=0, help_text="Monthly token quota (0 = unlimited)"))
+    alter_db_add_column(migrator, "organisation", "allow_overage", BooleanField(default=True, help_text="Allow usage beyond quota (soft limit)"))
+    alter_db_add_column(migrator, "organisation", "current_period_start", CharField(max_length=10, null=True, help_text="Billing period start YYYY-MM-DD"))
+    alter_db_add_column(migrator, "organisation", "current_period_end", CharField(max_length=10, null=True, help_text="Billing period end YYYY-MM-DD"))
+    _init_org_billing_periods()
     logging.disable(logging.NOTSET)
     # this is after re-enabling logging to allow logging changed user emails
     migrate_add_unique_email(migrator)

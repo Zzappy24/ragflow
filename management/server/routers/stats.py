@@ -385,3 +385,151 @@ def org_usage(org_id: str, user_id: str = Depends(get_current_user_id)):
         "by_model_type": agg["by_model_type"],
         "by_factory": agg["by_factory"],
     }
+
+
+# ─── global quota overview (superuser) ────────────────────────────────────────
+
+@router.get("/stats/quotas")
+def global_quota_overview(_user=Depends(require_superuser)):
+    """Return token quota status for all orgs in a single call. Superuser only."""
+    from api.db.db_models import DB, Organisation, Workspace as WsModel
+    from api.db.services.quota_service import check_token_quota
+
+    with DB.connection_context():
+        orgs = list(Organisation.select().where(Organisation.status == "1"))
+        workspaces = list(WsModel.select().where(WsModel.status == "1"))
+
+    ws_by_org: dict[str, list] = defaultdict(list)
+    for ws in workspaces:
+        ws_by_org[ws.org_id].append(ws)
+
+    result = []
+    for org in orgs:
+        org_ws = ws_by_org.get(org.id, [])
+        total_used = 0
+        any_exceeded = False
+        for ws in org_ws:
+            qs = check_token_quota(ws.tenant_id)
+            total_used += qs.get("current_usage", 0)
+            if qs.get("quota_exceeded"):
+                any_exceeded = True
+
+        limit = org.max_tokens_monthly or 0
+        pct = min(round((total_used / limit) * 100), 100) if limit > 0 else 0
+
+        result.append({
+            "org_id": org.id,
+            "org_name": org.name,
+            "max_tokens_monthly": limit,
+            "allow_overage": bool(org.allow_overage),
+            "current_period_start": org.current_period_start,
+            "current_period_end": org.current_period_end,
+            "total_used": total_used,
+            "pct": pct,
+            "quota_exceeded": any_exceeded,
+            "enabled": limit > 0,
+        })
+
+    return result
+
+
+# ─── token quota status ────────────────────────────────────────────────────────
+
+@router.get("/orgs/{org_id}/quota")
+def org_quota_status(org_id: str, user_id: str = Depends(get_current_user_id)):
+    """Return token quota status for an org (all workspaces). Org admin or superuser."""
+    from management.server.auth.dependencies import _load_user
+    from api.db.services.org_service import OrgMemberService, OrgService
+    from api.db.db_models import DB, Workspace as WsModel, Organisation
+    from api.db.services.quota_service import check_token_quota
+
+    user = _load_user(user_id)
+    if not user:
+        raise HTTPException(status_code=status.HTTP_401_UNAUTHORIZED, detail="User not found")
+
+    if not user.is_superuser:
+        membership = OrgMemberService.get_membership(org_id, user_id)
+        if not membership or membership.role != "org_admin":
+            raise HTTPException(status_code=status.HTTP_403_FORBIDDEN, detail="Org admin access required")
+
+    ok, org = OrgService.get_by_id(org_id)
+    if not ok or not org or org.status != "1":
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Organisation not found")
+
+    # Per-workspace quota status
+    workspace_quotas = []
+    with DB.connection_context():
+        workspaces = list(WsModel.select().where(WsModel.org_id == org_id, WsModel.status == "1"))
+
+    for ws in workspaces:
+        qs = check_token_quota(ws.tenant_id)
+        workspace_quotas.append({
+            "workspace_id": ws.id,
+            "workspace_name": ws.name,
+            **qs,
+        })
+
+    # Overage flags from Redis
+    overage_today: list[str] = []
+    try:
+        from rag.utils.redis_conn import REDIS_CONN
+        for ws in workspaces:
+            key = f"quota_overage:{date.today().isoformat()}:{ws.tenant_id}"
+            if REDIS_CONN.REDIS.exists(key):
+                overage_today.append(ws.id)
+    except Exception:
+        pass
+
+    return {
+        "org_id": org_id,
+        "org_name": org.name,
+        "max_tokens_monthly": org.max_tokens_monthly or 0,
+        "allow_overage": bool(org.allow_overage),
+        "current_period_start": str(org.current_period_start) if org.current_period_start else None,
+        "current_period_end": str(org.current_period_end) if org.current_period_end else None,
+        "workspaces": workspace_quotas,
+        "overage_today_workspace_ids": overage_today,
+    }
+
+
+@router.patch("/orgs/{org_id}/quota")
+def update_org_quota(org_id: str, body: dict, _user=Depends(require_superuser)):
+    """Update token quota settings for an org. Superuser only."""
+    import calendar as _calendar
+    from api.db.db_models import DB, Organisation
+
+    with DB.connection_context():
+        org = Organisation.get_or_none(Organisation.id == org_id, Organisation.status == "1")
+        if not org:
+            raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Organisation not found")
+
+        updates: dict = {}
+        if "max_tokens_monthly" in body:
+            v = int(body["max_tokens_monthly"])
+            if v < 0:
+                raise HTTPException(status_code=400, detail="max_tokens_monthly must be >= 0")
+            updates["max_tokens_monthly"] = v
+
+        if "allow_overage" in body:
+            updates["allow_overage"] = bool(body["allow_overage"])
+
+        if "reset_period" in body and body["reset_period"]:
+            # Reset period to current calendar month
+            today = date.today()
+            updates["current_period_start"] = today.replace(day=1)
+            updates["current_period_end"] = today.replace(
+                day=_calendar.monthrange(today.year, today.month)[1]
+            )
+            # Invalidate quota caches for all workspaces
+            try:
+                from api.db.db_models import Workspace as WsModel
+                from api.db.services.quota_service import invalidate_quota_cache
+                for ws in WsModel.select().where(WsModel.org_id == org_id, WsModel.status == "1"):
+                    invalidate_quota_cache(ws.tenant_id, str(updates["current_period_start"]))
+            except Exception:
+                pass
+
+        if updates:
+            Organisation.update(**updates).where(Organisation.id == org_id).execute()
+
+    return {"ok": True, "updated": list(updates.keys())}
