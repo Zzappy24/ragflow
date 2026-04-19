@@ -542,7 +542,7 @@ class DocumentService(CommonService):
     @DB.connection_context()
     def get_unfinished_docs(cls):
         fields = [cls.model.id, cls.model.process_begin_at, cls.model.parser_config, cls.model.progress_msg,
-                  cls.model.run, cls.model.parser_id]
+                  cls.model.run, cls.model.parser_id, cls.model.progress]
         unfinished_task_query = Task.select(Task.doc_id).where(
             (Task.progress >= 0) & (Task.progress < 1)
         )
@@ -845,22 +845,31 @@ class DocumentService(CommonService):
     @classmethod
     @DB.connection_context()
     def _sync_progress(cls, docs: list[dict]):
-        from api.db.services.task_service import TaskService
+        if not docs:
+            return
+
+        # CUSTOM PERF: batch-load all tasks in one query instead of 1 SELECT per doc.
+        # Also eliminates the per-doc DocumentService.get_by_id() by reusing fields
+        # already fetched in get_unfinished_docs() (run, progress added to that query).
+        doc_ids = [d["id"] for d in docs]
+        all_tasks = list(Task.select().where(Task.doc_id.in_(doc_ids)).order_by(Task.create_time))
+        tasks_by_doc: dict = {}
+        for t in all_tasks:
+            tasks_by_doc.setdefault(t.doc_id, []).append(t)
 
         for d in docs:
             try:
-                tsks = TaskService.query(doc_id=d["id"], order_by=Task.create_time)
+                tsks = tasks_by_doc.get(d["id"], [])
                 if not tsks:
                     continue
                 msg = []
                 prg = 0
                 finished = True
                 bad = 0
-                e, doc = DocumentService.get_by_id(d["id"])
-                status = doc.run  # TaskStatus.RUNNING.value
+                status = d["run"]
                 if status == TaskStatus.CANCEL.value:
                     continue
-                doc_progress = doc.progress if doc and doc.progress else 0.0
+                doc_progress = d.get("progress") or 0.0
                 special_task_running = False
                 priority = 0
                 for t in tsks:
