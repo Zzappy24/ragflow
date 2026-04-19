@@ -123,6 +123,13 @@ CURRENT_TASKS = {}
 # CUSTOM PERF: cache vector_size by (tenant, model) — avoids one warm-up API call per document
 _vector_size_cache: dict[str, int] = {}
 
+_MOTHER_FIELDS = frozenset({"id", "content_with_weight", "doc_id", "docnm_kwd", "kb_id",
+                             "available_int", "position_int", "create_timestamp_flt",
+                             "page_num_int", "top_int"})
+
+# CUSTOM PERF: shared executor for TOC extraction — avoids creating a new thread pool per task
+_TOC_EXECUTOR = concurrent.futures.ThreadPoolExecutor(max_workers=2)
+
 MAX_CONCURRENT_TASKS = int(os.environ.get('MAX_CONCURRENT_TASKS', "5"))
 MAX_CONCURRENT_CHUNK_BUILDERS = int(os.environ.get('MAX_CONCURRENT_CHUNK_BUILDERS', "4"))  # CUSTOM PERF: upstream default was 1
 MAX_CONCURRENT_MINIO = int(os.environ.get('MAX_CONCURRENT_MINIO', '10'))
@@ -956,15 +963,10 @@ async def _embed_insert_pipelined(
         if mid in mother_ids:
             continue
         mother_ids.add(mid)
-        mom_ck = copy.deepcopy(ck)
+        mom_ck = {k: ck[k] for k in _MOTHER_FIELDS if k in ck}
         mom_ck["id"] = mid
         mom_ck["content_with_weight"] = mom
         mom_ck["available_int"] = 0
-        for fld in list(mom_ck.keys()):
-            if fld not in ["id", "content_with_weight", "doc_id", "docnm_kwd", "kb_id",
-                           "available_int", "position_int", "create_timestamp_flt",
-                           "page_num_int", "top_int"]:
-                del mom_ck[fld]
         mothers.append(mom_ck)
     for b in range(0, len(mothers), settings.DOC_BULK_SIZE):
         await thread_pool_exec(
@@ -1063,15 +1065,10 @@ async def insert_chunks(task_id, task_tenant_id, task_dataset_id, chunks, progre
         if id in mother_ids:
             continue
         mother_ids.add(id)
-        mom_ck = copy.deepcopy(ck)
+        mom_ck = {k: ck[k] for k in _MOTHER_FIELDS if k in ck}
         mom_ck["id"] = id
         mom_ck["content_with_weight"] = mom
         mom_ck["available_int"] = 0
-        flds = list(mom_ck.keys())
-        for fld in flds:
-            if fld not in ["id", "content_with_weight", "doc_id", "docnm_kwd", "kb_id", "available_int",
-                           "position_int", "create_timestamp_flt", "page_num_int", "top_int"]:
-                del mom_ck[fld]
         mothers.append(mom_ck)
 
     for b in range(0, len(mothers), settings.DOC_BULK_SIZE):
@@ -1148,7 +1145,7 @@ async def do_handle_task(task):
     task_parser_config = task["parser_config"]
     task_start_ts = timer()
     toc_thread = None
-    executor = concurrent.futures.ThreadPoolExecutor()
+    executor = _TOC_EXECUTOR
 
     # prepare the progress callback function
     progress_callback = partial(set_progress, task_id, task_from_page, task_to_page)
@@ -1404,7 +1401,13 @@ async def handle_task():
     task_id = task["id"]
     try:
         logging.info(f"handle_task begin for task {json.dumps(task)}")
-        CURRENT_TASKS[task["id"]] = copy.deepcopy(task)
+        CURRENT_TASKS[task["id"]] = {
+            "id": task_id,
+            "type": task_type,
+            "tenant_id": task.get("tenant_id"),
+            "doc": task.get("name"),
+            "started": time.time(),
+        }
         await do_handle_task(task)
         DONE_TASKS += 1
         CURRENT_TASKS.pop(task_id, None)
@@ -1472,7 +1475,7 @@ async def report_status():
         PENDING_TASKS = int(group_info.get("pending", 0))
         LAG_TASKS = int(group_info.get("lag", 0))
 
-        current = copy.deepcopy(CURRENT_TASKS)
+        current = dict(CURRENT_TASKS)  # CUSTOM PERF: already lightweight dicts, shallow copy suffices
         heartbeat = json.dumps({
             "ip_address": ip_address,
             "pid": pid,
