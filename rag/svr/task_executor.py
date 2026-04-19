@@ -1114,20 +1114,20 @@ async def insert_chunks(task_id, task_tenant_id, task_dataset_id, chunks, progre
     except DoesNotExist:
         logging.warning(f"do_handle_task update_chunk_ids failed since task {task_id} is unknown.")
         doc_store_result = await thread_pool_exec(settings.docStoreConn.delete, {"id": chunk_ids},
-                                                       search.index_name(task_tenant_id), task_dataset_id, )
-            tasks = []
-            for chunk_id in chunk_ids:
-                tasks.append(asyncio.create_task(delete_image(task_dataset_id, chunk_id)))
-            try:
-                await asyncio.gather(*tasks, return_exceptions=False)
-            except Exception as e:
-                logging.error(f"delete_image failed: {e}")
-                for t in tasks:
-                    t.cancel()
-                await asyncio.gather(*tasks, return_exceptions=True)
-                raise
-            progress_callback(-1, msg=f"Chunk updates failed since task {task_id} is unknown.")
-            return False
+                                                   search.index_name(task_tenant_id), task_dataset_id, )
+        tasks = []
+        for chunk_id in chunk_ids:
+            tasks.append(asyncio.create_task(delete_image(task_dataset_id, chunk_id)))
+        try:
+            await asyncio.gather(*tasks, return_exceptions=False)
+        except Exception as e:
+            logging.error(f"delete_image failed: {e}")
+            for t in tasks:
+                t.cancel()
+            await asyncio.gather(*tasks, return_exceptions=True)
+            raise
+        progress_callback(-1, msg=f"Chunk updates failed since task {task_id} is unknown.")
+        return False
     return True
 
 

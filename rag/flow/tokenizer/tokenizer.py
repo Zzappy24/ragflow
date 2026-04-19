@@ -90,9 +90,9 @@ class Tokenizer(ProcessBase):
                 vts, c = await thread_pool_exec(batch_encode,texts[i : i + settings.EMBEDDING_BATCH_SIZE],)
             cnts_batches.append(vts)
             token_count += c
-        cnts_ = np.vstack(cnts_batches) if cnts_batches else np.array([])
             if i % 33 == 32:
                 self.callback(i * 1.0 / len(texts) / parts / settings.EMBEDDING_BATCH_SIZE + 0.5 * (parts - 1))
+        cnts_ = np.vstack(cnts_batches) if cnts_batches else np.array([])
 
         cnts = cnts_
         title_w = float(self._param.filename_embd_weight)
