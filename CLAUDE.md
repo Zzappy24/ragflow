@@ -187,3 +187,66 @@ Upstream Go files with our one-line touch-point:
 On every upstream merge, grep for `_fallback_personal_tenant_id`, `WorkspaceService`,
 `WsMemberService`, `X-Workspace-Id`, `active_tenant_id`, `OrgMemberService` to identify
 Python conflict zones. For Go, grep `user\.ID` in `internal/handler/` as described above.
+
+#### Step-by-step checklist (distilled from 2026-04-20 merge)
+
+**Before starting:**
+```bash
+# Find the true merge base — upstream sometimes rebases, so HEAD..origin/main
+# can show 100+ commits when only ~10 are genuinely new.
+# Use the last known-merged commit as base:
+git log --oneline HEAD | grep -i "merge.*upstream"   # find last merge commit
+git diff <last_merge_base_sha>..origin/main --stat    # true diff
+```
+
+**Launch the merge:**
+```bash
+git checkout -b merge/upstream-$(date +%Y-%m-%d)
+git merge origin/main --no-commit   # stop before auto-commit to resolve conflicts
+```
+
+**Resolve conflicts — file-by-file rules:**
+
+| File / pattern | Rule |
+|---|---|
+| `internal/handler/*.go` — `user.ID` vs `GetTenantID(c)` | **Always keep `GetTenantID(c)`** (except `Accessible()` checks and `memory.go` comparison) |
+| `internal/handler/kb.go` — `ListKbs`, `DeleteKB` | **Keep ours** — custom workspace-scoped routes |
+| `internal/service/tenant.go` — `GetModels`/`SetModels` | **Exception: use `user.ID`** — `ListTenantDefaultModels` calls `GetInfoByUserID` which needs a real user ID |
+| `internal/service/tenant.go` — model type names | Take upstream renames (`"llm"→"chat"`, `"image2text"→"vision"`, new `"ocr"`) |
+| `rag/svr/task_executor.py` | **Keep ours** — `_embed_insert_pipelined`, `set_progress` throttle, tenant limiter release |
+| `rag/llm/embedding_model.py` | **Keep ours** — `np.vstack(batches)` is O(n); upstream's `np.concatenate` loop is O(n²) |
+| `api/utils/api_utils.py` | **Keep ours** — workspace tenant resolution in `token_required` |
+| `api/apps/system_app.py`, `api/apps/api_app.py` | **Keep ours** — token routes scoped to `active_tenant_id()` |
+| `api/apps/document_app.py`, `api/apps/sdk/doc.py` | **Keep ours** — workspace permission checks on routes |
+| `common/doc_store/infinity_conn_pool.py` | **Keep ours** — pool auto-sizing from `WORKER_MAX_TASKS` |
+| `common/settings.py` | **Keep ours** — `DOC_BULK_SIZE=128`, `EMBEDDING_BATCH_SIZE=512` |
+| `rag/utils/redis_conn.py` | **Keep ours** — Redis connection pool |
+| `api/db/services/task_service.py` | **Keep ours** — per-tenant DB lock `lock_key = f"get_task:{tenant_id}"` |
+| `web/src/components/image/index.tsx` | **Keep ours** — authenticated image fetch with `Authorization` header |
+| `internal/entity/model.go` — `Provider` struct | Take upstream (`URL map[string]string` for multi-region, `Tags` not in JSON configs) |
+| `internal/cli/*.go` | Take upstream (new CLI commands, no workspace concerns) |
+| `api/apps/restful_apis/document_api.py` | Take upstream (new RESTful `list_docs` route + imports) |
+| `web/src/utils/api.ts`, `use-rename-document.ts` | Take upstream (RESTful URL functions, `dataset_id` rename) |
+| `web/src/services/knowledge-service.ts` — `listDocument` | Take upstream (RESTful GET) |
+| `web/src/services/knowledge-service.ts` — `uploadDocument` | **Keep ours** — `X-Workspace-Id` header |
+| Test files | Take upstream |
+
+**After resolving:**
+```bash
+go build ./internal/...          # must be zero errors before committing
+git add -A
+PATH=/opt/homebrew/bin:$PATH git commit   # homebrew PATH needed for pre-commit hook (npx)
+git checkout dev && git merge merge/upstream-$(date +%Y-%m-%d) --no-ff
+```
+
+**Watch for these upstream regressions (reject silently):**
+- Removing our `_embed_insert_pipelined` or reverting to sequential embed→insert
+- Removing `set_progress` throttling (1 UPDATE/s per task)
+- Changing `GetTenantID(c)` back to `user.ID` in any handler
+- Hardcoding pool sizes (Infinity `"4"`, Redis no pool)
+- `np.concatenate` in a loop in `embedding_model.py` (O(n²))
+
+**Watch for these upstream breaking changes (require full audit):**
+- Any change to `user_id == tenant_id` invariant in `api/db/init_data.py`
+- New top-level route group added outside `authorized` in `router.go` (won't get workspace middleware)
+- Rename of `GetInfoByUserID` in `internal/dao/tenant.go` (breaks `ListTenantDefaultModels`)
