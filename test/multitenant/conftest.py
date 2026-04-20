@@ -10,6 +10,8 @@ Configuration via env vars (with defaults for local dev):
   TEST_PASSWORD  test user password in plaintext  (default: 123)
 """
 import os
+import sys
+from pathlib import Path
 
 import pytest
 import requests
@@ -59,34 +61,56 @@ class BareAuth(AuthBase):
 # Session-level login + workspace resolution
 # ---------------------------------------------------------------------------
 
-_SETUP_HELP = """
-TEST CREDENTIALS NOT CONFIGURED
---------------------------------
-The RAGFlow server uses RSA client-side password encryption, so plaintext
-email/password login is not possible from scripts.
+CI_EMAIL = os.getenv("CI_EMAIL", "ci.internal@cyllene.com")
 
-Set these two environment variables before running the integration tests:
 
-  export TEST_AUTH_TOKEN="<Authorization header value>"
-  export TEST_WORKSPACE_ID="<workspace UUID>"
+def _generate_credentials():
+    """
+    Derive test credentials directly from Redis + DB — no browser needed.
+    Reads SECRET_KEY from Redis (where the server stores it), signs the
+    ci user's access_token, and returns the first workspace they belong to.
+    """
+    sys.path.insert(0, str(Path(__file__).resolve().parents[2]))
 
-How to get them (one-time setup, takes 30 seconds):
-  1. Log into RAGFlow in your browser (http://localhost:9380)
-  2. Open DevTools → Network → any API request
-  3. Copy the full "Authorization" header value  → TEST_AUTH_TOKEN
-  4. In Console: localStorage.getItem('active_workspace_id')  → TEST_WORKSPACE_ID
+    from common.settings import REDIS_CONN
+    from itsdangerous.url_safe import URLSafeTimedSerializer as Serializer
+    from api.db.db_models import DB
+    from api.db.services.user_service import UserService
+    from api.db.services.workspace_service import WorkspaceService, WsMemberService
 
-Or set them permanently in your shell profile:
-  echo 'export TEST_AUTH_TOKEN="..."' >> ~/.zshrc
-  echo 'export TEST_WORKSPACE_ID="..."' >> ~/.zshrc
-"""
+    secret_key = REDIS_CONN.get("ragflow:system:secret_key")
+    if not secret_key:
+        return None
+    jwt = Serializer(secret_key=secret_key)
+
+    with DB.connection_context():
+        users = list(UserService.query(email=CI_EMAIL))
+        if not users:
+            return None
+        u = users[0]
+        auth_token = jwt.dumps(u.access_token)
+        memberships = WsMemberService.list_workspaces_for_user(u.id)
+        if not memberships:
+            return None
+        _, ws = WorkspaceService.get_by_id(memberships[0].workspace_id)
+        return auth_token, ws.id
 
 
 @pytest.fixture(scope="session")
 def _credentials():
+    # Fast path: explicit env vars (CI pipelines, token from browser).
     if TEST_AUTH_TOKEN and TEST_WORKSPACE_ID:
         return TEST_AUTH_TOKEN, TEST_WORKSPACE_ID
-    pytest.exit(_SETUP_HELP, returncode=1)
+    # Auto path: derive from Redis secret key + DB (local dev with ci.internal user).
+    creds = _generate_credentials()
+    if creds:
+        return creds
+    pytest.exit(
+        "Could not resolve test credentials. Either:\n"
+        "  - Set TEST_AUTH_TOKEN + TEST_WORKSPACE_ID env vars, or\n"
+        f"  - Ensure {CI_EMAIL} exists in a workspace and Redis is reachable.",
+        returncode=1,
+    )
 
 
 @pytest.fixture(scope="session")
