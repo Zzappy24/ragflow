@@ -38,7 +38,13 @@ class InfinityConnectionPool:
                 "db_name": "default_db"
             })
 
-        raw_pool_max_size = os.environ.get("INFINITY_POOL_MAX_SIZE", "4")
+        # CUSTOM PERF: default tracks WORKER_MAX_TASKS so the pool is never
+        # smaller than the number of concurrent ingestion workers on this pod.
+        # Formula: INFINITY_POOL_MAX_SIZE >= WORKER_MAX_TASKS (per pod).
+        # On K8s, total Infinity connections = nb_pods × INFINITY_POOL_MAX_SIZE —
+        # ensure Infinity server max_connections exceeds that product.
+        _worker_max_tasks = int(os.environ.get("WORKER_MAX_TASKS", "16"))
+        raw_pool_max_size = os.environ.get("INFINITY_POOL_MAX_SIZE", str(_worker_max_tasks))
         try:
             self.pool_max_size = int(raw_pool_max_size)
         except ValueError as e:
