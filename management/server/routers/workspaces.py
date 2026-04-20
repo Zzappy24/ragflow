@@ -185,22 +185,33 @@ def get_workspace_direct(ws_id: str, user_id: str = Depends(get_current_user_id)
 
 
 @router.post("/workspaces/{ws_id}/launch")
-def launch_workspace(ws_id: str, user_id: str = Depends(get_current_user_id)):
-    """Issue a single-use bridge token and return the RAGFlow launch URL.
-
-    Any member of the workspace (or org_admin / superuser) can launch. The
-    bridge token is short-lived (60s by default) and bound to ``ws_id``; the
-    consumer (RAGFlow) enforces single-use via Redis SETNX on ``jti``.
-    """
+async def launch_workspace(ws_id: str, user_id: str = Depends(get_current_user_id)):
     from management.server.auth.dependencies import require_ws_member
-    from management.server.auth.jwt import create_bridge_token
     from management.server.config import settings
+    import httpx
 
     require_ws_member(ws_id, user_id)
-    token = create_bridge_token(user_id, ws_id)
+
+    try:
+        async with httpx.AsyncClient() as client:
+            resp = await client.post(
+                f"{settings.RAGFLOW_API_URL}/v1/user/internal/bridge/prepare",
+                json={"user_id": user_id, "ws_id": ws_id},
+                timeout=10,
+            )
+        resp.raise_for_status()
+        data = resp.json()
+        if data.get("code") != 0:
+            raise HTTPException(status_code=502, detail=data.get("message", "Bridge prepare failed"))
+        code = data["data"]["code"]
+    except HTTPException:
+        raise
+    except Exception as e:
+        raise HTTPException(status_code=502, detail=f"RAGFlow bridge prepare failed: {e}")
+
     return {
-        "bridge_url": f"{settings.RAGFLOW_BASE_URL}/?bridge_token={token}",
-        "expires_in": settings.BRIDGE_TOKEN_EXPIRE_SECONDS,
+        "bridge_url": f"{settings.RAGFLOW_BASE_URL}/?bridge_code={code}",
+        "expires_in": 30,
     }
 
 

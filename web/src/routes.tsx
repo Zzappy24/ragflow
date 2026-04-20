@@ -159,10 +159,10 @@ const routeConfigOptions = [
     Component: () => import('@/layouts/root-layout'),
     loader: ({ request }: { request: Request }) => {
       const url = new URL(request.url);
-      const bridgeToken = url.searchParams.get('bridge_token');
+      const bridgeToken = url.searchParams.get('bridge_code');
       if (bridgeToken) {
         return redirect(
-          `/bridge?bridge_token=${encodeURIComponent(bridgeToken)}`,
+          `/bridge?bridge_code=${encodeURIComponent(bridgeToken)}`,
         );
       }
       const auth = url.searchParams.get('auth');

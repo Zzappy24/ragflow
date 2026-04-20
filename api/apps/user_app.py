@@ -141,96 +141,26 @@ async def login():
         )
 
 
-@manager.route("/bridge", methods=["POST"])  # noqa: F821
-async def bridge_login():
-    """
-    Single-use auth handoff from the admin panel.
-
-    Accepts a short-lived ``bridge`` JWT (signed with the shared
-    ``ADMIN_JWT_SECRET``) carrying ``sub`` (user_id), ``ws_id``, and a unique
-    ``jti``. Verifies signature/expiry/type, enforces single-use via Redis
-    SETNX on the jti, re-checks workspace membership, then logs the user in
-    and returns the active workspace_id so the frontend can pin
-    ``X-Workspace-Id``.
-    """
-    import jwt as _jwt
-
+@manager.route("/internal/bridge/prepare", methods=["POST"])  # noqa: F821
+async def internal_bridge_prepare():
     json_body = await get_request_json() or {}
-    token = (json_body.get("token") or "").strip()
-    if not token:
-        return get_json_result(
-            data=False, code=RetCode.AUTHENTICATION_ERROR, message="Missing bridge token"
-        )
+    user_id = (json_body.get("user_id") or "").strip()
+    ws_id = (json_body.get("ws_id") or "").strip()
+    if not (user_id and ws_id):
+        return get_json_result(data=False, code=RetCode.ARGUMENT_ERROR, message="Missing user_id or ws_id")
 
-    admin_secret = os.getenv("ADMIN_JWT_SECRET")
-    if not admin_secret:
-        logging.error("ADMIN_JWT_SECRET not configured; bridge login disabled")
-        return get_json_result(
-            data=False, code=RetCode.SERVER_ERROR, message="Bridge login not configured"
-        )
-
-    try:
-        payload = _jwt.decode(token, admin_secret, algorithms=["HS256"])
-    except _jwt.ExpiredSignatureError:
-        return get_json_result(
-            data=False, code=RetCode.AUTHENTICATION_ERROR, message="Bridge token expired"
-        )
-    except _jwt.InvalidTokenError:
-        return get_json_result(
-            data=False, code=RetCode.AUTHENTICATION_ERROR, message="Invalid bridge token"
-        )
-
-    if payload.get("type") != "bridge":
-        return get_json_result(
-            data=False, code=RetCode.AUTHENTICATION_ERROR, message="Wrong token type"
-        )
-
-    user_id = payload.get("sub")
-    ws_id = payload.get("ws_id")
-    jti = payload.get("jti")
-    if not (user_id and ws_id and jti):
-        return get_json_result(
-            data=False, code=RetCode.AUTHENTICATION_ERROR, message="Malformed bridge token"
-        )
-
-    # Single-use enforcement: SETNX with TTL slightly longer than token TTL
-    # so a replayed token is rejected even before it would naturally expire.
-    redis_key = f"bridge:jti:{jti}"
-    try:
-        first_use = REDIS_CONN.REDIS.set(redis_key, "1", ex=300, nx=True)
-    except Exception as e:
-        logging.exception("Redis SETNX failed for bridge token: %s", e)
-        return get_json_result(
-            data=False, code=RetCode.SERVER_ERROR, message="Bridge replay check failed"
-        )
-    if not first_use:
-        return get_json_result(
-            data=False, code=RetCode.AUTHENTICATION_ERROR, message="Bridge token already used"
-        )
-
-    # Load and validate user first — before any membership check
     ok_user, user = UserService.get_by_id(user_id)
     if not ok_user or not user:
-        return get_json_result(
-            data=False, code=RetCode.AUTHENTICATION_ERROR, message="User not found"
-        )
+        return get_json_result(data=False, code=RetCode.AUTHENTICATION_ERROR, message="User not found")
     if hasattr(user, "is_active") and user.is_active == "0":
-        return get_json_result(
-            data=False, code=RetCode.FORBIDDEN, message="Account disabled"
-        )
+        return get_json_result(data=False, code=RetCode.FORBIDDEN, message="Account disabled")
 
-    # Re-verify workspace membership at consumption time — admin panel state
-    # could have changed between issuance and use.
     from api.db.services.workspace_service import WorkspaceService, WsMemberService
-    ok, ws = WorkspaceService.get_by_id(ws_id)
-    if not ok or not ws or ws.status != "1":
-        return get_json_result(
-            data=False, code=RetCode.AUTHENTICATION_ERROR, message="Workspace not available"
-        )
-
+    ok_ws, ws = WorkspaceService.get_by_id(ws_id)
+    if not ok_ws or not ws or ws.status != "1":
+        return get_json_result(data=False, code=RetCode.FORBIDDEN, message="Workspace not found or disabled")
     membership = WsMemberService.get_membership(ws_id, user_id)
     if not membership:
-        # Allow superusers / org admins through too — mirrors require_ws_member
         is_super = bool(getattr(user, "is_superuser", False))
         is_org_admin = False
         if not is_super:
@@ -239,17 +169,73 @@ async def bridge_login():
                 om = OrgMemberService.get_membership(ws.org_id, user_id)
                 is_org_admin = bool(om and om.role == "org_admin")
             except Exception:
-                is_org_admin = False
+                pass
         if not (is_super or is_org_admin):
-            return get_json_result(
-                data=False,
-                code=RetCode.AUTHENTICATION_ERROR,
-                message="Not a member of this workspace",
-            )
+            return get_json_result(data=False, code=RetCode.FORBIDDEN, message="Not a workspace member")
 
-    # Copy to a new dict — user.to_json() returns peewee's internal __data__
-    # reference, and mutating it would corrupt the model state and cause
-    # user.save() below to try to UPDATE a non-existent column.
+    import json as _json
+    code = secrets.token_urlsafe(32)
+    try:
+        REDIS_CONN.REDIS.set(f"bridge_code:{code}", _json.dumps({"user_id": user_id, "ws_id": ws_id}), ex=30)
+    except Exception as e:
+        logging.exception("bridge prepare: Redis SET failed: %s", e)
+        return get_json_result(data=False, code=RetCode.SERVER_ERROR, message="Failed to create bridge code")
+
+    return get_json_result(data={"code": code})
+
+
+@manager.route("/internal/invite/prepare", methods=["POST"])  # noqa: F821
+async def internal_invite_prepare():
+    json_body = await get_request_json() or {}
+    user_id = (json_body.get("user_id") or "").strip()
+    ttl = int(json_body.get("ttl", 60 * 60 * 48))
+    if not user_id:
+        return get_json_result(data=False, code=RetCode.ARGUMENT_ERROR, message="Missing user_id")
+
+    ok_user, user = UserService.get_by_id(user_id)
+    if not ok_user or not user:
+        return get_json_result(data=False, code=RetCode.AUTHENTICATION_ERROR, message="User not found")
+
+    code = secrets.token_urlsafe(32)
+    try:
+        REDIS_CONN.REDIS.set(f"invite_code:{code}", user_id, ex=ttl)
+    except Exception as e:
+        logging.exception("invite prepare: Redis SET failed: %s", e)
+        return get_json_result(data=False, code=RetCode.SERVER_ERROR, message="Failed to create invite code")
+
+    return get_json_result(data={"code": code})
+
+
+@manager.route("/bridge", methods=["POST"])  # noqa: F821
+async def bridge_login():
+    import json as _json
+    json_body = await get_request_json() or {}
+    code = (json_body.get("code") or "").strip()
+    if not code:
+        return get_json_result(data=False, code=RetCode.AUTHENTICATION_ERROR, message="Missing bridge code")
+
+    try:
+        raw = REDIS_CONN.REDIS.getdel(f"bridge_code:{code}")
+    except Exception as e:
+        logging.exception("bridge login: Redis GETDEL failed: %s", e)
+        return get_json_result(data=False, code=RetCode.SERVER_ERROR, message="Bridge exchange failed")
+
+    if not raw:
+        return get_json_result(data=False, code=RetCode.AUTHENTICATION_ERROR, message="Invalid or expired bridge code")
+
+    try:
+        payload = _json.loads(raw)
+        user_id = payload["user_id"]
+        ws_id = payload["ws_id"]
+    except Exception:
+        return get_json_result(data=False, code=RetCode.SERVER_ERROR, message="Malformed bridge payload")
+
+    ok_user, user = UserService.get_by_id(user_id)
+    if not ok_user or not user:
+        return get_json_result(data=False, code=RetCode.AUTHENTICATION_ERROR, message="User not found")
+    if hasattr(user, "is_active") and user.is_active == "0":
+        return get_json_result(data=False, code=RetCode.FORBIDDEN, message="Account disabled")
+
     response_data = dict(user.to_json())
     response_data["active_workspace_id"] = ws_id
     user.access_token = get_uuid()
@@ -257,69 +243,19 @@ async def bridge_login():
     user.update_time = current_timestamp()
     user.update_date = datetime_format(datetime.now())
     user.save()
-    return await construct_response(
-        data=response_data, auth=user.get_id(), message="Bridge login successful"
-    )
+    return await construct_response(data=response_data, auth=user.get_id(), message="Bridge login successful")
 
 
 @manager.route("/set_initial_password", methods=["POST"])  # noqa: F821
 async def set_initial_password():
-    """
-    Consume an admin-panel ``invite`` JWT: set the user's real password hash,
-    activate the account, and log them in.
-
-    This is the *only* public way a freshly-provisioned user can enter the
-    system once ``REGISTER_ENABLED=0``. The invite token is minted by the
-    admin panel's ``POST /api/admin/users`` and signed with the shared
-    ``ADMIN_JWT_SECRET``. Single-use is enforced via Redis SETNX on the jti
-    — same pattern as the workspace bridge endpoint above.
-
-    Expected body: ``{"token": "<jwt>", "password": "<encrypted>"}`` where
-    ``password`` is RSA-encrypted by the frontend exactly like ``/login``.
-    """
-    import jwt as _jwt
-
     json_body = await get_request_json() or {}
-    token = (json_body.get("token") or "").strip()
+    code = (json_body.get("code") or "").strip()
     raw_password = json_body.get("password")
-    if not token or not raw_password:
+    if not code or not raw_password:
         return get_json_result(
-            data=False, code=RetCode.ARGUMENT_ERROR, message="Missing token or password"
+            data=False, code=RetCode.ARGUMENT_ERROR, message="Missing code or password"
         )
 
-    admin_secret = os.getenv("ADMIN_JWT_SECRET")
-    if not admin_secret:
-        logging.error("ADMIN_JWT_SECRET not configured; invite flow disabled")
-        return get_json_result(
-            data=False, code=RetCode.SERVER_ERROR, message="Invite flow not configured"
-        )
-
-    try:
-        payload = _jwt.decode(token, admin_secret, algorithms=["HS256"])
-    except _jwt.ExpiredSignatureError:
-        return get_json_result(
-            data=False, code=RetCode.AUTHENTICATION_ERROR, message="Invite token expired"
-        )
-    except _jwt.InvalidTokenError:
-        return get_json_result(
-            data=False, code=RetCode.AUTHENTICATION_ERROR, message="Invalid invite token"
-        )
-
-    if payload.get("type") != "invite":
-        return get_json_result(
-            data=False, code=RetCode.AUTHENTICATION_ERROR, message="Wrong token type"
-        )
-
-    user_id = payload.get("sub")
-    jti = payload.get("jti")
-    if not (user_id and jti):
-        return get_json_result(
-            data=False, code=RetCode.AUTHENTICATION_ERROR, message="Malformed invite token"
-        )
-
-    # Decrypt the password the same way /login does. Note: we decrypt BEFORE
-    # burning the SETNX slot so a broken client can retry without eating its
-    # token.
     try:
         password = decrypt(raw_password)
     except BaseException:
@@ -334,20 +270,14 @@ async def set_initial_password():
             message="Password must be at least 8 characters",
         )
 
-    # Single-use enforcement. TTL slightly longer than token TTL (48h) so a
-    # replayed token is rejected even if it would still verify cryptographically.
-    redis_key = f"invite:jti:{jti}"
     try:
-        first_use = REDIS_CONN.REDIS.set(redis_key, "1", ex=60 * 60 * 72, nx=True)
+        raw_user_id = REDIS_CONN.REDIS.getdel(f"invite_code:{code}")
     except Exception as e:
-        logging.exception("Redis SETNX failed for invite token: %s", e)
-        return get_json_result(
-            data=False, code=RetCode.SERVER_ERROR, message="Invite replay check failed"
-        )
-    if not first_use:
-        return get_json_result(
-            data=False, code=RetCode.AUTHENTICATION_ERROR, message="Invite token already used"
-        )
+        logging.exception("set_initial_password: Redis GETDEL failed: %s", e)
+        return get_json_result(data=False, code=RetCode.SERVER_ERROR, message="Invite exchange failed")
+    if not raw_user_id:
+        return get_json_result(data=False, code=RetCode.AUTHENTICATION_ERROR, message="Invalid or expired invite code")
+    user_id = raw_user_id.decode() if isinstance(raw_user_id, bytes) else raw_user_id
 
     ok_user, user = UserService.get_by_id(user_id)
     if not ok_user or not user:

@@ -26,15 +26,6 @@ class Settings(BaseSettings):
     # Dev: the RAGFlow frontend (vite/umi). Prod: your customer-facing domain.
     RAGFLOW_BASE_URL: str = os.getenv("RAGFLOW_BASE_URL", "http://localhost:9222")
 
-    # Bridge token (single-use auth handoff from admin panel → RAGFlow).
-    # 120s gives enough headroom for slow networks; Redis SETNX is the real
-    # single-use guard so extending the TTL doesn't open a replay window.
-    BRIDGE_TOKEN_EXPIRE_SECONDS: int = 120
-
-    # Invite token (single-use, mailed to freshly provisioned users so they
-    # can set their initial password). 48h gives the recipient time to check
-    # their email without leaving the token valid indefinitely; Redis SETNX
-    # on the jti enforces single-use on top of that.
     INVITE_TOKEN_EXPIRE_SECONDS: int = 60 * 60 * 48
 
     class Config:

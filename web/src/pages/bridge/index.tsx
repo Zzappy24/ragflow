@@ -1,6 +1,6 @@
 /**
  * Bridge login page — consumed when the admin panel redirects to
- * /?bridge_token=<jwt>
+ * /?bridge_code=<opaque>
  *
  * Reads the token from the URL, exchanges it with RAGFlow's /v1/user/bridge
  * endpoint, stores auth in localStorage, and redirects to /.
@@ -21,8 +21,8 @@ export default function BridgePage() {
     if (called.current) return;
     called.current = true;
 
-    const token = searchParams.get('bridge_token');
-    if (!token) {
+    const code = searchParams.get('bridge_code');
+    if (!code) {
       navigate('/login', { replace: true });
       return;
     }
@@ -32,7 +32,7 @@ export default function BridgePage() {
         const res = await fetch('/v1/user/bridge', {
           method: 'POST',
           headers: { 'Content-Type': 'application/json' },
-          body: JSON.stringify({ token }),
+          body: JSON.stringify({ code }),
         });
 
         const body = await res.json().catch(() => null);

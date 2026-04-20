@@ -26,7 +26,7 @@ export default function SetPasswordPage() {
   const navigate = useNavigate();
   const token = useMemo(() => {
     if (typeof window === 'undefined') return '';
-    return new URL(window.location.href).searchParams.get('invite_token') ?? '';
+    return new URL(window.location.href).searchParams.get('invite_code') ?? '';
   }, []);
 
   const [password, setPassword] = useState('');
@@ -36,7 +36,7 @@ export default function SetPasswordPage() {
 
   useEffect(() => {
     if (!token)
-      setError('Missing invite token. Ask your admin to re-send the invite.');
+      setError('Missing invite code. Ask your admin to re-send the invite.');
   }, [token]);
 
   const canSubmit =
@@ -52,7 +52,7 @@ export default function SetPasswordPage() {
         headers: { 'Content-Type': 'application/json' },
         credentials: 'include',
         body: JSON.stringify({
-          token,
+          code: token,
           password: rsaPsw(password),
         }),
       });

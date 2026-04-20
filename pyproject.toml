@@ -158,6 +158,7 @@ dependencies = [
     "python-gitlab>=7.0.0",
     "alibabacloud-dingtalk>=2.0.0",
     "quart-schema==0.23.0",
+    "httpx>=0.28.1",
 ]
 
 [dependency-groups]

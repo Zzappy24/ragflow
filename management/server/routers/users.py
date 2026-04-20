@@ -12,7 +12,7 @@ Flow:
      is a random unguessable string and ``is_active='0'``, so the row is
      created but cannot be logged into.
   3. We mint an ``invite`` JWT, hand back an ``invite_url`` pointing at the
-     RAGFlow ``/set-password?invite_token=<jwt>`` page. For dev we return the
+     RAGFlow ``/set-password?invite_code=<code>`` page. For dev we return the
      URL directly; in production this is what the mailer pushes into the
      outbound email.
   4. The user lands on RAGFlow, sets a password, and is auto-logged in.
@@ -24,7 +24,6 @@ from management.server.auth.dependencies import (
     require_org_admin,
     require_superuser,
 )
-from management.server.auth.jwt import create_invite_token
 from management.server.config import settings
 from management.server.models.schemas import UserProvision, UserProvisionResponse
 from management.server.services import audit as audit_svc
@@ -37,7 +36,7 @@ router = APIRouter()
     response_model=UserProvisionResponse,
     status_code=status.HTTP_201_CREATED,
 )
-def provision_user_route(
+async def provision_user_route(
     request: Request,
     body: UserProvision,
     user_id: str = Depends(get_current_user_id),
@@ -71,8 +70,25 @@ def provision_user_route(
     except ValueError as e:
         raise HTTPException(status_code=400, detail=str(e))
 
-    token = create_invite_token(new_user_id)
-    invite_url = f"{settings.RAGFLOW_BASE_URL}/set-password?invite_token={token}"
+    import httpx
+    try:
+        async with httpx.AsyncClient() as client:
+            resp = await client.post(
+                f"{settings.RAGFLOW_API_URL}/v1/user/internal/invite/prepare",
+                json={"user_id": new_user_id, "ttl": settings.INVITE_TOKEN_EXPIRE_SECONDS},
+                timeout=10,
+            )
+        resp.raise_for_status()
+        data = resp.json()
+        if data.get("code") != 0:
+            raise HTTPException(status_code=502, detail=data.get("message", "Invite prepare failed"))
+        invite_code = data["data"]["code"]
+    except HTTPException:
+        raise
+    except Exception as e:
+        raise HTTPException(status_code=502, detail=f"RAGFlow invite prepare failed: {e}")
+
+    invite_url = f"{settings.RAGFLOW_BASE_URL}/set-password?invite_code={invite_code}"
 
     audit_svc.record(
         request=request,
