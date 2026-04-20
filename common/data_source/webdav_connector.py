@@ -11,6 +11,7 @@ from common.data_source.utils import (
     is_accepted_file_ext,
 )
 from common.data_source.config import DocumentSource, INDEX_BATCH_SIZE, BLOB_STORAGE_SIZE_THRESHOLD
+from common.network_utils import validate_external_url
 from common.data_source.exceptions import (
     ConnectorMissingCredentialError,
     ConnectorValidationError,
@@ -335,6 +336,9 @@ class WebDAVConnector(LoadConnector, PollConnector):
 
         if not self.base_url:
             raise ConnectorValidationError("No base URL was provided in connector settings.")
+
+        if err := validate_external_url(self.base_url):
+            raise ConnectorValidationError(f"Access to private or internal networks is forbidden: {err}")
 
         # Normalize directory path: for collections, many servers behave better with trailing '/'
         test_path = self.remote_path or "/"

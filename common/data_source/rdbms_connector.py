@@ -7,6 +7,7 @@ from datetime import datetime, timezone
 from enum import Enum
 from typing import Any, Dict, Generator, Optional, Union
 
+from common.network_utils import validate_external_host
 from common.data_source.config import DocumentSource, INDEX_BATCH_SIZE
 from common.data_source.exceptions import (
     ConnectorMissingCredentialError,
@@ -340,6 +341,9 @@ class RDBMSConnector(LoadConnector, PollConnector):
         
         if not self.host:
             raise ConnectorValidationError("Database host is required.")
+
+        if err := validate_external_host(self.host):
+            raise ConnectorValidationError(f"Access to private or internal networks is forbidden: {err}")
         
         if not self.database:
             raise ConnectorValidationError("Database name is required.")

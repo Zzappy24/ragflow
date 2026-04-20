@@ -36,6 +36,9 @@ from selenium.webdriver.support.ui import WebDriverWait
 from webdriver_manager.chrome import ChromeDriverManager
 
 
+from api.utils.network_utils import validate_external_url as validate_mcp_url  # noqa: F401
+
+
 OTP_LENGTH = 4
 OTP_TTL_SECONDS = 5 * 60 # valid for 5 minutes
 ATTEMPT_LIMIT = 5 # maximum attempts

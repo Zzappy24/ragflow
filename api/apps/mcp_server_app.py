@@ -28,6 +28,7 @@ from common.constants import RetCode, VALID_MCP_SERVER_TYPES
 from common.misc_utils import get_uuid, thread_pool_exec
 from api.utils.api_utils import get_data_error_result, get_json_result, get_mcp_tools, get_request_json, server_error_response, validate_request
 from api.utils.web_utils import get_float, safe_json_parse
+from api.utils.network_utils import validate_external_url as validate_mcp_url
 from common.mcp_tool_call_conn import MCPToolCallSession, close_multiple_mcp_toolcall_sessions
 
 @manager.route("/list", methods=["POST"])  # noqa: F821
@@ -93,6 +94,8 @@ async def create() -> Response:
     url = req.get("url", "")
     if not url:
         return get_data_error_result(message="Invalid url.")
+    if err := validate_mcp_url(url):
+        return get_data_error_result(message=err)
 
     headers = safe_json_parse(req.get("headers", {}))
     req["headers"] = headers
@@ -148,6 +151,8 @@ async def update() -> Response:
     url = req.get("url", mcp_server.url)
     if not url:
         return get_data_error_result(message="Invalid url.")
+    if err := validate_mcp_url(url):
+        return get_data_error_result(message=err)
 
     headers = safe_json_parse(req.get("headers", mcp_server.headers))
     req["headers"] = headers
@@ -298,7 +303,6 @@ async def export_multiple() -> Response:
                     "type": mcp_server.server_type,
                     "url": mcp_server.url,
                     "name": mcp_server.name,
-                    "authorization_token": mcp_server.variables.get("authorization_token", ""),
                     "tools": mcp_server.variables.get("tools", {}),
                 }
 
@@ -419,6 +423,8 @@ async def test_mcp() -> Response:
     url = req.get("url", "")
     if not url:
         return get_data_error_result(message="Invalid MCP url.")
+    if err := validate_mcp_url(url):
+        return get_data_error_result(message=err)
 
     server_type = req.get("server_type", "")
     if server_type not in VALID_MCP_SERVER_TYPES:

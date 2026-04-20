@@ -17,6 +17,7 @@ import uuid
 import bs4
 from pydantic import BaseModel
 
+from common.network_utils import validate_external_host
 from common.data_source.config import IMAP_CONNECTOR_SIZE_THRESHOLD, DocumentSource
 from common.data_source.interfaces import CheckpointOutput, CheckpointedConnectorWithPermSync, CredentialsConnector, CredentialsProviderInterface
 from common.data_source.models import BasicExpertInfo, ConnectorCheckpoint, Document, ExternalAccess, SecondsSinceUnixEpoch
@@ -300,6 +301,8 @@ class ImapConnector(
         return None
 
     def validate_connector_settings(self) -> None:
+        if err := validate_external_host(self._host):
+            raise ValueError(f"Access to private or internal networks is forbidden: {err}")
         self._get_mail_client()
 
     # impls for CredentialsConnector
