@@ -134,7 +134,8 @@ _set_progress_last: dict[str, float] = {}
 # CUSTOM PERF: shared executor for TOC extraction — avoids creating a new thread pool per task
 _TOC_EXECUTOR = concurrent.futures.ThreadPoolExecutor(max_workers=2)
 
-MAX_CONCURRENT_TASKS = int(os.environ.get('MAX_CONCURRENT_TASKS', "5"))
+# CUSTOM PERF: raised defaults for K8s deployment — pods scale horizontally, no artificial cap
+MAX_CONCURRENT_TASKS = int(os.environ.get('WORKER_MAX_TASKS', "16"))
 MAX_CONCURRENT_CHUNK_BUILDERS = int(os.environ.get('MAX_CONCURRENT_CHUNK_BUILDERS', "4"))  # CUSTOM PERF: upstream default was 1
 MAX_CONCURRENT_MINIO = int(os.environ.get('MAX_CONCURRENT_MINIO', '10'))
 task_limiter = asyncio.Semaphore(MAX_CONCURRENT_TASKS)
@@ -142,6 +143,22 @@ chunk_limiter = asyncio.Semaphore(MAX_CONCURRENT_CHUNK_BUILDERS)
 embed_limiter = asyncio.Semaphore(MAX_CONCURRENT_CHUNK_BUILDERS)
 minio_limiter = asyncio.Semaphore(MAX_CONCURRENT_MINIO)
 kg_limiter = asyncio.Semaphore(2)
+
+# CUSTOM PERF: optional per-tenant fair-share semaphores.
+# WORKER_TENANT_FAIR_SHARE=0 (default) disables per-tenant capping — a single active tenant
+# gets all pod slots. Set to a positive integer (e.g. 4) only when multiple tenants compete
+# and you want to guarantee each one a minimum share of the pod capacity.
+_TENANT_FAIR_SHARE = int(os.environ.get('WORKER_TENANT_FAIR_SHARE', '0'))
+_tenant_task_limiters: dict[str, asyncio.Semaphore] = {}
+
+
+def get_tenant_task_limiter(tenant_id: str) -> asyncio.Semaphore | None:
+    """Return a per-tenant semaphore if fair-share is enabled, else None."""
+    if _TENANT_FAIR_SHARE <= 0:
+        return None
+    if tenant_id not in _tenant_task_limiters:
+        _tenant_task_limiters[tenant_id] = asyncio.Semaphore(_TENANT_FAIR_SHARE)
+    return _tenant_task_limiters[tenant_id]
 WORKER_HEARTBEAT_TIMEOUT = int(os.environ.get('WORKER_HEARTBEAT_TIMEOUT', '120'))
 stop_event = threading.Event()
 
@@ -228,7 +245,7 @@ async def collect():
     if msg.get("doc_id", "") in [GRAPH_RAPTOR_FAKE_DOC_ID, CANVAS_DEBUG_DOC_ID]:
         task = msg
         if task["task_type"] in PIPELINE_SPECIAL_PROGRESS_FREEZE_TASK_TYPES:
-            task = TaskService.get_task(msg["id"], msg["doc_ids"])
+            task = TaskService.get_task(msg["id"], msg["doc_ids"], tenant_id=msg.get("tenant_id"))
             if task:
                 task["doc_id"] = msg["doc_id"]
                 task["doc_ids"] = msg.get("doc_ids", []) or []
@@ -236,7 +253,7 @@ async def collect():
         _, task_obj = TaskService.get_by_id(msg["id"])
         task = task_obj.to_dict()
     else:
-        task = TaskService.get_task(msg["id"])
+        task = TaskService.get_task(msg["id"], tenant_id=msg.get("tenant_id"))
 
     if task:
         canceled = has_canceled(task["id"])
@@ -1412,12 +1429,18 @@ async def handle_task():
     pipeline_task_type = TASK_TYPE_TO_PIPELINE_TASK_TYPE.get(task_type,
                                                              PipelineTaskType.PARSE) or PipelineTaskType.PARSE
     task_id = task["id"]
+    tenant_id = task.get("tenant_id", "")
+    # CUSTOM PERF: acquire per-tenant fair-share slot when WORKER_TENANT_FAIR_SHARE>0.
+    # Disabled by default — a lone active tenant uses all pod slots without waste.
+    tenant_limiter = get_tenant_task_limiter(tenant_id)
+    if tenant_limiter:
+        await tenant_limiter.acquire()
     try:
         logging.info(f"handle_task begin for task {json.dumps(task)}")
         CURRENT_TASKS[task["id"]] = {
             "id": task_id,
             "type": task_type,
-            "tenant_id": task.get("tenant_id"),
+            "tenant_id": tenant_id,
             "doc": task.get("name"),
             "started": time.time(),
         }
@@ -1445,6 +1468,8 @@ async def handle_task():
             pass
         logging.exception(f"handle_task got exception for task {json.dumps(task)}")
     finally:
+        if tenant_limiter:
+            tenant_limiter.release()
         _set_progress_last.pop(task_id, None)
         if not task.get("dataflow_id", ""):
             referred_document_id = None

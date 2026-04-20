@@ -72,7 +72,7 @@ class TaskService(CommonService):
 
     @classmethod
     @DB.connection_context()
-    def get_task(cls, task_id, doc_ids=[]):
+    def get_task(cls, task_id, doc_ids=[], tenant_id=None):
         """Retrieve detailed task information by task ID.
 
         This method fetches comprehensive task details including associated document,
@@ -234,7 +234,9 @@ class TaskService(CommonService):
                         for documents currently being processed. Returns empty list if
                         no documents are being processed.
         """
-        with DB.lock("get_task", -1):
+        # CUSTOM PERF: scope lock by tenant so multiple tenants can fetch tasks concurrently
+        lock_key = f"get_task:{tenant_id}" if tenant_id else "get_task"
+        with DB.lock(lock_key, -1):
             docs = (
                 cls.model.select(
                     *[Document.id, Document.kb_id, Document.location, File.parent_id]
