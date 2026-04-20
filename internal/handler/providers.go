@@ -192,7 +192,7 @@ func (h *ProviderHandler) ListModels(c *gin.Context) {
 		})
 		return
 	}
-	models, err := dao.GetModelProviderManager().ListModels(providerName)
+	providerModels, err := dao.GetModelProviderManager().ListModels(providerName)
 	if err != nil {
 		c.JSON(http.StatusOK, gin.H{
 			"code":    common.CodeNotFound,
@@ -203,7 +203,7 @@ func (h *ProviderHandler) ListModels(c *gin.Context) {
 	c.JSON(http.StatusOK, gin.H{
 		"code":    0,
 		"message": "success",
-		"data":    models,
+		"data":    providerModels,
 	})
 }
 
@@ -448,7 +448,7 @@ func (h *ProviderHandler) ListInstanceModels(c *gin.Context) {
 		})
 		return
 	}
-	models, err := h.modelProviderService.ListInstanceModelsForTenant(providerName, instanceName, GetTenantID(c))
+	modelInstances, err := h.modelProviderService.ListInstanceModelsForTenant(providerName, instanceName, GetTenantID(c))
 	if err != nil {
 		c.JSON(http.StatusOK, gin.H{
 			"code":    common.CodeNotFound,
@@ -459,7 +459,7 @@ func (h *ProviderHandler) ListInstanceModels(c *gin.Context) {
 	c.JSON(http.StatusOK, gin.H{
 		"code":    0,
 		"message": "success",
-		"data":    models,
+		"data":    modelInstances,
 	})
 }
 
@@ -608,6 +608,7 @@ func (h *ProviderHandler) ChatToModel(c *gin.Context) {
 			MaxTokens:   nil,
 			Temperature: nil,
 			TopP:        nil,
+			Region:      nil,
 		}
 
 		// Stream response using sender function (best performance, no channel)

@@ -51,7 +51,7 @@ from utils.file_utils import (
 def condition(_auth, _kb_id):
     res = list_documents(_auth, {"id": _kb_id})
     for doc in res["data"]["docs"]:
-        if doc["run"] != "3":
+        if doc["run"] != "DONE":
             return False
     return True
 
