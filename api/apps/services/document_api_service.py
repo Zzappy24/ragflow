@@ -228,10 +228,15 @@ def _process_key_mappings(doc):
     # Handle both dict and model input
     items = doc.to_dict().items() if hasattr(doc, 'to_dict') else doc.items()
 
+    # Keys that get an alias (old name kept for web frontend, new name for SDK)
+    alias_keys = {"chunk_num", "kb_id", "token_num", "parser_id"}
+
     renamed_doc = {}
     for key, value in items:
         new_key = key_mapping.get(key, key)
         renamed_doc[new_key] = value
+        if key in alias_keys:
+            renamed_doc[key] = value  # keep original name alongside renamed
     return renamed_doc
 
 

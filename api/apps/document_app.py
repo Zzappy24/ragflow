@@ -24,6 +24,7 @@ from api.apps.extensions.rbac import require_permission, Permission
 from api.utils.tenant_context import active_tenant_id
 from api.common.check_team_permission import check_kb_team_permission
 from api.constants import FILE_NAME_LEN_LIMIT, IMG_BASE64_PREFIX
+from common.metadata_utils import turn2jsonschema
 from api.db import VALID_FILE_TYPES, FileType
 from api.db.db_models import Task
 from api.db.services import duplicate_name
@@ -361,6 +362,7 @@ async def list_docs():
                     filtered_docs.append(doc)
             docs = filtered_docs
 
+        run_mapping = {"0": "UNSTART", "1": "RUNNING", "2": "CANCEL", "3": "DONE", "4": "FAIL"}
         for doc_item in docs:
             if doc_item["thumbnail"] and not doc_item["thumbnail"].startswith(IMG_BASE64_PREFIX):
                 doc_item["thumbnail"] = f"/v1/document/image/{kb_id}-{doc_item['thumbnail']}"
@@ -368,6 +370,12 @@ async def list_docs():
                 doc_item["source_type"] = doc_item["source_type"].split("/")[0]
             if doc_item["parser_config"].get("metadata"):
                 doc_item["parser_config"]["metadata"] = turn2jsonschema(doc_item["parser_config"]["metadata"])
+            if doc_item.get("run") in run_mapping:
+                doc_item["run"] = run_mapping[doc_item["run"]]
+            if "chunk_num" in doc_item:
+                doc_item["chunk_count"] = doc_item["chunk_num"]
+            if "parser_id" in doc_item:
+                doc_item["chunk_method"] = doc_item["parser_id"]
 
         return get_json_result(data={"total": tol, "docs": docs})
     except Exception as e:

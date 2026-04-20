@@ -245,21 +245,7 @@ export const traceRaptor = (datasetId: string) =>
 export const listDocument = (
   params?: IFetchKnowledgeListRequestParams,
   body?: IFetchDocumentListRequestBody,
-) => {
-  if (!params || !params.id) {
-    throw new Error('params and params.id are required');
-  }
-  // Extract page, page_size, and ext.keywords from params
-  const { page, page_size, ext } = params;
-  // Merge: page, page_size, keywords (from ext), body, and remaining params
-  const mergedParams = {
-    page,
-    page_size,
-    keywords: ext?.keywords,
-    ...body,
-  };
-  return request.get(api.getDocumentList(params.id), { params: mergedParams });
-};
+) => request.post(api.getDocumentList, { data: body || {}, params });
 
 export const documentFilter = (kb_id: string) =>
   request.post(api.getDatasetFilter, { kb_id });

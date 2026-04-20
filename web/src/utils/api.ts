@@ -106,8 +106,7 @@ export default {
   knowledgeGraph: `${webAPI}/chunk/knowledge_graph`,
 
   // document
-  getDocumentList: (datasetId: string) =>
-    `${restAPIv1}/datasets/${datasetId}/documents`,
+  getDocumentList: `${webAPI}/document/list`,
   documentChangeStatus: `${webAPI}/document/change_status`,
   documentRm: `${webAPI}/document/rm`,
   documentDelete: `${webAPI}/api/document`,
