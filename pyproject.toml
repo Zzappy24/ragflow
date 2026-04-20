@@ -161,6 +161,10 @@ dependencies = [
 ]
 
 [dependency-groups]
+dev = [
+    "pytest>=9.0.2",
+    "requests>=2.32.5",
+]
 test = [
     "hypothesis>=6.132.0",
     "openpyxl>=3.1.5",

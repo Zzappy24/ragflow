@@ -6661,6 +6661,10 @@ dependencies = [
 ]
 
 [package.dev-dependencies]
+dev = [
+    { name = "pytest" },
+    { name = "requests" },
+]
 test = [
     { name = "codecov" },
     { name = "hypothesis" },
@@ -6805,6 +6809,10 @@ requires-dist = [
 ]
 
 [package.metadata.requires-dev]
+dev = [
+    { name = "pytest", specifier = ">=9.0.2" },
+    { name = "requests", specifier = ">=2.32.5" },
+]
 test = [
     { name = "codecov", specifier = ">=2.1.13" },
     { name = "hypothesis", specifier = ">=6.132.0" },
