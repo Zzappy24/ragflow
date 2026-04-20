@@ -5,6 +5,7 @@ Module central RBAC -- roles + filtrage dataset par groupe.
 Axe 1 (roles)  : "Que peut-il FAIRE ?"  -> has_permission() / @require_permission
 Axe 2 (groupes) : "Quels datasets ?"    -> get_visible_dataset_ids() / filter_chat_dataset_ids()
 """
+import logging
 from enum import Enum
 from functools import wraps
 
@@ -124,7 +125,8 @@ def has_permission(user_id: str, tenant_id: str, permission: Permission) -> bool
 
     workspace = resolve_workspace_from_tenant(tenant_id)
     if not workspace:
-        return tenant_id == user_id  # legacy mode
+        logging.warning("RBAC: no workspace for tenant_id=%s user_id=%s — denied", tenant_id, user_id)
+        return False
 
     org_role = get_user_org_role(user_id, workspace.org_id)
     if org_role == OrgRole.ORG_ADMIN:

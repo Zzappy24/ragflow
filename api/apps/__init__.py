@@ -84,12 +84,26 @@ app.config["BODY_TIMEOUT"] = int(os.environ.get("QUART_BODY_TIMEOUT", 600))
 app.config["SESSION_PERMANENT"] = False
 app.config["SESSION_TYPE"] = "redis"
 app.config["SESSION_REDIS"] = settings.decrypt_database_config(name="redis")
+app.config["SESSION_COOKIE_HTTPONLY"] = True
+app.config["SESSION_COOKIE_SAMESITE"] = "Lax"
+app.config["SESSION_COOKIE_SECURE"] = os.environ.get("COOKIE_SECURE", "false").lower() == "true"
 app.config["MAX_CONTENT_LENGTH"] = int(
     os.environ.get("MAX_CONTENT_LENGTH", 1024 * 1024 * 1024)
 )
 app.config['SECRET_KEY'] = settings.SECRET_KEY
 app.secret_key = settings.SECRET_KEY
 commands.register_commands(app)
+
+
+@app.after_request
+async def set_security_headers(response):
+    response.headers["X-Frame-Options"] = "DENY"
+    response.headers["X-Content-Type-Options"] = "nosniff"
+    response.headers["X-XSS-Protection"] = "1; mode=block"
+    response.headers["Referrer-Policy"] = "strict-origin-when-cross-origin"
+    if os.environ.get("COOKIE_SECURE", "false").lower() == "true":
+        response.headers["Strict-Transport-Security"] = "max-age=31536000; includeSubDomains"
+    return response
 
 from functools import wraps
 from typing import ParamSpec, TypeVar

@@ -366,9 +366,9 @@ def token_required(func):
                     except Exception as e:
                         logging.debug("[token_required] ws resolve error: %s", e)
                 if resolved_tenant is None:
-                    tenants = UserTenantService.query(user_id=user[0].id)
-                    if tenants:
-                        resolved_tenant = tenants[0].tenant_id
+                    err = WerkzeugUnauthorized(description="X-Workspace-Id header is required")
+                    err.code = RetCode.AUTHENTICATION_ERROR
+                    raise err
                 if resolved_tenant:
                     kwargs["tenant_id"] = resolved_tenant
                     result = func(*args, **kwargs)

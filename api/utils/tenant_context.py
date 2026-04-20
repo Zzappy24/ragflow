@@ -53,6 +53,18 @@ def _resolve_tenant() -> str | None:
                 "RBAC superuser bypass: user=%s accessed workspace=%s tenant=%s",
                 current_user.id, ws_id, ws.tenant_id,
             )
+            try:
+                from api.db.services.audit_service import AuditService
+                AuditService.record(
+                    workspace_id=ws_id,
+                    user_id=current_user.id,
+                    actor_email=getattr(current_user, "email", ""),
+                    action="SUPERUSER_BYPASS",
+                    resource_type="workspace",
+                    resource_id=ws_id,
+                )
+            except Exception:
+                pass
             return ws.tenant_id
 
         # Org admins of the workspace's parent org can access without an
@@ -65,6 +77,19 @@ def _resolve_tenant() -> str | None:
                     "RBAC org_admin bypass: user=%s org=%s accessed workspace=%s tenant=%s",
                     current_user.id, ws.org_id, ws_id, ws.tenant_id,
                 )
+                try:
+                    from api.db.services.audit_service import AuditService
+                    AuditService.record(
+                        org_id=ws.org_id,
+                        workspace_id=ws_id,
+                        user_id=current_user.id,
+                        actor_email=getattr(current_user, "email", ""),
+                        action="ORG_ADMIN_BYPASS",
+                        resource_type="workspace",
+                        resource_id=ws_id,
+                    )
+                except Exception:
+                    pass
                 return ws.tenant_id
         except Exception:
             pass
@@ -84,7 +109,8 @@ def _ensure_resolved() -> None:
         g.active_tenant_id = _resolve_tenant()
     except Exception:
         logging.exception("tenant resolution failed")
-        g.active_tenant_id = None
+        g._tenant_resolved = True
+        raise
     g._tenant_resolved = True
 
 

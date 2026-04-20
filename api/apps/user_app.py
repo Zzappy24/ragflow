@@ -101,6 +101,17 @@ async def login():
 
     email = json_body.get("email", "")
 
+    _rl_key = f"login_attempt:{email}"
+    _rl_limit = 10
+    try:
+        _attempts = REDIS_CONN.REDIS.incr(_rl_key)
+        if _attempts == 1:
+            REDIS_CONN.REDIS.expire(_rl_key, 3600)
+        if _attempts > _rl_limit:
+            return get_json_result(data=False, code=RetCode.AUTHENTICATION_ERROR, message="Too many login attempts. Try again in 1 hour.")
+    except Exception:
+        pass
+
     users = UserService.query(email=email)
     if not users:
         return get_json_result(
@@ -124,6 +135,10 @@ async def login():
             message="This account has been disabled, please contact the administrator!",
         )
     elif user:
+        try:
+            REDIS_CONN.REDIS.delete(_rl_key)
+        except Exception:
+            pass
         response_data = user.to_json()
         user.access_token = get_uuid()
         login_user(user)
@@ -1183,9 +1198,8 @@ async def forget_send_otp():
 
     # Generate OTP (uppercase letters only) and store hashed
     otp = "".join(secrets.choice(string.ascii_uppercase) for _ in range(OTP_LENGTH))
-    salt = os.urandom(16)
-    code_hash = hash_code(otp, salt)
-    REDIS_CONN.set(k_code, f"{code_hash}:{salt.hex()}", OTP_TTL_SECONDS)
+    code_hash = hash_code(otp, settings.SECRET_KEY.encode())
+    REDIS_CONN.set(k_code, code_hash, OTP_TTL_SECONDS)
     REDIS_CONN.set(k_attempts, 0, OTP_TTL_SECONDS)
     REDIS_CONN.set(k_last, now, OTP_TTL_SECONDS)
     REDIS_CONN.delete(k_lock)
@@ -1240,13 +1254,8 @@ async def forget_verify_otp():
     if not stored:
         return get_json_result(data=False, code=RetCode.NOT_EFFECTIVE, message="expired otp")
 
-    try:
-        stored_hash, salt_hex = str(stored).split(":", 1)
-        salt = bytes.fromhex(salt_hex)
-    except Exception:
-        return get_json_result(data=False, code=RetCode.EXCEPTION_ERROR, message="otp storage corrupted")
-
-    calc = hash_code(otp.upper(), salt)
+    stored_hash = str(stored)
+    calc = hash_code(otp.upper(), settings.SECRET_KEY.encode())
     if calc != stored_hash:
         # bump attempts
         try:
