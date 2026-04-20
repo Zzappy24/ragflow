@@ -98,17 +98,25 @@ def _generate_credentials():
 
 @pytest.fixture(scope="session")
 def _credentials():
-    # Fast path: explicit env vars (CI pipelines, token from browser).
+    # Always preferred: explicit env vars (CI pipelines, remote envs).
     if TEST_AUTH_TOKEN and TEST_WORKSPACE_ID:
         return TEST_AUTH_TOKEN, TEST_WORKSPACE_ID
-    # Auto path: derive from Redis secret key + DB (local dev with ci.internal user).
-    creds = _generate_credentials()
-    if creds:
-        return creds
+
+    # Auto-derive from Redis+DB only when explicitly opted in for local dev.
+    # Never enabled in shared/remote environments — the secret key must stay server-side.
+    if os.getenv("RAGFLOW_TEST_LOCAL_AUTH") == "1":
+        creds = _generate_credentials()
+        if creds:
+            return creds
+
     pytest.exit(
-        "Could not resolve test credentials. Either:\n"
-        "  - Set TEST_AUTH_TOKEN + TEST_WORKSPACE_ID env vars, or\n"
-        f"  - Ensure {CI_EMAIL} exists in a workspace and Redis is reachable.",
+        "Test credentials not configured.\n\n"
+        "Option A — explicit tokens (CI pipelines, remote envs):\n"
+        "  export TEST_AUTH_TOKEN='...'\n"
+        "  export TEST_WORKSPACE_ID='...'\n\n"
+        "Option B — local dev auto-derive (requires Redis + DB access):\n"
+        "  export RAGFLOW_TEST_LOCAL_AUTH=1\n"
+        f"  (user {CI_EMAIL} must exist and belong to a workspace)\n",
         returncode=1,
     )
 
