@@ -692,16 +692,24 @@ async def run_dataflow(task: dict):
         return
 
     embedding_token_consumption = chunks.get("embedding_token_consumption", 0)
-    if chunks.get("chunks"):
+    # Use `in` not `.get()` — key may exist with empty/falsy payload
+    if "chunks" in chunks:
         chunks = copy.deepcopy(chunks["chunks"])
-    elif chunks.get("json"):
+    elif "json" in chunks:
         chunks = copy.deepcopy(chunks["json"])
-    elif chunks.get("markdown"):
-        chunks = [{"text": [chunks["markdown"]]}]
-    elif chunks.get("text"):
-        chunks = [{"text": [chunks["text"]]}]
-    elif chunks.get("html"):
-        chunks = [{"text": [chunks["html"]]}]
+    elif "markdown" in chunks:
+        chunks = [{"text": [chunks["markdown"]]}] if chunks["markdown"] else []
+    elif "text" in chunks:
+        chunks = [{"text": [chunks["text"]]}] if chunks["text"] else []
+    elif "html" in chunks:
+        chunks = [{"text": [chunks["html"]]}] if chunks["html"] else []
+    else:
+        chunks = []
+
+    if not chunks:
+        PipelineOperationLogService.create(document_id=doc_id, pipeline_id=dataflow_id,
+                                           task_type=PipelineTaskType.PARSE, dsl=str(pipeline))
+        return
 
     keys = [k for o in chunks for k in list(o.keys())]
     if not any([re.match(r"q_[0-9]+_vec", k) for k in keys]):
