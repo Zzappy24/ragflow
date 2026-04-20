@@ -42,16 +42,14 @@ func NewTenantHandler(tenantService *service.TenantService, userService *service
 	}
 }
 
-// GetModels gets the default models for the active tenant.
-// Security: uses GetTenantID(c) so models are scoped to the active workspace.
 func (h *TenantHandler) GetModels(c *gin.Context) {
-	_, errorCode, errorMessage := GetUser(c)
+	user, errorCode, errorMessage := GetUser(c)
 	if errorCode != common.CodeSuccess {
 		jsonError(c, errorCode, errorMessage)
 		return
 	}
 
-	defaultModels, err := h.tenantService.ListTenantDefaultModels(GetTenantID(c))
+	defaultModels, err := h.tenantService.ListTenantDefaultModels(user.ID)
 	if err != nil {
 		c.JSON(http.StatusOK, gin.H{
 			"code":    common.CodeExceptionError,
@@ -78,16 +76,14 @@ func (h *TenantHandler) GetModels(c *gin.Context) {
 }
 
 type SetModelRequest struct {
-	ModelProvider string `json:"model_provider" binding:"required"`
-	ModelInstance string `json:"model_instance" binding:"required"`
-	ModelName     string `json:"model_name" binding:"required"`
+	ModelProvider string `json:"model_provider"`
+	ModelInstance string `json:"model_instance"`
+	ModelName     string `json:"model_name"`
 	ModelType     string `json:"model_type" binding:"required"`
 }
 
-// SetModels sets the default models for the active tenant.
-// Security: uses GetTenantID(c) so models are scoped to the active workspace.
 func (h *TenantHandler) SetModels(c *gin.Context) {
-	_, errorCode, errorMessage := GetUser(c)
+	user, errorCode, errorMessage := GetUser(c)
 	if errorCode != common.CodeSuccess {
 		jsonError(c, errorCode, errorMessage)
 		return
@@ -103,7 +99,7 @@ func (h *TenantHandler) SetModels(c *gin.Context) {
 		return
 	}
 
-	err := h.tenantService.SetTenantDefaultModels(GetTenantID(c), req.ModelProvider, req.ModelInstance, req.ModelName, req.ModelType)
+	err := h.tenantService.SetTenantDefaultModels(user.ID, req.ModelProvider, req.ModelInstance, req.ModelName, req.ModelType)
 	if err != nil {
 		c.JSON(http.StatusOK, gin.H{
 			"code":    common.CodeExceptionError,

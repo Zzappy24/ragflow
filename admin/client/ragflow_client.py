@@ -1753,7 +1753,7 @@ class RAGFlowClient:
                 return False
             all_done = True
             for doc in docs:
-                if doc.get("run") != "3":
+                if doc.get("run") != "DONE":
                     print(f"Document {doc["name"]} is not done, status: {doc.get("run")}")
                     all_done = False
                     break
