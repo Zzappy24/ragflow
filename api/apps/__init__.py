@@ -17,6 +17,7 @@ import logging
 import os
 import sys
 import time
+import uuid
 from importlib.util import module_from_spec, spec_from_file_location
 from pathlib import Path
 from quart import Blueprint, Quart, request, g, current_app, session, jsonify
@@ -95,8 +96,15 @@ app.secret_key = settings.SECRET_KEY
 commands.register_commands(app)
 
 
+@app.before_request
+async def assign_request_id():
+    g.request_id = str(uuid.uuid4())
+    logging.info("REQ %s %s %s", g.request_id, request.method, request.path)
+
+
 @app.after_request
 async def set_security_headers(response):
+    response.headers["X-Request-Id"] = getattr(g, "request_id", "")
     response.headers["X-Frame-Options"] = "DENY"
     response.headers["X-Content-Type-Options"] = "nosniff"
     response.headers["X-XSS-Protection"] = "1; mode=block"

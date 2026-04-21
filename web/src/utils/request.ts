@@ -65,9 +65,10 @@ const errorHandler = (error: {
       const errorText =
         RetcodeMessage[response.status as ResultCode] || response.statusText;
       const { status, url } = response;
+      const requestId = response.headers?.get('X-Request-Id');
       notification.error({
         message: `${i18n.t('message.requestError')} ${status}: ${url}`,
-        description: errorText,
+        description: requestId ? `${errorText} (ref: ${requestId})` : errorText,
       });
     }
   }
