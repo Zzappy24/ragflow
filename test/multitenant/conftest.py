@@ -62,13 +62,15 @@ class BareAuth(AuthBase):
 # ---------------------------------------------------------------------------
 
 CI_EMAIL = os.getenv("CI_EMAIL", "ci.internal@cyllene.com")
+CI_WORKSPACE_NAME = os.getenv("CI_WORKSPACE_NAME", "Général")
 
 
 def _generate_credentials():
     """
     Derive test credentials directly from Redis + DB — no browser needed.
     Reads SECRET_KEY from Redis (where the server stores it), signs the
-    ci user's access_token, and returns the first workspace they belong to.
+    ci user's access_token, and returns the workspace named CI_WORKSPACE_NAME.
+    Falls back to the first workspace if none matches by name.
     """
     sys.path.insert(0, str(Path(__file__).resolve().parents[2]))
 
@@ -92,7 +94,24 @@ def _generate_credentials():
         memberships = WsMemberService.list_workspaces_for_user(u.id)
         if not memberships:
             return None
-        _, ws = WorkspaceService.get_by_id(memberships[0].workspace_id)
+
+        # Prefer the workspace named CI_WORKSPACE_NAME ("Général" by default).
+        ws = None
+        for m in memberships:
+            ok, candidate = WorkspaceService.get_by_id(m.workspace_id)
+            if ok and candidate and candidate.name == CI_WORKSPACE_NAME:
+                ws = candidate
+                break
+        if ws is None:
+            # Fallback: first workspace (logs a warning so CI catches misconfiguration)
+            import warnings
+            warnings.warn(
+                f"CI workspace '{CI_WORKSPACE_NAME}' not found for {CI_EMAIL}. "
+                f"Falling back to first available workspace. "
+                f"Set CI_WORKSPACE_NAME to the correct workspace name."
+            )
+            _, ws = WorkspaceService.get_by_id(memberships[0].workspace_id)
+
         return auth_token, ws.id
 
 
