@@ -422,11 +422,11 @@ export function useFetchKnowledgeGraph() {
   const { data, isFetching: loading } = useQuery<IKnowledgeGraph>({
     queryKey: [KnowledgeApiAction.FetchKnowledgeGraph, knowledgeBaseId],
     initialData: { graph: {}, mind_map: {} } as IKnowledgeGraph,
-    enabled: !!knowledgeBaseId,
+    enabled: !!knowledgeBaseId && knowledgeBaseId !== 'undefined',
     gcTime: 0,
     queryFn: async () => {
       const { data } = await getKnowledgeGraph(knowledgeBaseId);
-      return data?.data;
+      return data?.data ?? ({ graph: {}, mind_map: {} } as IKnowledgeGraph);
     },
   });
 

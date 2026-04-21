@@ -52,7 +52,7 @@ export default function ChunkPage() {
             <BreadcrumbItem>
               <BreadcrumbLink
                 onClick={navigateToDataset(
-                  getQueryString(QueryStringMap.KnowledgeId) as string,
+                  getQueryString(QueryStringMap.id) as string,
                 )}
               >
                 Agent

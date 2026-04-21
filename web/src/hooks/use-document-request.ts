@@ -227,6 +227,7 @@ export const useGetDocumentFilter = (): {
       if (data.code === 0) {
         return data.data;
       }
+      return null;
     },
   });
   const handleOpenChange = (e: boolean) => {
@@ -442,7 +443,7 @@ export const useSetDocumentMeta = () => {
           message.success(i18n.t('message.modified'));
         }
         return data?.code;
-      } catch (error) {
+      } catch {
         message.error('error');
       }
     },

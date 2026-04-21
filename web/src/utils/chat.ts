@@ -68,10 +68,13 @@ export const preprocessLaTeX = (content: string) => {
 };
 
 export function replaceThinkToSection(text: string = '') {
-  const pattern = /<think>([\s\S]*?)<\/think>/g;
-
-  const result = text.replace(pattern, '<section class="think">$1</section>');
-
+  // Handle closed <think>...</think> tags
+  let result = text.replace(
+    /<think>([\s\S]*?)<\/think>/g,
+    '<section class="think">$1</section>',
+  );
+  // Handle unclosed <think> tags (streaming in progress)
+  result = result.replace(/<think>([\s\S]*)$/, '<section class="think">$1');
   return result;
 }
 

@@ -15,6 +15,7 @@ import { formatDate } from '@/utils/date';
 import { ColumnDef } from '@tanstack/table-core';
 import { ArrowUpDown } from 'lucide-react';
 import { useTranslation } from 'react-i18next';
+import { useParams } from 'react-router';
 import { MetadataType } from '../components/metedata/constant';
 import { ShowManageMetadataModalProps } from '../components/metedata/interface';
 import { DatasetActionCell } from './dataset-action-cell';
@@ -40,6 +41,7 @@ export function useDatasetTableColumns({
   // const { dataSourceInfo } = useDataSourceInfo();
   const { navigateToChunkParsedResult } = useNavigatePage();
   const { setDocumentStatus } = useSetDocumentStatus();
+  const { id: routeKbId } = useParams();
 
   const columns: ColumnDef<IDocumentInfo>[] = [
     {
@@ -94,7 +96,7 @@ export function useDatasetTableColumns({
                 className="flex items-center gap-2 cursor-pointer"
                 onClick={navigateToChunkParsedResult(
                   row.original.id,
-                  row.original.dataset_id,
+                  row.original.dataset_id || routeKbId,
                 )}
               >
                 <FileIcon name={name}></FileIcon>

@@ -376,6 +376,8 @@ async def list_docs():
                 doc_item["chunk_count"] = doc_item["chunk_num"]
             if "parser_id" in doc_item:
                 doc_item["chunk_method"] = doc_item["parser_id"]
+            if "kb_id" in doc_item:
+                doc_item["dataset_id"] = doc_item["kb_id"]
 
         return get_json_result(data={"total": tol, "docs": docs})
     except Exception as e:
