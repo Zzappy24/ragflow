@@ -1,14 +1,18 @@
-import { memo } from 'react';
+import { lazy, memo, Suspense } from 'react';
 
 import CSVFileViewer from './csv-preview';
 import { DocPreviewer } from './doc-preview';
 import { ExcelCsvPreviewer } from './excel-preview';
 import { ImagePreviewer } from './image-preview';
 import { Md } from './md';
-import PdfPreviewer, { IProps } from './pdf-preview';
+import { IProps } from './pdf-preview';
 import { PptPreviewer } from './ppt-preview';
 import { TxtPreviewer } from './txt-preview';
 import { VideoPreviewer } from './video-preview';
+
+// Lazy-load pdfjs (react-pdf-highlighter) so it only initializes when a PDF
+// is actually displayed — not on every route load.
+const PdfPreviewer = lazy(() => import('./pdf-preview'));
 
 type PreviewProps = {
   fileType: string;
@@ -26,12 +30,14 @@ const Preview = ({
     <>
       {fileType === 'pdf' && highlights && setWidthAndHeight && (
         <section className="h-full">
-          <PdfPreviewer
-            className={className}
-            highlights={highlights}
-            setWidthAndHeight={setWidthAndHeight}
-            url={url}
-          ></PdfPreviewer>
+          <Suspense fallback={null}>
+            <PdfPreviewer
+              className={className}
+              highlights={highlights}
+              setWidthAndHeight={setWidthAndHeight}
+              url={url}
+            />
+          </Suspense>
         </section>
       )}
       {['doc', 'docx'].indexOf(fileType) > -1 && (

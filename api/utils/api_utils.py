@@ -294,6 +294,19 @@ def construct_json_result(code: RetCode = RetCode.SUCCESS, message="success", da
     return _safe_jsonify({"code": code, "message": message, "data": data})
 
 
+def _track_active_user(user_id: str) -> None:
+    """Record user activity in Redis sorted set. Silent no-op on any error."""
+    try:
+        import time as _time
+        from rag.utils.redis_conn import REDIS_CONN
+        now = _time.time()
+        REDIS_CONN.REDIS.zadd("active_users", {user_id: now})
+        # Evict stale entries (older than 15 min) on the same call — O(log N), free cleanup
+        REDIS_CONN.REDIS.zremrangebyscore("active_users", 0, now - 900)
+    except Exception:
+        pass
+
+
 def token_required(func):
     @wraps(func)
     async def wrapper(*args, **kwargs):
@@ -371,6 +384,7 @@ def token_required(func):
                     raise err
                 if resolved_tenant:
                     kwargs["tenant_id"] = resolved_tenant
+                    _track_active_user(user[0].id)
                     result = func(*args, **kwargs)
                     if inspect.iscoroutine(result):
                         return await result

@@ -208,6 +208,20 @@ def _aggregate(rows: list, ws_map: dict, org_map: dict, days: int = 30):
     }
 
 
+# ─── active users (lightweight, pollable) ─────────────────────────────────────
+
+@router.get("/stats/active-users")
+def active_users(_user=Depends(require_superuser)):
+    """Count of users active in the last 15 minutes. One Redis ZCOUNT, O(log N)."""
+    import time as _time
+    try:
+        from rag.utils.redis_conn import REDIS_CONN
+        count = REDIS_CONN.REDIS.zcount("active_users", _time.time() - 900, "+inf")
+    except Exception:
+        count = 0
+    return {"active_users_15m": int(count)}
+
+
 # ─── global overview (superuser) ──────────────────────────────────────────────
 
 @router.get("/stats/overview")
@@ -221,6 +235,15 @@ def global_overview(_user=Depends(require_superuser)):
     org_map = _load_org_map()
     rows = _token_rows(start_date)
     agg = _aggregate(rows, ws_map, org_map)
+
+    # Active users in last 15 min (Redis sorted set, O(log N))
+    active_users_15m = 0
+    try:
+        import time as _time
+        from rag.utils.redis_conn import REDIS_CONN
+        active_users_15m = REDIS_CONN.REDIS.zcount("active_users", _time.time() - 900, "+inf")
+    except Exception:
+        pass
 
     # Entity counts
     with DB.connection_context():
@@ -281,6 +304,7 @@ def global_overview(_user=Depends(require_superuser)):
             "orgs": total_orgs,
             "workspaces": total_workspaces,
             "users": total_users,
+            "active_users_15m": active_users_15m,
             "tokens_30d": agg["total_tokens_30d"],
             "indexed_tokens": total_indexed,
         },

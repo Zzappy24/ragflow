@@ -61,7 +61,7 @@ interface OrgQuotaSummary { org_id: string; org_name: string; max_tokens_monthly
 interface WsItem { workspace_id: string; workspace_name: string; tokens: number; indexed_tokens: number; users: number; }
 
 interface GlobalStats {
-  totals: { orgs: number; workspaces: number; users: number; tokens_30d: number; indexed_tokens: number };
+  totals: { orgs: number; workspaces: number; users: number; active_users_15m: number; tokens_30d: number; indexed_tokens: number };
   daily_tokens: DailyItem[];
   daily_by_model_type_per_factory: Record<string, DailyItem[]>;
   factories: string[];
@@ -112,6 +112,22 @@ function KpiCard({ title, value, icon, sub }: { title: string; value: string | n
     <Card size="small" className="h-full">
       <Statistic title={title} value={value} prefix={icon} />
       {sub && <div className="text-xs text-gray-400 mt-1">{sub}</div>}
+    </Card>
+  );
+}
+
+function ActiveUsersCard({ count }: { count: number }) {
+  return (
+    <Card size="small" className="h-full">
+      <div className="text-gray-500 text-sm mb-1">En ligne</div>
+      <div className="flex items-center gap-2">
+        <span className="relative flex h-2.5 w-2.5">
+          <span className="animate-ping absolute inline-flex h-full w-full rounded-full bg-green-400 opacity-75" />
+          <span className="relative inline-flex rounded-full h-2.5 w-2.5 bg-green-500" />
+        </span>
+        <span className="text-2xl font-semibold text-gray-800">{count}</span>
+      </div>
+      <div className="text-xs text-gray-400 mt-1">15 dernières minutes</div>
     </Card>
   );
 }
@@ -411,6 +427,7 @@ function SuperDashboard() {
   const [data, setData] = useState<GlobalStats | null>(null);
   const [quotas, setQuotas] = useState<Record<string, OrgQuotaSummary>>({});
   const [loading, setLoading] = useState(true);
+  const [activeUsers, setActiveUsers] = useState<number>(0);
 
   // Filters
   const [dateRange, setDateRange] = useState<[Dayjs, Dayjs] | null>(null);
@@ -425,11 +442,22 @@ function SuperDashboard() {
     ])
       .then(([overviewRes, quotasRes]) => {
         setData(overviewRes.data);
+        setActiveUsers(overviewRes.data.totals.active_users_15m ?? 0);
         const map: Record<string, OrgQuotaSummary> = {};
         for (const q of quotasRes.data) map[q.org_id] = q;
         setQuotas(map);
       })
       .finally(() => setLoading(false));
+  }, []);
+
+  // Poll active users every 60s — one Redis ZCOUNT, negligible cost
+  useEffect(() => {
+    const id = setInterval(() => {
+      api.get('/stats/active-users')
+        .then((r) => setActiveUsers(r.data.active_users_15m ?? 0))
+        .catch(() => {});
+    }, 60_000);
+    return () => clearInterval(id);
   }, []);
 
   if (loading) return <Spin size="large" className="flex justify-center mt-20" />;
@@ -567,16 +595,19 @@ function SuperDashboard() {
 
       {/* KPI cards */}
       <Row gutter={[12, 12]} className="mb-6">
-        <Col xs={12} sm={8} lg={4}>
+        <Col xs={12} sm={8} lg={3}>
           <KpiCard title="Organisations" value={data.totals.orgs} icon={<BankOutlined />} />
         </Col>
-        <Col xs={12} sm={8} lg={4}>
+        <Col xs={12} sm={8} lg={3}>
           <KpiCard title="Workspaces" value={data.totals.workspaces} icon={<AppstoreOutlined />} />
         </Col>
-        <Col xs={12} sm={8} lg={4}>
+        <Col xs={12} sm={8} lg={3}>
           <KpiCard title="Utilisateurs" value={data.totals.users} icon={<TeamOutlined />} />
         </Col>
         <Col xs={12} sm={8} lg={4}>
+          <ActiveUsersCard count={activeUsers} />
+        </Col>
+        <Col xs={12} sm={8} lg={3}>
           <KpiCard title="Tokens indexés" value={fmtTokens(data.totals.indexed_tokens)} icon={<DatabaseOutlined />} sub="contenu stocké" />
         </Col>
         <Col xs={24} sm={12} lg={8}>

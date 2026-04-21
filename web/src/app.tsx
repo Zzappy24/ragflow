@@ -40,20 +40,6 @@ dayjs.extend(localeData);
 dayjs.extend(weekOfYear);
 dayjs.extend(weekYear);
 
-if (process.env.NODE_ENV === 'development') {
-  import('@welldone-software/why-did-you-render').then(
-    (whyDidYouRenderModule) => {
-      const whyDidYouRender = whyDidYouRenderModule.default;
-      whyDidYouRender(React, {
-        trackAllPureComponents: true,
-        trackExtraHooks: [],
-        logOnDifferentValues: false,
-        exclude: [/^RouterProvider$/],
-      });
-    },
-  );
-}
-
 const queryClient = new QueryClient({
   defaultOptions: {
     queries: {
@@ -102,7 +88,6 @@ const RouterProviderWrapper: React.FC<{ router: typeof routers }> = ({
 }) => {
   return <RouterProvider router={router}></RouterProvider>;
 };
-RouterProviderWrapper.whyDidYouRender = false;
 
 export default function AppContainer() {
   return (

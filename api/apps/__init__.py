@@ -218,6 +218,11 @@ def login_required(func: Callable[P, Awaitable[T]]) -> Callable[P, Awaitable[T]]
             )
         if not user:  # or not session.get("_user_id"):
             raise QuartAuthUnauthorized()
+        try:
+            from api.utils.api_utils import _track_active_user
+            _track_active_user(user.id)
+        except Exception:
+            pass
         return await current_app.ensure_async(func)(*args, **kwargs)
 
     return wrapper

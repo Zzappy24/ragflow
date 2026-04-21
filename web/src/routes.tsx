@@ -75,8 +75,8 @@ export enum Routes {
 }
 
 const defaultRouteFallback = (
-  <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/30 backdrop-blur-[1px]">
-    <div className="h-8 w-8 animate-spin rounded-full border-2 border-white/70 border-t-transparent" />
+  <div className="flex h-full w-full items-center justify-center">
+    <div className="h-8 w-8 animate-spin rounded-full border-2 border-foreground/30 border-t-foreground" />
   </div>
 );
 

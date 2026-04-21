@@ -8,6 +8,13 @@ import { cn } from '@/lib/utils';
 import { Routes } from '@/routes';
 import { supportsCssAnchor } from '@/utils/css-support';
 
+// Active pill: foreground color as background (dark in light mode, light in dark mode)
+// Active text: background color as text (white in light mode, near-black in dark mode)
+const activePillStyle = {
+  backgroundColor: 'hsl(var(--foreground))',
+  color: 'var(--bg-base)',
+} as const;
+
 const PathMap = {
   [Routes.Datasets]: [Routes.Datasets, Routes.DatasetBase],
   [Routes.Chats]: [Routes.Chats, Routes.Chat],
@@ -44,7 +51,6 @@ const GlobalNavbar = supportsCssAnchor
       const { t } = useTranslation();
       const { pathname } = useLocation();
       const navbarAnchorNamePrefix = useId().replace(/:/g, '');
-
       const activePath = useMemo(() => {
         return (
           Object.keys(PathMap).find((x: string) =>
@@ -74,11 +80,8 @@ const GlobalNavbar = supportsCssAnchor
                   <Link
                     {...props}
                     to={path}
-                    className={cn(
-                      'h-10 px-6 text-base inline-flex items-center justify-center',
-                      'hover:text-current focus-visible:text-current rounded-full transition-all',
-                      isActive && '!text-bg-base',
-                    )}
+                    className="h-10 px-6 text-base inline-flex items-center justify-center hover:text-current focus-visible:text-current rounded-full transition-all"
+                    style={isActive ? activePillStyle : undefined}
                     aria-current={isActive ? 'page' : undefined}
                   >
                     {Icon && <Icon className="size-6 stroke-[1.5]" />}
@@ -90,7 +93,7 @@ const GlobalNavbar = supportsCssAnchor
 
             <li
               className={cn(
-                'absolute -z-[1] bg-text-primary border-b-2 border-b-accent-primary rounded-full opacity-0',
+                'absolute -z-[1] border-b-2 border-b-accent-primary rounded-full opacity-0',
                 'transition-all',
                 hasAnyActive && 'opacity-100',
               )}
@@ -101,6 +104,7 @@ const GlobalNavbar = supportsCssAnchor
                 width: 'anchor-size(width)',
                 height: 'anchor-size(height)',
                 positionAnchor: activePathAnchorName,
+                backgroundColor: 'hsl(var(--foreground))',
               }}
             />
           </ul>
@@ -110,7 +114,6 @@ const GlobalNavbar = supportsCssAnchor
   : () => {
       const { t } = useTranslation();
       const { pathname } = useLocation();
-
       const activePath = useMemo(() => {
         return (
           Object.keys(PathMap).find((x: string) =>
@@ -136,8 +139,9 @@ const GlobalNavbar = supportsCssAnchor
                       'h-10 px-6 text-base inline-flex items-center justify-center',
                       'hover:text-current focus-visible:text-current rounded-full transition-all',
                       isActive &&
-                        '!text-bg-base bg-text-primary border-b-2 border-b-accent-primary',
+                        'border-b-2 border-b-accent-primary rounded-full',
                     )}
+                    style={isActive ? activePillStyle : undefined}
                     aria-label={t(name)}
                     aria-current={isActive ? 'page' : undefined}
                   >
