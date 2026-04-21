@@ -817,6 +817,7 @@ async def delete_sessions(chat_id):
 
 @manager.route("/chats/<chat_id>/sessions/<session_id>/messages/<msg_id>", methods=["DELETE"])  # noqa: F821
 @login_required
+@require_permission(Permission.CHAT_DELETE)
 async def delete_session_message(chat_id, session_id, msg_id):
     if not _ensure_owned_chat(chat_id):
         return get_json_result(data=False, message="No authorization.", code=RetCode.AUTHENTICATION_ERROR)
@@ -841,6 +842,7 @@ async def delete_session_message(chat_id, session_id, msg_id):
 
 @manager.route("/chats/<chat_id>/sessions/<session_id>/messages/<msg_id>/feedback", methods=["PUT"])  # noqa: F821
 @login_required
+@require_permission(Permission.CHAT_USE)
 async def update_message_feedback(chat_id, session_id, msg_id):
     owned = _ensure_owned_chat(chat_id)
     if not owned:
@@ -906,6 +908,7 @@ async def update_message_feedback(chat_id, session_id, msg_id):
 
 @manager.route("/chats/tts", methods=["POST"])  # noqa: F821
 @login_required
+@require_permission(Permission.CHAT_USE)
 async def tts():
     req = await get_request_json()
     text = req["text"]
@@ -934,6 +937,7 @@ async def tts():
 
 @manager.route("/chats/transcriptions", methods=["POST"])  # noqa: F821
 @login_required
+@require_permission(Permission.CHAT_USE)
 async def transcriptions():
     req = await request.form
     stream_mode = req.get("stream", "false").lower() == "true"
@@ -992,6 +996,7 @@ async def transcriptions():
 
 @manager.route("/chats/mindmap", methods=["POST"])  # noqa: F821
 @login_required
+@require_permission(Permission.CHAT_USE)
 @validate_request("question", "kb_ids")
 async def mindmap():
     req = await get_request_json()
@@ -1010,6 +1015,7 @@ async def mindmap():
 
 @manager.route("/chats/related_questions", methods=["POST"])  # noqa: F821
 @login_required
+@require_permission(Permission.CHAT_USE)
 @validate_request("question")
 async def related_questions():
     req = await get_request_json()
@@ -1048,6 +1054,7 @@ async def related_questions():
 
 @manager.route("/chats/<chat_id>/sessions/<session_id>/completions", methods=["POST"])  # noqa: F821
 @login_required
+@require_permission(Permission.CHAT_USE)
 @validate_request("messages")
 async def session_completion(chat_id, session_id):
     req = await get_request_json()

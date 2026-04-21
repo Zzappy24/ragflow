@@ -138,22 +138,23 @@ def get_svr_queue_names():
     return [get_svr_queue_name(priority) for priority in [1, 0]]
 
 def _get_or_create_secret_key():
-    # secret_key = os.environ.get("RAGFLOW_SECRET_KEY")
-    # if secret_key and len(secret_key) >= 32:
-    #     return secret_key
-    #
-    # # Check if there's a configured secret key
-    # configured_key = get_base_config(RAG_FLOW_SERVICE_NAME, {}).get("secret_key")
-    # if configured_key and configured_key != str(date.today()) and len(configured_key) >= 32:
-    #     return configured_key
-
-    # Generate a new secure key and warn about it
     import logging
 
+    # Prefer an explicit env var — required in production for key stability across restarts.
+    # Generate: python -c "import secrets; print(secrets.token_hex(32))"
+    secret_key = os.environ.get("RAGFLOW_SECRET_KEY")
+    if secret_key and len(secret_key) >= 32:
+        return secret_key
+
+    # Fallback: persist in Redis so the key survives restarts within the same Redis instance.
+    # WARNING: if Redis is flushed, all active sessions are invalidated.
+    logging.warning(
+        "SECURITY: RAGFLOW_SECRET_KEY env var not set (or < 32 chars). "
+        "Falling back to Redis-persisted auto-generated key. "
+        "Set RAGFLOW_SECRET_KEY in production for key stability."
+    )
     generated_key = secrets.token_hex(32)
-    secret_key = REDIS_CONN.get_or_create_secret_key("ragflow:system:secret_key", generated_key)
-    logging.warning("SECURITY WARNING: Using auto-generated SECRET_KEY.")
-    return secret_key
+    return REDIS_CONN.get_or_create_secret_key("ragflow:system:secret_key", generated_key)
 
 class StorageFactory:
     storage_mapping = {

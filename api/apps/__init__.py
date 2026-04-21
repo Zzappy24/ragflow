@@ -66,7 +66,12 @@ app = Quart(__name__)
 # login page. Chrome is permissive on localhost and masked this bug; Safari
 # enforces the spec and surfaces it as "Fetch API cannot load ... due to
 # access control checks". See construct_response in common/connection_utils.py.
-app = cors(app, allow_origin="*", expose_headers=["Authorization"])
+_cors_origins_env = os.environ.get("CORS_ORIGINS", "")
+_cors_allow_origin = [o.strip() for o in _cors_origins_env.split(",") if o.strip()] or "*"
+if _cors_allow_origin == "*":
+    import logging as _logging_cors
+    _logging_cors.warning("SECURITY: CORS_ORIGINS not set — allowing all origins. Set CORS_ORIGINS in production.")
+app = cors(app, allow_origin=_cors_allow_origin, expose_headers=["Authorization"])
 
 # openapi supported
 QuartSchema(app)
@@ -87,9 +92,9 @@ app.config["SESSION_TYPE"] = "redis"
 app.config["SESSION_REDIS"] = settings.decrypt_database_config(name="redis")
 app.config["SESSION_COOKIE_HTTPONLY"] = True
 app.config["SESSION_COOKIE_SAMESITE"] = "Lax"
-app.config["SESSION_COOKIE_SECURE"] = os.environ.get("COOKIE_SECURE", "false").lower() == "true"
+app.config["SESSION_COOKIE_SECURE"] = os.environ.get("COOKIE_SECURE", "true").lower() == "true"
 app.config["MAX_CONTENT_LENGTH"] = int(
-    os.environ.get("MAX_CONTENT_LENGTH", 1024 * 1024 * 1024)
+    os.environ.get("MAX_CONTENT_LENGTH", 128 * 1024 * 1024)
 )
 app.config['SECRET_KEY'] = settings.SECRET_KEY
 app.secret_key = settings.SECRET_KEY
@@ -109,7 +114,16 @@ async def set_security_headers(response):
     response.headers["X-Content-Type-Options"] = "nosniff"
     response.headers["X-XSS-Protection"] = "1; mode=block"
     response.headers["Referrer-Policy"] = "strict-origin-when-cross-origin"
-    if os.environ.get("COOKIE_SECURE", "false").lower() == "true":
+    response.headers["Content-Security-Policy"] = (
+        "default-src 'self'; "
+        "script-src 'self' 'unsafe-inline' 'unsafe-eval'; "
+        "style-src 'self' 'unsafe-inline'; "
+        "img-src 'self' data: blob:; "
+        "font-src 'self' data:; "
+        "connect-src 'self' *; "
+        "frame-ancestors 'none';"
+    )
+    if os.environ.get("COOKIE_SECURE", "true").lower() == "true":
         response.headers["Strict-Transport-Security"] = "max-age=31536000; includeSubDomains"
     return response
 

@@ -747,7 +747,11 @@ async def setting_user():
             )
 
         if new_password:
-            update_dict["password"] = generate_password_hash(decrypt(new_password))
+            plain_new = decrypt(new_password)
+            pwd_error = _validate_password_strength(plain_new)
+            if pwd_error:
+                return get_json_result(data=False, message=pwd_error, code=RetCode.ARGUMENT_ERROR)
+            update_dict["password"] = generate_password_hash(plain_new)
 
     for k in request_data.keys():
         if k in [
@@ -905,6 +909,28 @@ def rollback_user_registration(user_id):
         pass
 
 
+def _check_rate_limit(key: str, limit: int, window_seconds: int) -> bool:
+    """Return True if the caller is within the rate limit, False if exceeded."""
+    try:
+        attempts = REDIS_CONN.REDIS.incr(key)
+        if attempts == 1:
+            REDIS_CONN.REDIS.expire(key, window_seconds)
+        return attempts <= limit
+    except Exception:
+        return True  # Redis unavailable → fail open (don't block legit users)
+
+
+def _validate_password_strength(plain_password: str) -> str | None:
+    """Return an error message if the password is too weak, or None if it's acceptable."""
+    if len(plain_password) < 8:
+        return "Password must be at least 8 characters long."
+    if not re.search(r"[A-Z]", plain_password):
+        return "Password must contain at least one uppercase letter."
+    if not re.search(r"[0-9]", plain_password):
+        return "Password must contain at least one digit."
+    return None
+
+
 def user_register(user_id, user):
     user["id"] = user_id
     tenant = {
@@ -985,6 +1011,10 @@ async def user_add():
             code=RetCode.OPERATING_ERROR,
         )
 
+    client_ip = request.headers.get("X-Forwarded-For", request.remote_addr or "unknown").split(",")[0].strip()
+    if not _check_rate_limit(f"register_attempt:{client_ip}", limit=10, window_seconds=3600):
+        return get_json_result(data=False, code=RetCode.AUTHENTICATION_ERROR, message="Too many registration attempts. Try again in 1 hour.")
+
     req = await get_request_json()
     email_address = req["email"]
 
@@ -1006,11 +1036,16 @@ async def user_add():
 
     # Construct user info data
     nickname = req["nickname"]
+    plain_password = decrypt(req["password"])
+    pwd_error = _validate_password_strength(plain_password)
+    if pwd_error:
+        return get_json_result(data=False, message=pwd_error, code=RetCode.ARGUMENT_ERROR)
+
     user_dict = {
         "access_token": get_uuid(),
         "email": email_address,
         "nickname": nickname,
-        "password": decrypt(req["password"]),
+        "password": plain_password,
         "login_channel": "password",
         "last_login_time": get_format_time(),
         "is_superuser": False,
@@ -1298,6 +1333,9 @@ async def forget_reset_password():
     email = req.get("email") or ""
     new_pwd = req.get("new_password")
     new_pwd2 = req.get("confirm_new_password")
+
+    if not _check_rate_limit(f"pwd_reset:{email}", limit=5, window_seconds=3600):
+        return get_json_result(data=False, code=RetCode.AUTHENTICATION_ERROR, message="Too many password reset attempts. Try again in 1 hour.")
 
     new_pwd_base64 = decrypt(new_pwd)
     new_pwd_string = base64.b64decode(new_pwd_base64).decode('utf-8')

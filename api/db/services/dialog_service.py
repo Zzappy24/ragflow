@@ -853,6 +853,12 @@ async def use_sql(question, field_map, tenant_id, chat_mdl, quota=True, kb_ids=N
     def is_aggregate_sql(sql_text):
         return bool(re.search(r"(count|sum|avg|max|min|distinct)\s*\(", (sql_text or "").lower()))
 
+    # DDL/DML commands that must never appear in LLM-generated SQL.
+    _SQL_FORBIDDEN = re.compile(
+        r"^\s*(DROP|ALTER|CREATE|INSERT|UPDATE|DELETE|TRUNCATE|REPLACE|GRANT|REVOKE|EXEC|EXECUTE|CALL|MERGE)\b",
+        re.IGNORECASE,
+    )
+
     def normalize_sql(sql):
         logging.debug(f"use_sql: Raw SQL from LLM: {repr(sql[:500])}")
         # Remove think blocks if present (format: </think>...)
@@ -862,7 +868,12 @@ async def use_sql(question, field_map, tenant_id, chat_mdl, quota=True, kb_ids=N
         sql = re.sub(r"```(?:sql)?\s*", "", sql, flags=re.IGNORECASE)
         sql = re.sub(r"```\s*$", "", sql, flags=re.IGNORECASE)
         # Remove trailing semicolon that ES SQL parser doesn't like
-        return sql.rstrip().rstrip(';').strip()
+        sql = sql.rstrip().rstrip(';').strip()
+        # Block DDL/DML — only SELECT is allowed in this context.
+        if _SQL_FORBIDDEN.match(sql):
+            logging.warning("use_sql: LLM generated forbidden SQL statement, blocked: %s", repr(sql[:200]))
+            raise ValueError(f"SQL statement not allowed: {sql.split()[0].upper()}")
+        return sql
 
     def add_kb_filter(sql):
         # Add kb_id filter for ES/OS only (Infinity already has it in table name)

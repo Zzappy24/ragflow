@@ -136,8 +136,8 @@ def has_permission(user_id: str, tenant_id: str, permission: Permission) -> bool
 
     workspace = resolve_workspace_from_tenant(tenant_id)
     if not workspace:
-        logging.warning("RBAC: no workspace for tenant_id=%s user_id=%s — denied", tenant_id, user_id)
-        return False
+        logging.warning("RBAC: no workspace for tenant_id=%s user_id=%s — access denied", tenant_id, user_id)
+        return False  # explicit deny: no workspace means no access
 
     org_role = get_user_org_role(user_id, workspace.org_id)
     if org_role == OrgRole.ORG_ADMIN:
@@ -167,7 +167,8 @@ def get_visible_dataset_ids(user_id: str, tenant_id: str) -> set[str] | None:
 
     workspace = resolve_workspace_from_tenant(tenant_id)
     if not workspace:
-        return None  # legacy, no filter
+        logging.warning("RBAC: no workspace for tenant_id=%s user_id=%s — returning empty visible set (deny-all)", tenant_id, user_id)
+        return set()  # no workspace = deny all datasets (not None which would mean no filter)
 
     org_role = get_user_org_role(user_id, workspace.org_id)
     if org_role == OrgRole.ORG_ADMIN:

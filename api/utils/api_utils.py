@@ -272,6 +272,21 @@ def apikey_required(func):
         if not objs:
             return build_error_result(message="API-KEY is invalid!", code=RetCode.FORBIDDEN)
         kwargs["tenant_id"] = objs[0].tenant_id
+
+        # Check ApiKeyScope: expiration and status (same logic as token_required)
+        try:
+            from api.db.services.workspace_service import ApiKeyScopeService
+            from datetime import datetime
+            scope = ApiKeyScopeService.get_by_token(token)
+            if scope:
+                if scope.expires_at and scope.expires_at < datetime.utcnow():
+                    return build_error_result(message="API key expired", code=RetCode.FORBIDDEN)
+                if scope.status != "1":
+                    return build_error_result(message="API key disabled", code=RetCode.FORBIDDEN)
+                ApiKeyScopeService.touch_last_used(token)
+        except Exception:
+            pass  # no scope entry = legacy token, allow through
+
         if inspect.iscoroutinefunction(func):
             return await func(*args, **kwargs)
 

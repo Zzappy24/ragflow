@@ -761,7 +761,7 @@ export default function OrgDetailPage() {
                           status={pct >= 100 ? 'exception' : pct >= 80 ? 'active' : 'normal'}
                           showInfo={false}
                           strokeColor={pct >= 100 ? '#ef4444' : pct >= 80 ? '#f59e0b' : '#6366f1'}
-                          strokeWidth={12}
+                          size={12}
                         />
                         {exceeded && (
                           <div className="mt-1 text-xs text-red-500 flex items-center gap-1">

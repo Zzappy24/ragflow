@@ -530,7 +530,7 @@ function SuperDashboard() {
           <AntTooltip title={`${fmtTokens(q.total_used)} / ${fmtTokens(q.max_tokens_monthly)} (${q.pct}%)${q.quota_exceeded ? (q.allow_overage ? ' — overage' : ' — bloqué') : ''}`}>
             <div className="flex items-center gap-2">
               <div className="flex-1">
-                <Progress percent={q.pct} showInfo={false} strokeColor={color} size="small" strokeWidth={6} />
+                <Progress percent={q.pct} showInfo={false} strokeColor={color} size={6} />
               </div>
               <span className="text-xs tabular-nums" style={{ color, minWidth: 32 }}>{q.pct}%</span>
               {q.quota_exceeded && <WarningOutlined style={{ color: q.allow_overage ? '#f59e0b' : '#ef4444', fontSize: 12 }} />}
