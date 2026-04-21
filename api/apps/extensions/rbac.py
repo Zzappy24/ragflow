@@ -121,6 +121,17 @@ def has_permission(user_id: str, tenant_id: str, permission: Permission) -> bool
         pass
 
     if user and user.is_superuser:
+        try:
+            from api.db.services.audit_service import AuditService
+            AuditService.record(
+                user_id=user_id,
+                actor_email=getattr(user, "email", ""),
+                action="SUPERUSER_BYPASS",
+                resource_type="tenant",
+                resource_id=tenant_id,
+            )
+        except Exception:
+            pass
         return True
 
     workspace = resolve_workspace_from_tenant(tenant_id)
