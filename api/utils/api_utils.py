@@ -373,6 +373,7 @@ def token_required(func):
         from common.constants import StatusEnum
         from common import settings
         from itsdangerous.url_safe import URLSafeTimedSerializer as Serializer
+        _jwt_auth_ok = False
         try:
             jwt = Serializer(secret_key=settings.SECRET_KEY)
             raw_token = str(jwt.loads(token))
@@ -403,12 +404,18 @@ def token_required(func):
                     # Store user_id in request context so require_permission can
                     # enforce workspace RBAC for login-token-as-API-key callers.
                     _g._rbac_user_id = user[0].id
-                    result = func(*args, **kwargs)
-                    if inspect.iscoroutine(result):
-                        return await result
-                    return result
+                    _jwt_auth_ok = True
         except Exception as e:
             logging.debug("[token_required] JWT fallback failed: %s", e)
+
+        if _jwt_auth_ok:
+            # Auth succeeded — call the route OUTSIDE the try/except so any
+            # exception from the route propagates normally and is not swallowed
+            # and misreported as "API key is invalid!".
+            result = func(*args, **kwargs)
+            if inspect.iscoroutine(result):
+                return await result
+            return result
 
         err = WerkzeugUnauthorized(description="Authentication error: API key is invalid!")
         err.code = RetCode.AUTHENTICATION_ERROR

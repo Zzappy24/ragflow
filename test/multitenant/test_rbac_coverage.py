@@ -26,6 +26,15 @@ ROUTE_FILES = sorted([
     *(ROOT / "api/apps/sdk").glob("*.py"),
 ])
 
+# Files scoped for the pyflakes undefined-name check — only files we own and
+# actively maintain.  The legacy *_app.py files are upstream code: they have
+# pre-existing missing imports in rarely-called paths, and an upstream
+# refactor could rename symbols causing spurious test failures.
+IMPORT_CHECK_FILES = sorted([
+    *(ROOT / "api/apps/restful_apis").glob("*.py"),
+    *(ROOT / "api/apps/sdk").glob("*.py"),
+])
+
 WRITE_METHODS = {"POST", "PUT", "PATCH", "DELETE"}
 
 # Routes intentionally exempt from @require_permission.
@@ -55,9 +64,16 @@ EXEMPT: set[tuple[str, str]] = {
     ("api/apps/tenant_app.py", "create"),
     ("api/apps/tenant_app.py", "rm"),
     ("api/apps/tenant_app.py", "agree"),
+    # Same routes migrated to restful_apis/ — inline auth check (current_user.id != tenant_id).
+    ("api/apps/restful_apis/tenant_api.py", "create"),
+    ("api/apps/restful_apis/tenant_api.py", "rm"),
+    ("api/apps/restful_apis/tenant_api.py", "agree"),
     # OAuth callbacks — stateful redirect flow, no session workspace context.
     ("api/apps/connector_app.py", "poll_google_web_result"),
     ("api/apps/connector_app.py", "poll_box_web_result"),
+    # Same OAuth callbacks migrated to restful_apis/connector_api.py.
+    ("api/apps/restful_apis/connector_api.py", "poll_google_web_result"),
+    ("api/apps/restful_apis/connector_api.py", "poll_box_web_result"),
 
     # --- api/apps/sdk/ ---
     # Embedded chatbot/searchbot widgets — use inline API-token validation, intentionally public.
@@ -169,3 +185,65 @@ def test_route_file_is_parseable(path: Path):
     """Sanity: each file must parse without syntax errors."""
     src = path.read_text(encoding="utf-8")
     ast.parse(src, filename=str(path))
+
+
+def _pyflakes_undefined_names(path: Path) -> list[tuple[str, str]]:
+    """
+    Use pyflakes to find undefined names (UndefinedName / F821).
+    Returns list of (message_text, col_offset_str) pairs — one per violation.
+    """
+    from pyflakes import api as pf_api, checker as pf_checker
+    import pyflakes.messages as pf_messages
+
+    src = path.read_text(encoding="utf-8")
+    tree = ast.parse(src, filename=str(path))
+    w = pf_checker.Checker(tree, filename=str(path))
+    return [
+        (str(path.relative_to(ROOT)), msg.message % msg.message_args)
+        for msg in w.messages
+        if isinstance(msg, pf_messages.UndefinedName)
+    ]
+
+
+# Undefined names legitimately injected at runtime by register_page().
+# Key: exact pyflakes message string that should be suppressed.
+# Add with justification — reviewers should question any new entry.
+PYFLAKES_EXEMPT: set[str] = {
+    # register_page() injects `app` and `manager` into every route module namespace.
+    "undefined name 'app'",
+    "undefined name 'manager'",
+}
+
+
+def test_no_undefined_names_in_route_files():
+    """
+    Catch missing imports in route files before they silently break at runtime.
+
+    Example: FileService was dropped from sdk/doc.py during an upstream merge.
+    The NameError was swallowed by token_required's broad except-clause and
+    surfaced as a spurious 401 "API key is invalid!" — extremely hard to diagnose.
+    This pyflakes check (F821 / UndefinedName) catches it in <1s, no server needed.
+
+    If pyflakes flags a name that is legitimately injected at runtime (e.g. by
+    register_page()), add the exact message string to PYFLAKES_EXEMPT with a comment.
+    """
+    try:
+        import pyflakes  # noqa: F401
+    except ImportError:
+        pytest.skip("pyflakes not installed (run: uv pip install pyflakes)")
+
+    all_violations: list[tuple[str, str]] = []
+    for path in IMPORT_CHECK_FILES:
+        for rel, msg in _pyflakes_undefined_names(path):
+            if msg not in PYFLAKES_EXEMPT:
+                all_violations.append((rel, msg))
+
+    if all_violations:
+        lines = ["\nUndefined names in route files (missing import?):\n"]
+        for rel, msg in sorted(set(all_violations)):
+            lines.append(f"  {rel}: {msg}")
+        lines.append(
+            "\n(Add to PYFLAKES_EXEMPT with justification if the name is injected"
+            " at runtime, e.g. by register_page().)"
+        )
+        pytest.fail("\n".join(lines))
