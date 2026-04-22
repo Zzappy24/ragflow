@@ -226,7 +226,7 @@ class TestViewerForbiddenWrites:
         _assert_denied(viewer_auth, "PUT", "/datasets/nonexistent-rbac/auto_metadata", {})
 
     def test_viewer_cannot_update_session(self, viewer_auth):
-        _assert_denied(viewer_auth, "PUT", "/chats/nonexistent-rbac/sessions/sess1", {"name": "x"})
+        _assert_denied(viewer_auth, "PATCH", "/chats/nonexistent-rbac/sessions/sess1", {"name": "x"})
 
     def test_viewer_cannot_create_memory(self, viewer_auth):
         _assert_denied(viewer_auth, "POST", "/memories", {

@@ -15,13 +15,17 @@
 #
 import datetime
 import json
+import logging
+import pathlib
 import re
 from io import BytesIO
 
 import xxhash
+from peewee import OperationalError
 from pydantic import BaseModel, Field, validator
 from quart import request, send_file
 
+from api.db import FileType
 from api.db.db_models import APIToken, Document, File, Task
 from api.db.joint_services.tenant_model_service import get_model_config_by_id, get_model_config_by_type_and_name, get_tenant_default_model_by_type
 from api.db.services.doc_metadata_service import DocMetadataService
@@ -33,7 +37,7 @@ from api.db.services.llm_service import LLMBundle
 from api.db.services.task_service import TaskService, cancel_all_task_of, queue_tasks
 from api.db.services.tenant_llm_service import TenantLLMService
 from api.constants import FILE_NAME_LEN_LIMIT
-from api.utils.api_utils import check_duplicate_ids, construct_json_result, get_error_data_result, get_request_json, get_result, server_error_response, token_required
+from api.utils.api_utils import check_duplicate_ids, construct_json_result, get_error_data_result, get_parser_config, get_request_json, get_result, server_error_response, token_required
 from api.utils.image_utils import store_chunk_image
 from common import settings
 from common.constants import FileSource, LLMType, ParserType, RetCode, TaskStatus
