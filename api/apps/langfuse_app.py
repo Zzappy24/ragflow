@@ -18,6 +18,7 @@
 from api.apps import login_required
 from api.utils.tenant_context import active_tenant_id
 from langfuse import Langfuse
+from api.apps.extensions.rbac import require_permission, Permission
 
 from api.db.db_models import DB
 from api.db.services.langfuse_service import TenantLangfuseService
@@ -26,6 +27,7 @@ from api.utils.api_utils import get_error_data_result, get_json_result, get_requ
 
 @manager.route("/api_key", methods=["POST", "PUT"])  # noqa: F821
 @login_required
+@require_permission(Permission.LLM_CONFIGURE)
 @validate_request("secret_key", "public_key", "host")
 async def set_api_key():
     req = await get_request_json()
@@ -85,6 +87,7 @@ def get_api_key():
 
 @manager.route("/api_key", methods=["DELETE"])  # noqa: F821
 @login_required
+@require_permission(Permission.LLM_CONFIGURE)
 @validate_request()
 def delete_api_key():
     current_user_id = active_tenant_id()

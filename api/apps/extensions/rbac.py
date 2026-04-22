@@ -53,6 +53,7 @@ class Permission(str, Enum):
     LLM_CONFIGURE = "llm.configure"
     DATASOURCE_CONFIGURE = "datasource.configure"
     MCP_CONFIGURE = "mcp.configure"
+    API_KEY_MANAGE = "api_key.manage"
 
 
 ROLE_PERMISSIONS = {
@@ -217,11 +218,19 @@ def filter_chat_dataset_ids(user_id: str, tenant_id: str, chat_dataset_ids: list
 # -- Decorators -------------------------------------------------------------
 
 def _extract_user_id(kwargs):
-    """Extract user_id from current_user or kwargs."""
+    """Extract user_id from current_user, request context, or kwargs."""
     try:
         from api.apps import current_user
         if current_user and hasattr(current_user, "id"):
             return current_user.id
+    except Exception:
+        pass
+    # login-token-as-API-key path: token_required stores the real user_id here
+    try:
+        from quart import g as _g
+        uid = getattr(_g, "_rbac_user_id", None)
+        if uid:
+            return uid
     except Exception:
         pass
     return kwargs.get("user_id")
@@ -249,8 +258,25 @@ def require_permission(permission: Permission):
         async def wrapper(*args, **kwargs):
             tenant_id = _extract_tenant_id(kwargs)
             user_id = _extract_user_id(kwargs)
-            if not user_id or not tenant_id:
-                return func(*args, **kwargs) if not _is_coroutine(func) else await func(*args, **kwargs)
+            if not user_id and not tenant_id:
+                # No authentication context at all — fail closed.
+                return get_json_result(
+                    data=False, message=f"Permission denied: {permission.value}", code=403
+                )
+            if not user_id:
+                # Pure API key caller: tenant_id is set but no individual user identity.
+                # API keys are workspace-level service tokens — role RBAC does not apply.
+                # Login-token callers always have user_id set (stored in g._rbac_user_id).
+                result = func(*args, **kwargs)
+                import inspect
+                if inspect.iscoroutine(result):
+                    return await result
+                return result
+            if not tenant_id:
+                # Authenticated user but no workspace context — deny.
+                return get_json_result(
+                    data=False, message=f"Permission denied: {permission.value}", code=403
+                )
             if not has_permission(user_id, tenant_id, permission):
                 return get_json_result(
                     data=False, message=f"Permission denied: {permission.value}",

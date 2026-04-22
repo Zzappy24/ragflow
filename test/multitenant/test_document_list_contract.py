@@ -97,15 +97,17 @@ class TestWorkspaceIsolation:
     """X-Workspace-Id must be enforced — missing or invalid → 401."""
 
     def test_missing_workspace_header_returns_401(self, bare_auth, ws_dataset):
-        """Without X-Workspace-Id, active_tenant_id() raises 401."""
+        """Without X-Workspace-Id the request must be rejected (401 from workspace
+        middleware or 403 from RBAC fail-closed — both mean access denied)."""
         res = list_docs_web(bare_auth, ws_dataset)
-        assert res["code"] == 401, (
-            f"Expected 401 when X-Workspace-Id is missing, got {res['code']}. "
+        assert res["code"] in (401, 403), (
+            f"Expected 401/403 when X-Workspace-Id is missing, got {res['code']}. "
             "Check that active_tenant_id() is called in the /list handler."
         )
 
     def test_nonexistent_workspace_id_returns_401(self, bare_auth, ws_dataset):
-        """A fabricated workspace ID the user doesn't belong to → 401."""
+        """A fabricated workspace ID the user doesn't belong to → rejected
+        (401 from workspace middleware or 403 from RBAC — both mean denied)."""
         class _FakeWsAuth(AuthBase):
             def __init__(self, inner):
                 self._inner = inner
@@ -115,8 +117,8 @@ class TestWorkspaceIsolation:
                 return r
 
         res = list_docs_web(_FakeWsAuth(bare_auth), ws_dataset)
-        assert res["code"] == 401, (
-            f"Expected 401 for fake workspace ID, got {res['code']}. "
+        assert res["code"] in (401, 403), (
+            f"Expected 401/403 for fake workspace ID, got {res['code']}. "
             "Cross-workspace data leak possible."
         )
 

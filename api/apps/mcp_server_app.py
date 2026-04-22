@@ -33,6 +33,7 @@ from common.mcp_tool_call_conn import MCPToolCallSession, close_multiple_mcp_too
 
 @manager.route("/list", methods=["POST"])  # noqa: F821
 @login_required
+@require_permission(Permission.MCP_CONFIGURE)
 async def list_mcp() -> Response:
     keywords = request.args.get("keywords", "")
     page_number = int(request.args.get("page", 0))
@@ -282,6 +283,7 @@ async def import_multiple() -> Response:
 
 @manager.route("/export", methods=["POST"])  # noqa: F821
 @login_required
+@require_permission(Permission.MCP_CONFIGURE)
 @validate_request("mcp_ids")
 async def export_multiple() -> Response:
     req = await get_request_json()
@@ -313,6 +315,7 @@ async def export_multiple() -> Response:
 
 @manager.route("/list_tools", methods=["POST"])  # noqa: F821
 @login_required
+@require_permission(Permission.MCP_CONFIGURE)
 @validate_request("mcp_ids")
 async def list_tools() -> Response:
     req = await get_request_json()
@@ -359,6 +362,7 @@ async def list_tools() -> Response:
 
 @manager.route("/test_tool", methods=["POST"])  # noqa: F821
 @login_required
+@require_permission(Permission.MCP_CONFIGURE)
 @validate_request("mcp_id", "tool_name", "arguments")
 async def test_tool() -> Response:
     req = await get_request_json()
@@ -392,6 +396,7 @@ async def test_tool() -> Response:
 
 @manager.route("/cache_tools", methods=["POST"])  # noqa: F821
 @login_required
+@require_permission(Permission.MCP_CONFIGURE)
 @validate_request("mcp_id", "tools")
 async def cache_tool() -> Response:
     req = await get_request_json()
@@ -416,6 +421,7 @@ async def cache_tool() -> Response:
 
 @manager.route("/test_mcp", methods=["POST"])  # noqa: F821
 @login_required  # RBAC: was missing upstream (SSRF risk)
+@require_permission(Permission.MCP_CONFIGURE)
 @validate_request("url", "server_type")
 async def test_mcp() -> Response:
     req = await get_request_json()

@@ -736,6 +736,7 @@ async def get_session(chat_id, session_id):
 
 @manager.route("/chats/<chat_id>/sessions/<session_id>", methods=["PUT"])  # noqa: F821
 @login_required
+@require_permission(Permission.CHAT_UPDATE)
 async def update_session(chat_id, session_id):
     if not _ensure_owned_chat(chat_id):
         return get_json_result(data=False, message="No authorization.", code=RetCode.AUTHENTICATION_ERROR)
@@ -770,6 +771,7 @@ async def update_session(chat_id, session_id):
 
 @manager.route("/chats/<chat_id>/sessions", methods=["DELETE"])  # noqa: F821
 @login_required
+@require_permission(Permission.CHAT_DELETE)
 async def delete_sessions(chat_id):
     if not _ensure_owned_chat(chat_id):
         return get_json_result(data=False, message="No authorization.", code=RetCode.AUTHENTICATION_ERROR)
@@ -1134,6 +1136,7 @@ async def session_completion(chat_id, session_id):
 
 @manager.route("/chats/ask", methods=["POST"])  # noqa: F821
 @login_required
+@require_permission(Permission.CHAT_USE)
 @validate_request("question", "kb_ids")
 async def ask():
     req = await get_request_json()

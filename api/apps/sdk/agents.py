@@ -39,6 +39,7 @@ from api.utils.api_utils import get_data_error_result, get_error_data_result, ge
 from api.utils.api_utils import get_result
 from quart import request, Response
 from rag.utils.redis_conn import REDIS_CONN
+from api.apps.extensions.rbac import require_permission, Permission
 
 
 def _get_user_nickname(user_id: str) -> str:
@@ -70,6 +71,7 @@ def list_agents(tenant_id):
 
 @manager.route("/agents", methods=["POST"])  # noqa: F821
 @token_required
+@require_permission(Permission.AGENT_CREATE)
 async def create_agent(tenant_id: str):
     req: dict[str, Any] = cast(dict[str, Any], await get_request_json())
     req["user_id"] = tenant_id
@@ -108,6 +110,7 @@ async def create_agent(tenant_id: str):
 
 @manager.route("/agents/<agent_id>", methods=["PUT"])  # noqa: F821
 @token_required
+@require_permission(Permission.AGENT_UPDATE)
 async def update_agent(tenant_id: str, agent_id: str):
     req: dict[str, Any] = {k: v for k, v in cast(dict[str, Any], (await get_request_json())).items() if v is not None}
     req["user_id"] = tenant_id
@@ -144,6 +147,7 @@ async def update_agent(tenant_id: str, agent_id: str):
 
 @manager.route("/agents/<agent_id>", methods=["DELETE"])  # noqa: F821
 @token_required
+@require_permission(Permission.AGENT_DELETE)
 def delete_agent(tenant_id: str, agent_id: str):
     if not UserCanvasService.query(user_id=tenant_id, id=agent_id):
         return get_json_result(

@@ -21,6 +21,7 @@ from peewee import OperationalError
 from pydantic import ValidationError
 
 from api.apps import login_required
+from api.apps.extensions.rbac import require_permission, Permission
 from api.apps.services.document_api_service import validate_document_update_fields, map_doc_keys, \
     map_doc_keys_with_run_status, update_document_name_only, update_chunk_method_only, update_document_status_only
 from api.constants import IMG_BASE64_PREFIX
@@ -38,6 +39,7 @@ from common.metadata_utils import convert_conditions, meta_filter, turn2jsonsche
 
 @manager.route("/datasets/<dataset_id>/documents/<document_id>", methods=["PATCH"]) # noqa: F821
 @login_required
+@require_permission(Permission.DOCUMENT_CREATE)
 @add_tenant_id_to_kwargs
 async def update_document(tenant_id, dataset_id, document_id):
     """
@@ -153,6 +155,7 @@ async def update_document(tenant_id, dataset_id, document_id):
 
 @manager.route("/datasets/<dataset_id>/metadata/summary", methods=["GET"])  # noqa: F821
 @login_required
+@require_permission(Permission.DOCUMENT_READ)
 @add_tenant_id_to_kwargs
 async def metadata_summary(dataset_id, tenant_id):
     """
@@ -191,6 +194,7 @@ async def metadata_summary(dataset_id, tenant_id):
 
 @manager.route("/datasets/<dataset_id>/documents", methods=["POST"])  # noqa: F821
 @login_required
+@require_permission(Permission.DOCUMENT_CREATE)
 @add_tenant_id_to_kwargs
 async def upload_document(dataset_id, tenant_id):
     """
@@ -322,6 +326,7 @@ async def upload_document(dataset_id, tenant_id):
 
 @manager.route("/datasets/<dataset_id>/documents", methods=["GET"])  # noqa: F821
 @login_required
+@require_permission(Permission.DOCUMENT_READ)
 @add_tenant_id_to_kwargs
 def list_docs(dataset_id, tenant_id):
     """

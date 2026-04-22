@@ -19,6 +19,7 @@ import json
 
 from api.apps import login_required
 from api.utils.tenant_context import active_tenant_id
+from api.apps.extensions.rbac import require_permission, Permission
 
 from api.db.services.knowledgebase_service import KnowledgebaseService
 from api.utils.api_utils import (
@@ -177,6 +178,7 @@ def oceanbase_status():
 
 @manager.route("/new_token", methods=["POST"])  # noqa: F821
 @login_required
+@require_permission(Permission.API_KEY_MANAGE)
 def new_token():
     """
     Generate a new API token.
@@ -269,6 +271,7 @@ def token_list():
 
 @manager.route("/token/<token>", methods=["DELETE"])  # noqa: F821
 @login_required
+@require_permission(Permission.API_KEY_MANAGE)
 def rm(token):
     """
     Remove an API token.

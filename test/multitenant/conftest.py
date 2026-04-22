@@ -64,12 +64,15 @@ class BareAuth(AuthBase):
 CI_EMAIL = os.getenv("CI_EMAIL", "ci.internal@cyllene.com")
 CI_WORKSPACE_NAME = os.getenv("CI_WORKSPACE_NAME", "Général")
 
+VIEWER_EMAIL = os.getenv("VIEWER_EMAIL", "")
+EDITOR_EMAIL = os.getenv("EDITOR_EMAIL", "")
 
-def _generate_credentials():
+
+def _generate_credentials(email: str = CI_EMAIL, workspace_name: str = CI_WORKSPACE_NAME):
     """
     Derive test credentials directly from Redis + DB — no browser needed.
     Reads SECRET_KEY from Redis (where the server stores it), signs the
-    ci user's access_token, and returns the workspace named CI_WORKSPACE_NAME.
+    user's access_token, and returns the workspace named workspace_name.
     Falls back to the first workspace if none matches by name.
     """
     sys.path.insert(0, str(Path(__file__).resolve().parents[2]))
@@ -86,7 +89,7 @@ def _generate_credentials():
     jwt = Serializer(secret_key=secret_key)
 
     with DB.connection_context():
-        users = list(UserService.query(email=CI_EMAIL))
+        users = list(UserService.query(email=email))
         if not users:
             return None
         u = users[0]
@@ -95,18 +98,18 @@ def _generate_credentials():
         if not memberships:
             return None
 
-        # Prefer the workspace named CI_WORKSPACE_NAME ("Général" by default).
+        # Prefer the workspace named workspace_name ("Général" by default).
         ws = None
         for m in memberships:
             ok, candidate = WorkspaceService.get_by_id(m.workspace_id)
-            if ok and candidate and candidate.name == CI_WORKSPACE_NAME:
+            if ok and candidate and candidate.name == workspace_name:
                 ws = candidate
                 break
         if ws is None:
             # Fallback: first workspace (logs a warning so CI catches misconfiguration)
             import warnings
             warnings.warn(
-                f"CI workspace '{CI_WORKSPACE_NAME}' not found for {CI_EMAIL}. "
+                f"CI workspace '{workspace_name}' not found for {email}. "
                 f"Falling back to first available workspace. "
                 f"Set CI_WORKSPACE_NAME to the correct workspace name."
             )
@@ -158,6 +161,48 @@ def bare_auth(_credentials):
 def workspace_id(_credentials):
     _, ws_id = _credentials
     return ws_id
+
+
+def _role_credentials(role_email_env: str, role_name: str):
+    """
+    Derive credentials for a role-specific user (viewer / editor).
+    Requires RAGFLOW_TEST_LOCAL_AUTH=1 or explicit TOKEN+WS env vars.
+    Returns None if not configured (tests using this will be skipped).
+    """
+    token_env = f"{role_name.upper()}_AUTH_TOKEN"
+    ws_env    = f"{role_name.upper()}_WORKSPACE_ID"
+    token = os.getenv(token_env)
+    ws_id = os.getenv(ws_env)
+    if token and ws_id:
+        return token, ws_id
+
+    if os.getenv("RAGFLOW_TEST_LOCAL_AUTH") == "1":
+        email = os.getenv(role_email_env, "")
+        if email:
+            creds = _generate_credentials(email)
+            if creds:
+                return creds
+    return None
+
+
+@pytest.fixture(scope="session")
+def viewer_auth():
+    """WorkspaceAuth for a viewer-role user. Skip if not configured."""
+    creds = _role_credentials("VIEWER_EMAIL", "viewer")
+    if not creds:
+        pytest.skip("Viewer credentials not configured (set VIEWER_EMAIL or VIEWER_AUTH_TOKEN+VIEWER_WORKSPACE_ID)")
+    token, ws_id = creds
+    return WorkspaceAuth(token, ws_id)
+
+
+@pytest.fixture(scope="session")
+def editor_auth():
+    """WorkspaceAuth for an editor-role user. Skip if not configured."""
+    creds = _role_credentials("EDITOR_EMAIL", "editor")
+    if not creds:
+        pytest.skip("Editor credentials not configured (set EDITOR_EMAIL or EDITOR_AUTH_TOKEN+EDITOR_WORKSPACE_ID)")
+    token, ws_id = creds
+    return WorkspaceAuth(token, ws_id)
 
 
 # ---------------------------------------------------------------------------

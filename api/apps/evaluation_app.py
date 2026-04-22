@@ -37,12 +37,14 @@ from api.utils.api_utils import (
     validate_request
 )
 from common.constants import RetCode
+from api.apps.extensions.rbac import require_permission, Permission
 
 
 # ==================== Dataset Management ====================
 
 @manager.route('/dataset/create', methods=['POST'])  # noqa: F821
 @login_required
+@require_permission(Permission.DATASET_CREATE)
 @validate_request("name", "kb_ids")
 async def create_dataset():
     """
@@ -131,6 +133,7 @@ async def get_dataset(dataset_id):
 
 @manager.route('/dataset/<dataset_id>', methods=['PUT'])  # noqa: F821
 @login_required
+@require_permission(Permission.DATASET_UPDATE)
 async def update_dataset(dataset_id):
     """
     Update dataset.
@@ -168,6 +171,7 @@ async def update_dataset(dataset_id):
 
 @manager.route('/dataset/<dataset_id>', methods=['DELETE'])  # noqa: F821
 @login_required
+@require_permission(Permission.DATASET_DELETE)
 async def delete_dataset(dataset_id):
     """Delete dataset (soft delete)"""
     try:
@@ -190,6 +194,7 @@ async def delete_dataset(dataset_id):
 
 @manager.route('/dataset/<dataset_id>/case/add', methods=['POST'])  # noqa: F821
 @login_required
+@require_permission(Permission.DATASET_UPDATE)
 @validate_request("question")
 async def add_test_case(dataset_id):
     """
@@ -235,6 +240,7 @@ async def add_test_case(dataset_id):
 
 @manager.route('/dataset/<dataset_id>/case/import', methods=['POST'])  # noqa: F821
 @login_required
+@require_permission(Permission.DATASET_UPDATE)
 @validate_request("cases")
 async def import_test_cases(dataset_id):
     """
@@ -299,6 +305,7 @@ async def get_test_cases(dataset_id):
 
 @manager.route('/case/<case_id>', methods=['DELETE'])  # noqa: F821
 @login_required
+@require_permission(Permission.DATASET_DELETE)
 async def delete_test_case(case_id):
     """Delete a test case"""
     try:
@@ -324,6 +331,7 @@ async def delete_test_case(case_id):
 
 @manager.route('/run/start', methods=['POST'])  # noqa: F821
 @login_required
+@require_permission(Permission.DATASET_READ)
 @validate_request("dataset_id", "dialog_id")
 async def start_evaluation():
     """
@@ -427,6 +435,7 @@ async def list_evaluation_runs():
 
 @manager.route('/run/<run_id>', methods=['DELETE'])  # noqa: F821
 @login_required
+@require_permission(Permission.DATASET_UPDATE)
 async def delete_evaluation_run(run_id):
     """Delete an evaluation run"""
     try:
@@ -467,6 +476,7 @@ async def get_recommendations(run_id):
 
 @manager.route('/compare', methods=['POST'])  # noqa: F821
 @login_required
+@require_permission(Permission.DATASET_READ)
 @validate_request("run_ids")
 async def compare_runs():
     """
@@ -520,6 +530,7 @@ async def export_results(run_id):
 
 @manager.route('/evaluate_single', methods=['POST'])  # noqa: F821
 @login_required
+@require_permission(Permission.DATASET_READ)
 @validate_request("question", "dialog_id")
 async def evaluate_single():
     """

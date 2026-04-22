@@ -28,6 +28,7 @@ from common.misc_utils import get_uuid
 from common.constants import RetCode
 from api.db import FileType
 from api.db.services.document_service import DocumentService
+from api.apps.extensions.rbac import require_permission, Permission
 
 
 def _convert_files(file_ids, kb_ids, user_id):
@@ -76,6 +77,7 @@ def _convert_files(file_ids, kb_ids, user_id):
 
 @manager.route('/convert', methods=['POST'])  # noqa: F821
 @login_required
+@require_permission(Permission.DOCUMENT_CREATE)
 @validate_request("file_ids", "kb_ids")
 async def convert():
     req = await get_request_json()
@@ -122,6 +124,7 @@ async def convert():
 
 @manager.route('/rm', methods=['POST'])  # noqa: F821
 @login_required
+@require_permission(Permission.DOCUMENT_DELETE)
 @validate_request("file_ids")
 async def rm():
     req = await get_request_json()

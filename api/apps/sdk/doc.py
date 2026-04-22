@@ -1190,6 +1190,7 @@ async def list_chunks(tenant_id, dataset_id, document_id):
     "/datasets/<dataset_id>/documents/<document_id>/chunks", methods=["POST"]
 )
 @token_required
+@require_permission(Permission.DOCUMENT_CREATE)
 async def add_chunk(tenant_id, dataset_id, document_id):
     """
     Add a chunk to a document.
@@ -1351,6 +1352,7 @@ async def add_chunk(tenant_id, dataset_id, document_id):
     "datasets/<dataset_id>/documents/<document_id>/chunks", methods=["DELETE"]
 )
 @token_required
+@require_permission(Permission.DOCUMENT_DELETE)
 async def rm_chunk(tenant_id, dataset_id, document_id):
     """
     Remove chunks from a document.
@@ -1441,6 +1443,7 @@ async def rm_chunk(tenant_id, dataset_id, document_id):
     "/datasets/<dataset_id>/documents/<document_id>/chunks/<chunk_id>", methods=["PUT"]
 )
 @token_required
+@require_permission(Permission.DOCUMENT_CREATE)
 async def update_chunk(tenant_id, dataset_id, document_id, chunk_id):
     """
     Update a chunk within a document.
@@ -1571,6 +1574,7 @@ async def update_chunk(tenant_id, dataset_id, document_id, chunk_id):
     "/datasets/<dataset_id>/documents/<document_id>/chunks/switch", methods=["POST"]
 )
 @token_required
+@require_permission(Permission.DOCUMENT_CREATE)
 async def switch_chunks(tenant_id, dataset_id, document_id):
     """
     Switch availability of specified chunks (same as chunk_app switch).
@@ -1650,6 +1654,7 @@ async def switch_chunks(tenant_id, dataset_id, document_id):
 
 @manager.route("/retrieval", methods=["POST"])  # noqa: F821
 @token_required
+@require_permission(Permission.DATASET_READ)
 async def retrieval_test(tenant_id):
     """
     Retrieve chunks based on a query.

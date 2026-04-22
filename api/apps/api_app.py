@@ -21,6 +21,7 @@ from api.utils.api_utils import generate_confirmation_token, get_data_error_resu
 from api.utils.tenant_context import active_tenant_id
 from common.time_utils import current_timestamp, datetime_format
 from api.apps import login_required, current_user
+from api.apps.extensions.rbac import require_permission, Permission
 
 
 @manager.route('/new_token', methods=['POST'])  # noqa: F821
@@ -70,6 +71,7 @@ def token_list():
 @manager.route('/rm', methods=['POST'])  # noqa: F821
 @validate_request("tokens")
 @login_required
+@require_permission(Permission.API_KEY_MANAGE)
 async def rm():
     req = await get_request_json()
     try:

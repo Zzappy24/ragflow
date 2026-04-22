@@ -18,6 +18,7 @@ from quart import jsonify
 
 from api.apps import login_required
 from api.utils.api_utils import get_json_result, get_data_error_result, server_error_response, generate_confirmation_token
+from api.apps.extensions.rbac import require_permission, Permission
 from api.utils.health_utils import run_health_checks
 from api.utils.tenant_context import active_tenant_id
 from common.versions import get_ragflow_version
@@ -104,6 +105,7 @@ def token_list():
 
 @manager.route("/system/tokens", methods=["POST"])  # noqa: F821
 @login_required
+@require_permission(Permission.API_KEY_MANAGE)
 def new_token():
     """
     Generate a new API token.
@@ -150,6 +152,7 @@ def new_token():
 
 @manager.route("/system/tokens/<token>", methods=["DELETE"])  # noqa: F821
 @login_required
+@require_permission(Permission.API_KEY_MANAGE)
 def rm(token):
     """
     Remove an API token.

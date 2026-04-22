@@ -400,6 +400,9 @@ def token_required(func):
                 if resolved_tenant:
                     kwargs["tenant_id"] = resolved_tenant
                     _track_active_user(user[0].id)
+                    # Store user_id in request context so require_permission can
+                    # enforce workspace RBAC for login-token-as-API-key callers.
+                    _g._rbac_user_id = user[0].id
                     result = func(*args, **kwargs)
                     if inspect.iscoroutine(result):
                         return await result

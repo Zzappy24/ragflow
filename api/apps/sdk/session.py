@@ -1252,6 +1252,7 @@ async def sequence2txt(tenant_id):
 
 @manager.route("/tts", methods=["POST"])  # noqa: F821
 @token_required
+@require_permission(Permission.CHAT_USE)
 async def tts(tenant_id):
     req = await get_request_json()
     text = req["text"]

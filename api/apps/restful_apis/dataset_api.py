@@ -458,6 +458,7 @@ def trace_raptor(tenant_id, dataset_id):
 
 @manager.route("/datasets/<dataset_id>/auto_metadata", methods=["GET"])  # noqa: F821
 @login_required
+@require_permission(Permission.DATASET_READ)
 @add_tenant_id_to_kwargs
 def get_auto_metadata(tenant_id, dataset_id):
     """
@@ -497,6 +498,7 @@ def get_auto_metadata(tenant_id, dataset_id):
 
 @manager.route("/datasets/<dataset_id>/auto_metadata", methods=["PUT"])  # noqa: F821
 @login_required
+@require_permission(Permission.DATASET_UPDATE)
 @add_tenant_id_to_kwargs
 async def update_auto_metadata(tenant_id, dataset_id):
     """
