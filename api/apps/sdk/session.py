@@ -14,7 +14,6 @@
 #  limitations under the License.
 #
 import json
-import copy
 import re
 import time
 
@@ -29,7 +28,7 @@ from common.token_utils import num_tokens_from_string
 from agent.canvas import Canvas
 from api.db.db_models import APIToken
 from api.db.services.api_service import API4ConversationService
-from api.db.services.canvas_service import UserCanvasService, completion_openai
+from api.db.services.canvas_service import UserCanvasService
 from api.db.services.canvas_service import completion as agent_completion
 from api.db.services.conversation_service import ConversationService
 from api.db.services.user_canvas_version import UserCanvasVersionService
@@ -45,7 +44,7 @@ from api.db.services.user_service import UserTenantService
 from api.db.joint_services.tenant_model_service import get_tenant_default_model_by_type, get_model_config_by_id, \
     get_model_config_by_type_and_name
 from common.misc_utils import get_uuid
-from api.utils.api_utils import check_duplicate_ids, get_data_openai, get_error_data_result, get_json_result, \
+from api.utils.api_utils import check_duplicate_ids, get_error_data_result, get_json_result, \
     get_result, get_request_json, server_error_response, token_required, validate_request
 from rag.app.tag import label_question
 from rag.prompts.template import load_prompt
@@ -55,7 +54,6 @@ from common import settings
 from api.apps.extensions.rbac import require_permission, Permission
 
 
-@manager.route("/agents/<agent_id>/sessions", methods=["POST"])  # noqa: F821
 @token_required
 @require_permission(Permission.CHAT_USE)
 async def create_agent_session(tenant_id, agent_id):

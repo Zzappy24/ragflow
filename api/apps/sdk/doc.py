@@ -42,10 +42,6 @@ from api.utils.image_utils import store_chunk_image
 from common import settings
 from common.constants import FileSource, LLMType, ParserType, RetCode, TaskStatus
 from common.metadata_utils import convert_conditions, meta_filter
-from common.misc_utils import thread_pool_exec
-from common.string_utils import is_content_empty, remove_redundant_spaces
-from common.tag_feature_utils import validate_tag_features
-from rag.app.qa import beAdoc, rmPrefix
 from rag.app.tag import label_question
 from rag.nlp import rag_tokenizer, search
 from api.apps.extensions.rbac import require_permission, Permission

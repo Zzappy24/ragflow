@@ -86,7 +86,7 @@ async def rm():
         return server_error_response(e)
 
 
-@manager.route('/stats', methods=['GET'])  # noqa: F821
+@manager.route('/system/stats', methods=['GET'])  # noqa: F821
 @login_required
 def stats():
     try:

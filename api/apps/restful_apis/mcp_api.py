@@ -1,5 +1,5 @@
 #
-#  Copyright 2024 The InfiniFlow Authors. All Rights Reserved.
+#  Copyright 2026 The InfiniFlow Authors. All Rights Reserved.
 #
 #  Licensed under the Apache License, Version 2.0 (the "License");
 #  you may not use this file except in compliance with the License.
@@ -13,25 +13,52 @@
 #  See the License for the specific language governing permissions and
 #  limitations under the License.
 #
-from quart import Response, request
-from api.apps import login_required
 from api.utils.tenant_context import active_tenant_id
-# --- CYLLENE CUSTOM CODE ---
 from api.apps.extensions.rbac import require_permission, Permission
-# --- END CYLLENE CUSTOM CODE ---
 
+from quart import Response, request
+
+from api.apps import current_user, login_required
 from api.db.db_models import MCPServer
 from api.db.services.mcp_server_service import MCPServerService
 from api.db.services.user_service import TenantService
-from common.constants import RetCode, VALID_MCP_SERVER_TYPES
-
-from common.misc_utils import get_uuid, thread_pool_exec
 from api.utils.api_utils import get_data_error_result, get_json_result, get_mcp_tools, get_request_json, server_error_response, validate_request
 from api.utils.web_utils import get_float, safe_json_parse
 from api.utils.network_utils import validate_external_url as validate_mcp_url
+from common.constants import VALID_MCP_SERVER_TYPES
 from common.mcp_tool_call_conn import MCPToolCallSession, close_multiple_mcp_toolcall_sessions
+from common.misc_utils import get_uuid, thread_pool_exec
 
-@manager.route("/list", methods=["POST"])  # noqa: F821
+
+def _get_mcp_ids_from_args() -> list[str]:
+    mcp_ids = request.args.getlist("mcp_ids")
+    if mcp_ids:
+        return [mcp_id for item in mcp_ids for mcp_id in item.split(",") if mcp_id]
+    mcp_ids = request.args.get("mcp_id", "")
+    return [mcp_id for mcp_id in mcp_ids.split(",") if mcp_id]
+
+
+def _export_mcp_servers(mcp_ids: list[str]) -> dict | None:
+    exported_servers = {}
+    for mcp_id in mcp_ids:
+        e, mcp_server = MCPServerService.get_by_id(mcp_id)
+        if e and mcp_server.tenant_id == current_user.id:
+            server_key = mcp_server.name
+            exported_servers[server_key] = {
+                "type": mcp_server.server_type,
+                "url": mcp_server.url,
+                "name": mcp_server.name,
+                "authorization_token": mcp_server.variables.get("authorization_token", ""),
+                "tools": mcp_server.variables.get("tools", {}),
+            }
+
+    if not exported_servers:
+        return None
+
+    return {"mcpServers": exported_servers}
+
+
+@manager.route("/mcp/servers", methods=["GET"])  # noqa: F821
 @login_required
 @require_permission(Permission.MCP_CONFIGURE)
 async def list_mcp() -> Response:
@@ -44,8 +71,7 @@ async def list_mcp() -> Response:
     else:
         desc = True
 
-    req = await get_request_json()
-    mcp_ids = req.get("mcp_ids", [])
+    mcp_ids = _get_mcp_ids_from_args()
     try:
         servers = MCPServerService.get_servers(active_tenant_id(), mcp_ids, 0, 0, orderby, desc, keywords) or []
         total = len(servers)
@@ -58,22 +84,21 @@ async def list_mcp() -> Response:
         return server_error_response(e)
 
 
-@manager.route("/detail", methods=["GET"])  # noqa: F821
+@manager.route("/mcp/servers/<mcp_id>", methods=["GET"])  # noqa: F821
 @login_required
-def detail() -> Response:
-    mcp_id = request.args["mcp_id"]
+def detail(mcp_id: str) -> Response:
     try:
         mcp_server = MCPServerService.get_or_none(id=mcp_id, tenant_id=active_tenant_id())
 
         if mcp_server is None:
-            return get_json_result(code=RetCode.NOT_FOUND, data=None)
+            return get_data_error_result(message=f"Cannot find MCP server {mcp_id} for user {current_user.id}")
 
         return get_json_result(data=mcp_server.to_dict())
     except Exception as e:
         return server_error_response(e)
 
 
-@manager.route("/create", methods=["POST"])  # noqa: F821
+@manager.route("/mcp/servers", methods=["POST"])  # noqa: F821
 @login_required
 @require_permission(Permission.MCP_CONFIGURE)  # --- CYLLENE CUSTOM CODE ---
 @validate_request("name", "url", "server_type")
@@ -116,7 +141,7 @@ async def create() -> Response:
         mcp_server = MCPServer(id=server_name, name=server_name, url=url, server_type=server_type, variables=variables, headers=headers)
         server_tools, err_message = await thread_pool_exec(get_mcp_tools, [mcp_server], timeout)
         if err_message:
-            return get_data_error_result(err_message)
+            return get_data_error_result(message=err_message)
 
         tools = server_tools[server_name]
         tools = {tool["name"]: tool for tool in tools if isinstance(tool, dict) and "name" in tool}
@@ -124,21 +149,19 @@ async def create() -> Response:
         req["variables"] = variables
 
         if not MCPServerService.insert(**req):
-            return get_data_error_result("Failed to create MCP server.")
+            return get_data_error_result(message="Failed to create MCP server.")
 
         return get_json_result(data=req)
     except Exception as e:
         return server_error_response(e)
 
 
-@manager.route("/update", methods=["POST"])  # noqa: F821
+@manager.route("/mcp/servers/<mcp_id>", methods=["PUT"])  # noqa: F821
 @login_required
 @require_permission(Permission.MCP_CONFIGURE)  # --- CYLLENE CUSTOM CODE ---
-@validate_request("mcp_id")
-async def update() -> Response:
+async def update(mcp_id: str) -> Response:
     req = await get_request_json()
 
-    mcp_id = req.get("mcp_id", "")
     e, mcp_server = MCPServerService.get_by_id(mcp_id)
     if not e or mcp_server.tenant_id != active_tenant_id():
         return get_data_error_result(message=f"Cannot find MCP server {mcp_id} for user {active_tenant_id()}")
@@ -171,7 +194,7 @@ async def update() -> Response:
         mcp_server = MCPServer(id=server_name, name=server_name, url=url, server_type=server_type, variables=variables, headers=headers)
         server_tools, err_message = await thread_pool_exec(get_mcp_tools, [mcp_server], timeout)
         if err_message:
-            return get_data_error_result(err_message)
+            return get_data_error_result(message=err_message)
 
         tools = server_tools[server_name]
         tools = {tool["name"]: tool for tool in tools if isinstance(tool, dict) and "name" in tool}
@@ -190,30 +213,23 @@ async def update() -> Response:
         return server_error_response(e)
 
 
-@manager.route("/rm", methods=["POST"])  # noqa: F821
+@manager.route("/mcp/servers/<mcp_id>", methods=["DELETE"])  # noqa: F821
 @login_required
 @require_permission(Permission.MCP_CONFIGURE)  # --- CYLLENE CUSTOM CODE ---
-@validate_request("mcp_ids")
-async def rm() -> Response:
-    req = await get_request_json()
-    mcp_ids = req.get("mcp_ids", [])
-
+async def rm(mcp_id: str) -> Response:
     try:
-        tid = active_tenant_id()
-        # CUSTOM B2B SaaS: only delete MCP servers that belong to the active workspace
-        owned = [s.id for s in MCPServerService.query(tenant_id=tid) if s.id in set(mcp_ids)]
-        if not owned:
-            return get_json_result(data=True)
-
-        if not MCPServerService.delete_by_ids(owned):
-            return get_data_error_result(message=f"Failed to delete MCP servers {owned}")
+        e, mcp_server = MCPServerService.get_by_id(mcp_id)
+        if not e or mcp_server.tenant_id != active_tenant_id():
+            return get_data_error_result(message=f"Cannot find MCP server {mcp_id} for user {active_tenant_id()}")
+        if not MCPServerService.delete_by_ids([mcp_id]):
+            return get_data_error_result(message=f"Failed to delete MCP servers {[mcp_id]}")
 
         return get_json_result(data=True)
     except Exception as e:
         return server_error_response(e)
 
 
-@manager.route("/import", methods=["POST"])  # noqa: F821
+@manager.route("/mcp/servers/import", methods=["POST"])  # noqa: F821
 @login_required
 @require_permission(Permission.MCP_CONFIGURE)  # --- CYLLENE CUSTOM CODE ---
 @validate_request("mcpServers")
@@ -281,7 +297,7 @@ async def import_multiple() -> Response:
         return server_error_response(e)
 
 
-@manager.route("/export", methods=["POST"])  # noqa: F821
+@manager.route("/export_multiple", methods=["POST"])  # noqa: F821
 @login_required
 @require_permission(Permission.MCP_CONFIGURE)
 @validate_request("mcp_ids")
@@ -419,11 +435,11 @@ async def cache_tool() -> Response:
     return get_json_result(data=tools)
 
 
-@manager.route("/test_mcp", methods=["POST"])  # noqa: F821
-@login_required  # RBAC: was missing upstream (SSRF risk)
+@manager.route("/mcp/servers/<mcp_id>/test", methods=["POST"])  # noqa: F821
+@login_required
 @require_permission(Permission.MCP_CONFIGURE)
 @validate_request("url", "server_type")
-async def test_mcp() -> Response:
+async def test_mcp(mcp_id: str) -> Response:
     req = await get_request_json()
 
     url = req.get("url", "")
@@ -440,7 +456,7 @@ async def test_mcp() -> Response:
     headers = safe_json_parse(req.get("headers", {}))
     variables = safe_json_parse(req.get("variables", {}))
 
-    mcp_server = MCPServer(id=f"{server_type}: {url}", server_type=server_type, url=url, headers=headers, variables=variables)
+    mcp_server = MCPServer(id=mcp_id, server_type=server_type, url=url, headers=headers, variables=variables)
 
     result = []
     try:
@@ -451,7 +467,6 @@ async def test_mcp() -> Response:
         except Exception as e:
             return get_data_error_result(message=f"Test MCP error: {e}")
         finally:
-            # PERF: blocking call to close sessions — consider moving to background thread or task queue
             await thread_pool_exec(close_multiple_mcp_toolcall_sessions, [tool_call_session])
 
         for tool in tools:
