@@ -13,8 +13,8 @@
 #  See the License for the specific language governing permissions and
 #  limitations under the License.
 #
-import json
 import copy
+import json
 import re
 import time
 
@@ -55,7 +55,6 @@ from common import settings
 from api.apps.extensions.rbac import require_permission, Permission
 
 
-@manager.route("/agents/<agent_id>/sessions", methods=["POST"])  # noqa: F821
 @token_required
 @require_permission(Permission.CHAT_USE)
 async def create_agent_session(tenant_id, agent_id):

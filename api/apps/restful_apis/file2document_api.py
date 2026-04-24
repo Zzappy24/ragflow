@@ -24,8 +24,8 @@ from api.db.services.file_service import FileService
 from api.apps import login_required, current_user
 from api.db.services.knowledgebase_service import KnowledgebaseService
 from api.utils.api_utils import get_data_error_result, get_json_result, get_request_json, server_error_response, validate_request
-from common.misc_utils import get_uuid
 from common.constants import RetCode
+from common.misc_utils import get_uuid
 from api.db import FileType
 from api.db.services.document_service import DocumentService
 from api.apps.extensions.rbac import require_permission, Permission
@@ -75,7 +75,7 @@ def _convert_files(file_ids, kb_ids, user_id):
             })
 
 
-@manager.route('/convert', methods=['POST'])  # noqa: F821
+@manager.route('/files/link-to-datasets', methods=['POST'])  # noqa: F821
 @login_required
 @require_permission(Permission.DOCUMENT_CREATE)
 @validate_request("file_ids", "kb_ids")
