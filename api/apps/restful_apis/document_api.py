@@ -902,6 +902,7 @@ async def update_metadata_config(tenant_id, dataset_id, document_id):
 
 @manager.route("/datasets/<dataset_id>/documents/metadatas", methods=["PATCH"])  # noqa: F821
 @login_required
+@require_permission(Permission.DOCUMENT_CREATE)
 @add_tenant_id_to_kwargs
 async def update_metadata(tenant_id, dataset_id):
     """

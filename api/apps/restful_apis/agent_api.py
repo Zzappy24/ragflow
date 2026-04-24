@@ -33,6 +33,7 @@ from agent.canvas import Canvas
 from agent.component import LLM
 from agent.dsl_migration import normalize_chunker_dsl
 from api.apps import current_user, login_required
+from api.apps.extensions.rbac import require_permission, Permission
 from api.apps.services.canvas_replica_service import CanvasReplicaService
 from api.db import CanvasCategory
 from api.db.db_models import Task
@@ -167,6 +168,7 @@ def list_agent_sessions(agent_id, tenant_id):
 
 @manager.route("/agents/<agent_id>/sessions", methods=["POST"])  # noqa: F821
 @login_required
+@require_permission(Permission.AGENT_CREATE)
 @add_tenant_id_to_kwargs
 async def create_agent_session(agent_id, tenant_id):
     req = await get_request_json()
@@ -218,6 +220,7 @@ def get_agent_session(agent_id, session_id, tenant_id):
 
 @manager.route("/agents/<agent_id>/sessions/<session_id>", methods=["DELETE"])  # noqa: F821
 @login_required
+@require_permission(Permission.AGENT_DELETE)
 @add_tenant_id_to_kwargs
 def delete_agent_session_item(agent_id, session_id, tenant_id):
     if not UserCanvasService.accessible(agent_id, tenant_id):
@@ -339,6 +342,7 @@ def list_agents(tenant_id):
 
 @manager.route("/agents", methods=["POST"])  # noqa: F821
 @login_required
+@require_permission(Permission.AGENT_CREATE)
 @add_tenant_id_to_kwargs
 async def create_agent(tenant_id):
     req = {k: v for k, v in (await get_request_json()).items() if v is not None}
@@ -406,6 +410,7 @@ async def create_agent(tenant_id):
 
 
 @manager.route("/agents/<agent_id>/upload", methods=["POST"])  # noqa: F821
+@require_permission(Permission.AGENT_UPDATE)
 async def upload_agent_file(agent_id):
     exists, canvas = UserCanvasService.get_by_canvas_id(agent_id)
     if not exists:
@@ -449,6 +454,7 @@ def get_agent_component_input_form(agent_id, component_id, tenant_id):
 @manager.route("/agents/<agent_id>/components/<component_id>/debug", methods=["POST"])  # noqa: F821
 @validate_request("params")
 @login_required
+@require_permission(Permission.AGENT_UPDATE)
 @add_tenant_id_to_kwargs
 async def debug_agent_component(agent_id, component_id, tenant_id):
     req = await get_request_json()
@@ -592,6 +598,7 @@ def get_agent_logs(agent_id, message_id, tenant_id):
 
 @manager.route("/agents/<agent_id>", methods=["DELETE"])  # noqa: F821
 @login_required
+@require_permission(Permission.AGENT_DELETE)
 @add_tenant_id_to_kwargs
 def delete_agent(agent_id, tenant_id):
     if not UserCanvasService.query(user_id=tenant_id, id=agent_id):
@@ -607,6 +614,7 @@ def delete_agent(agent_id, tenant_id):
 
 @manager.route("/agents/<agent_id>", methods=["PUT"])  # noqa: F821
 @login_required
+@require_permission(Permission.AGENT_UPDATE)
 @add_tenant_id_to_kwargs
 async def update_agent(agent_id, tenant_id):
     req = {k: v for k, v in (await get_request_json()).items() if v is not None}
@@ -663,6 +671,7 @@ async def update_agent(agent_id, tenant_id):
 
 @manager.route("/agents/<agent_id>/reset", methods=["POST"])  # noqa: F821
 @login_required
+@require_permission(Permission.AGENT_UPDATE)
 @add_tenant_id_to_kwargs
 async def reset_agent(agent_id, tenant_id):
     if not UserCanvasService.accessible(agent_id, tenant_id):
@@ -699,6 +708,7 @@ async def reset_agent(agent_id, tenant_id):
 @manager.route("/agents/rerun", methods=["POST"])  # noqa: F821
 @validate_request("id", "dsl", "component_id")
 @login_required
+@require_permission(Permission.AGENT_UPDATE)
 @add_tenant_id_to_kwargs
 async def rerun_agent(tenant_id):
     req = await get_request_json()
@@ -735,6 +745,7 @@ async def rerun_agent(tenant_id):
 @manager.route("/agents/test_db_connection", methods=["POST"])  # noqa: F821
 @validate_request("db_type", "database", "username", "host", "port", "password")
 @login_required
+@require_permission(Permission.AGENT_UPDATE)
 async def test_db_connection():
     req = await get_request_json()
     try:
@@ -845,6 +856,7 @@ async def test_db_connection():
 
 @manager.route("/agents/chat/completion", methods=["POST"])  # noqa: F821
 @login_required
+@require_permission(Permission.CHAT_USE)
 @add_tenant_id_to_kwargs
 async def agent_chat_completion(tenant_id):
     # This endpoint serves two execution modes:

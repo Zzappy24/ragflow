@@ -57,8 +57,23 @@ EXEMPT: set[tuple[str, str]] = {
     ("api/apps/user_app.py", "forget_send_otp"),
     ("api/apps/user_app.py", "forget_verify_otp"),
     ("api/apps/user_app.py", "forget_reset_password"),
+    # Same auth routes migrated to restful_apis/user_api.py — inline workspace/tenant checks.
+    ("api/apps/restful_apis/user_api.py", "login"),
+    ("api/apps/restful_apis/user_api.py", "log_out"),
+    ("api/apps/restful_apis/user_api.py", "internal_bridge_prepare"),
+    ("api/apps/restful_apis/user_api.py", "internal_invite_prepare"),
+    ("api/apps/restful_apis/user_api.py", "bridge_login"),
+    ("api/apps/restful_apis/user_api.py", "set_initial_password"),
+    ("api/apps/restful_apis/user_api.py", "setting_user"),
+    ("api/apps/restful_apis/user_api.py", "user_add"),
+    ("api/apps/restful_apis/user_api.py", "forget_get_captcha"),
+    ("api/apps/restful_apis/user_api.py", "forget_send_otp"),
+    ("api/apps/restful_apis/user_api.py", "forget_verify_otp"),
+    ("api/apps/restful_apis/user_api.py", "forget_reset_password"),
     # api_app new_token: already restricted to superusers only (inline check).
     ("api/apps/api_app.py", "new_token"),
+    # Same route migrated to restful_apis/stats_api.py — same inline superuser check.
+    ("api/apps/restful_apis/stats_api.py", "new_token"),
     # restful_apis system_api tokens: handled by require_permission(API_KEY_MANAGE).
     # Team/tenant management — old-style invite flow, superseded by workspace system.
     ("api/apps/tenant_app.py", "create"),
@@ -87,6 +102,8 @@ EXEMPT: set[tuple[str, str]] = {
     ("api/apps/sdk/dify_retrieval.py", "retrieval"),
     # Webhook endpoint — public by design, security handled in DSL (IP whitelist, token, JWT).
     ("api/apps/sdk/agents.py", "webhook"),
+    # Same webhook migrated to restful_apis/agent_api.py — same public-by-design semantics.
+    ("api/apps/restful_apis/agent_api.py", "webhook"),
 }
 
 

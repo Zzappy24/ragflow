@@ -22,6 +22,7 @@ from pydantic import BaseModel, Field, validator
 from quart import request
 
 from api.apps import login_required
+from api.apps.extensions.rbac import require_permission, Permission
 from api.db.joint_services.tenant_model_service import (
     get_model_config_by_id,
     get_model_config_by_type_and_name,
@@ -199,6 +200,7 @@ async def get_chunk(tenant_id, dataset_id, document_id, chunk_id):
 
 @manager.route("/datasets/<dataset_id>/documents/<document_id>/chunks", methods=["POST"])  # noqa: F821
 @login_required
+@require_permission(Permission.DOCUMENT_CREATE)
 @add_tenant_id_to_kwargs
 async def add_chunk(tenant_id, dataset_id, document_id):
     if not KnowledgebaseService.accessible(kb_id=dataset_id, user_id=tenant_id):
@@ -285,6 +287,7 @@ async def add_chunk(tenant_id, dataset_id, document_id):
 
 @manager.route("/datasets/<dataset_id>/documents/<document_id>/chunks", methods=["DELETE"])  # noqa: F821
 @login_required
+@require_permission(Permission.DOCUMENT_DELETE)
 @add_tenant_id_to_kwargs
 async def rm_chunk(tenant_id, dataset_id, document_id):
     if not KnowledgebaseService.accessible(kb_id=dataset_id, user_id=tenant_id):
@@ -329,6 +332,7 @@ async def rm_chunk(tenant_id, dataset_id, document_id):
 
 @manager.route("/datasets/<dataset_id>/documents/<document_id>/chunks/<chunk_id>", methods=["PATCH"])  # noqa: F821
 @login_required
+@require_permission(Permission.DOCUMENT_CREATE)
 @add_tenant_id_to_kwargs
 async def update_chunk(tenant_id, dataset_id, document_id, chunk_id):
     if not KnowledgebaseService.accessible(kb_id=dataset_id, user_id=tenant_id):
@@ -412,6 +416,7 @@ async def update_chunk(tenant_id, dataset_id, document_id, chunk_id):
 
 @manager.route("/datasets/<dataset_id>/documents/<document_id>/chunks", methods=["PATCH"])  # noqa: F821
 @login_required
+@require_permission(Permission.DOCUMENT_CREATE)
 @add_tenant_id_to_kwargs
 async def switch_chunks(tenant_id, dataset_id, document_id):
     if not KnowledgebaseService.accessible(kb_id=dataset_id, user_id=tenant_id):
