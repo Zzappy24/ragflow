@@ -24,19 +24,17 @@ POLL_INTERVAL = 3
 
 
 def _list_docs(auth, kb_id):
-    return requests.post(
-        f"{HOST_ADDRESS}/{VERSION}/document/list",
+    return requests.get(
+        f"{HOST_ADDRESS}/api/{VERSION}/datasets/{kb_id}/documents",
         auth=auth,
-        params={"id": kb_id},
-        json={},
     ).json()
 
 
-def _trigger_parse(auth, doc_id):
+def _trigger_parse(auth, kb_id, doc_id):
     res = requests.post(
-        f"{HOST_ADDRESS}/{VERSION}/document/run",
+        f"{HOST_ADDRESS}/api/{VERSION}/datasets/{kb_id}/documents/parse",
         auth=auth,
-        json={"doc_ids": [doc_id], "run": "1"},
+        json={"document_ids": [doc_id]},
     ).json()
     assert res.get("code") == 0, f"Failed to trigger parse: {res}"
 
@@ -98,7 +96,7 @@ class TestE2EDocumentPipeline:
         )
 
         # 3. Trigger parsing
-        _trigger_parse(ws_auth, doc_id)
+        _trigger_parse(ws_auth, kb_id, doc_id)
 
         # 4. Poll until DONE
         done_doc = _wait_for_done(ws_auth, kb_id, doc_id)

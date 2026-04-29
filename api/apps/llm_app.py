@@ -232,6 +232,9 @@ async def add_llm():
     elif factory == "PaddleOCR":
         api_key = apikey_json(["api_key", "provider_order"])
 
+    elif factory == "OpenDataLoader":
+        api_key = apikey_json(["api_key", "provider_order"])
+
     llm = {
         "tenant_id": active_tenant_id(),
         "llm_factory": factory,
@@ -406,6 +409,7 @@ async def delete_factory():
 def my_llms():
     try:
         TenantLLMService.ensure_mineru_from_env(active_tenant_id())
+        TenantLLMService.ensure_opendataloader_from_env(active_tenant_id())
         include_details = request.args.get("include_details", "false").lower() == "true"
 
         if include_details:

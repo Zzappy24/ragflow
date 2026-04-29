@@ -37,6 +37,40 @@ IMPORT_CHECK_FILES = sorted([
 
 WRITE_METHODS = {"POST", "PUT", "PATCH", "DELETE"}
 
+# GET routes intentionally exempt from the @login_required / @token_required requirement.
+# Key: (path relative to repo root, function_name)
+# Each entry MUST include a justification comment.
+EXEMPT_GET: set[tuple[str, str]] = {
+    # OAuth callbacks — public callback URLs by design (stateful redirect flow).
+    ("api/apps/restful_apis/connector_api.py", "google_gmail_web_oauth_callback"),
+    ("api/apps/restful_apis/connector_api.py", "google_drive_web_oauth_callback"),
+    ("api/apps/restful_apis/connector_api.py", "box_web_oauth_callback"),
+    ("api/apps/restful_apis/user_api.py", "oauth_login"),
+    ("api/apps/restful_apis/user_api.py", "oauth_callback"),
+    # Liveness / config probes — must be reachable without auth (health checks, k8s).
+    ("api/apps/restful_apis/system_api.py", "ping"),
+    ("api/apps/restful_apis/system_api.py", "healthz"),
+    ("api/apps/restful_apis/system_api.py", "get_config"),
+    ("api/apps/restful_apis/user_api.py", "get_login_channels"),
+    # Webhook endpoints — security via signed payload / DSL token, not session auth.
+    ("api/apps/restful_apis/agent_api.py", "webhook"),
+    ("api/apps/sdk/agents.py", "webhook"),
+    ("api/apps/sdk/agents.py", "webhook_trace"),
+    # Embedded chatbot/searchbot widgets — inline API-token validation, intentionally public.
+    ("api/apps/sdk/session.py", "chatbots_inputs"),
+    ("api/apps/sdk/session.py", "begin_inputs"),
+    ("api/apps/sdk/session.py", "detail_share_embedded"),
+    # Old-style connector OAuth poll routes — redirect-based auth, no session.
+    ("api/apps/connector_app.py", "poll_google_web_result"),
+    ("api/apps/connector_app.py", "poll_box_web_result"),
+    ("api/apps/restful_apis/connector_api.py", "poll_google_web_result"),
+    ("api/apps/restful_apis/connector_api.py", "poll_box_web_result"),
+    # SDK download_doc — performs inline APIToken.query(beta=token) check at the
+    # top of the handler instead of using @token_required. The auth gate is real
+    # (line 437-444 of api/apps/sdk/doc.py), just wired by hand.
+    ("api/apps/sdk/doc.py", "download_doc"),
+}
+
 # Routes intentionally exempt from @require_permission.
 # Key: (path relative to repo root, function_name)
 # Each entry MUST include a justification comment — reviewers should question any new entry.
@@ -104,6 +138,21 @@ EXEMPT: set[tuple[str, str]] = {
     ("api/apps/sdk/agents.py", "webhook"),
     # Same webhook migrated to restful_apis/agent_api.py — same public-by-design semantics.
     ("api/apps/restful_apis/agent_api.py", "webhook"),
+
+    # --- api/apps/backward_compat.py ---
+    # backward_compat.py routes are deprecated forwarders that call the new RESTful
+    # routes — permission enforcement happens in the underlying handler being called.
+    ("api/apps/backward_compat.py", "deprecated_chat_completions"),
+    ("api/apps/backward_compat.py", "deprecated_openai_chat_completions"),
+    ("api/apps/backward_compat.py", "deprecated_update_session"),
+    ("api/apps/backward_compat.py", "deprecated_file_create"),
+    ("api/apps/backward_compat.py", "deprecated_file_upload"),
+    ("api/apps/backward_compat.py", "deprecated_file_mv"),
+    ("api/apps/backward_compat.py", "deprecated_file_rename"),
+    ("api/apps/backward_compat.py", "deprecated_file_rm"),
+    ("api/apps/backward_compat.py", "deprecated_file_upload_info"),
+    ("api/apps/backward_compat.py", "deprecated_related_questions"),
+    ("api/apps/backward_compat.py", "deprecated_update_chunk"),
 }
 
 
@@ -263,4 +312,115 @@ def test_no_undefined_names_in_route_files():
             "\n(Add to PYFLAKES_EXEMPT with justification if the name is injected"
             " at runtime, e.g. by register_page().)"
         )
+        pytest.fail("\n".join(lines))
+
+
+# ---------------------------------------------------------------------------
+# GET-route auth check helpers
+# ---------------------------------------------------------------------------
+
+def _is_get_route(decorator: ast.expr) -> bool:
+    """
+    Return True if decorator is @X.route(...) with no methods kwarg (default GET)
+    or with methods that include "GET".
+    """
+    if not isinstance(decorator, ast.Call):
+        return False
+    func = decorator.func
+    if not (isinstance(func, ast.Attribute) and func.attr == "route"):
+        return False
+    for kw in decorator.keywords:
+        if kw.arg == "methods" and isinstance(kw.value, ast.List):
+            declared = {
+                elt.value
+                for elt in kw.value.elts
+                if isinstance(elt, ast.Constant) and isinstance(elt.value, str)
+            }
+            return "GET" in declared
+    # No methods kwarg → Flask/Quart default is GET
+    return True
+
+
+def _has_auth_decorator(decorators: list[ast.expr]) -> bool:
+    """
+    Return True if any decorator in the list is @login_required or @token_required
+    (by bare name or attribute access, e.g. app.login_required).
+    """
+    AUTH_NAMES = {"login_required", "token_required"}
+    for dec in decorators:
+        # @login_required  or  @token_required  (bare Name, not called)
+        if isinstance(dec, ast.Name) and dec.id in AUTH_NAMES:
+            return True
+        # @app.login_required  etc.
+        if isinstance(dec, ast.Attribute) and dec.attr in AUTH_NAMES:
+            return True
+        # @login_required()  — called with no args (uncommon but possible)
+        if isinstance(dec, ast.Call):
+            func = dec.func
+            if isinstance(func, ast.Name) and func.id in AUTH_NAMES:
+                return True
+            if isinstance(func, ast.Attribute) and func.attr in AUTH_NAMES:
+                return True
+    return False
+
+
+def _collect_unauthed_get_routes(path: Path) -> list[tuple[str, str]]:
+    """
+    Parse *path* and return (rel_path, func_name) for every GET route that
+    lacks @login_required / @token_required and is NOT in EXEMPT_GET.
+    """
+    src = path.read_text(encoding="utf-8")
+    tree = ast.parse(src, filename=str(path))
+    rel = str(path.relative_to(ROOT))
+    violations = []
+
+    for node in ast.walk(tree):
+        if not isinstance(node, (ast.FunctionDef, ast.AsyncFunctionDef)):
+            continue
+        is_get = any(_is_get_route(dec) for dec in node.decorator_list)
+        if not is_get:
+            continue
+        if _has_auth_decorator(node.decorator_list):
+            continue
+        if (rel, node.name) in EXEMPT_GET:
+            continue
+        violations.append((rel, node.name))
+
+    return violations
+
+
+# ---------------------------------------------------------------------------
+# Test
+# ---------------------------------------------------------------------------
+
+def test_get_routes_require_auth():
+    """
+    Every GET route in the scanned files must have @login_required or
+    @token_required in its decorator chain.
+
+    WHY THIS TEST EXISTS
+    --------------------
+    Upstream's RESTful migration introduced GET /api/v1/documents/images/<image_id>
+    WITHOUT any auth decorator — making chunk images publicly readable to anyone
+    who knows or guesses an image_id (security regression).  This test would have
+    caught it immediately.
+
+    Routes that legitimately skip auth (OAuth callbacks, health checks, webhooks,
+    public widgets) must be explicitly listed in EXEMPT_GET with a justification
+    comment.  Reviewers should question any new entry.
+
+    @token_required counts as auth — SDK routes use this instead of login_required.
+    """
+    all_violations: list[tuple[str, str]] = []
+    for path in ROUTE_FILES:
+        assert path.exists(), f"Route file not found (update ROUTE_FILES): {path}"
+        all_violations.extend(_collect_unauthed_get_routes(path))
+
+    if all_violations:
+        lines = [
+            "\nGET routes missing @login_required or @token_required:\n",
+            "(add the decorator OR add to EXEMPT_GET with a justification comment)\n",
+        ]
+        for rel, func in sorted(all_violations):
+            lines.append(f"  {rel}::{func}")
         pytest.fail("\n".join(lines))

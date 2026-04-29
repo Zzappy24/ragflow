@@ -238,3 +238,4 @@ internal/cpp/cmake-build-debug/
 # Go server build output
 bin/*
 !bin/.gitkeep
+.claude/settings.local.json

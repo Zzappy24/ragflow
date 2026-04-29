@@ -15,11 +15,8 @@
 #
 
 import base64
-import ipaddress
 import json
 import re
-import socket
-from urllib.parse import urlparse
 import aiosmtplib
 from email.mime.text import MIMEText
 from email.header import Header
@@ -40,10 +37,10 @@ from api.utils.network_utils import validate_external_url as validate_mcp_url  #
 
 
 OTP_LENGTH = 4
-OTP_TTL_SECONDS = 5 * 60 # valid for 5 minutes
-ATTEMPT_LIMIT = 5 # maximum attempts
-ATTEMPT_LOCK_SECONDS = 30 * 60 # lock for 30 minutes
-RESEND_COOLDOWN_SECONDS = 60 # cooldown for 1 minute
+OTP_TTL_SECONDS = 5 * 60  # valid for 5 minutes
+ATTEMPT_LIMIT = 5  # maximum attempts
+ATTEMPT_LOCK_SECONDS = 30 * 60  # lock for 30 minutes
+RESEND_COOLDOWN_SECONDS = 60  # cooldown for 1 minute
 
 
 CONTENT_TYPE_MAP = {
@@ -191,29 +188,16 @@ def __get_pdf_from_html(path: str, timeout: int, install_driver: bool, print_opt
         return base64.b64decode(result["data"])
 
 
-def is_private_ip(ip: str) -> bool:
-    try:
-        ip_obj = ipaddress.ip_address(ip)
-        return ip_obj.is_private
-    except ValueError:
-        return False
-
-
 def is_valid_url(url: str) -> bool:
     if not re.match(r"(https?)://[-A-Za-z0-9+&@#/%?=~_|!:,.;]+[-A-Za-z0-9+&@#/%=~_|]", url):
         return False
-    parsed_url = urlparse(url)
-    hostname = parsed_url.hostname
+    from common.ssrf_guard import assert_url_is_safe
 
-    if not hostname:
-        return False
     try:
-        ip = socket.gethostbyname(hostname)
-        if is_private_ip(ip):
-            return False
-    except socket.gaierror:
+        assert_url_is_safe(url)
+        return True
+    except ValueError:
         return False
-    return True
 
 
 def safe_json_parse(data: str | dict) -> dict:
