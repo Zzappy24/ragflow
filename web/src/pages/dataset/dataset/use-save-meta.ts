@@ -2,8 +2,10 @@ import { useSetModalState } from '@/hooks/common-hooks';
 import { useSetDocumentMeta } from '@/hooks/use-document-request';
 import { IDocumentInfo } from '@/interfaces/database/document';
 import { useCallback, useState } from 'react';
+import { useParams } from 'react-router';
 
 export const useSaveMeta = () => {
+  const { id: datasetId } = useParams();
   const { setDocumentMeta, loading } = useSetDocumentMeta();
   const [record, setRecord] = useState<IDocumentInfo>({} as IDocumentInfo);
 
@@ -17,6 +19,7 @@ export const useSaveMeta = () => {
     async (meta: string) => {
       const ret = await setDocumentMeta({
         documentId: record?.id,
+        datasetId: datasetId ?? '',
         meta,
       });
       if (ret === 0) {

@@ -223,7 +223,8 @@ class TestViewerForbiddenWrites:
         _assert_denied(viewer_auth, "PATCH", "/datasets/nonexistent-rbac/documents/doc1", {"name": "x"})
 
     def test_viewer_cannot_update_auto_metadata(self, viewer_auth):
-        _assert_denied(viewer_auth, "PUT", "/datasets/nonexistent-rbac/auto_metadata", {})
+        # Route renamed from /datasets/<id>/auto_metadata to /datasets/<id>/metadata/config
+        _assert_denied(viewer_auth, "PUT", "/datasets/nonexistent-rbac/metadata/config", {})
 
     def test_viewer_cannot_update_session(self, viewer_auth):
         _assert_denied(viewer_auth, "PATCH", "/chats/nonexistent-rbac/sessions/sess1", {"name": "x"})
@@ -256,7 +257,8 @@ class TestViewerAllowedReads:
         _assert_allowed(viewer_auth, "GET", f"/datasets/{ws_dataset}/documents")
 
     def test_viewer_can_get_auto_metadata(self, viewer_auth, ws_dataset):
-        _assert_allowed(viewer_auth, "GET", f"/datasets/{ws_dataset}/auto_metadata")
+        # Route renamed from /datasets/<id>/auto_metadata to /datasets/<id>/metadata/config
+        _assert_allowed(viewer_auth, "GET", f"/datasets/{ws_dataset}/metadata/config")
 
 
 LLM_API = f"{HOST}/v1/llm"

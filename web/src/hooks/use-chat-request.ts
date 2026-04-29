@@ -497,9 +497,9 @@ export function useUploadAndParseFile() {
         formData.append('file', file);
         formData.append('conversation_id', conversationId || id);
 
-        const { data } = await chatService.uploadAndParse(
+        const { data } = await chatService.documentInfoUpload(
           {
-            url: api.uploadAndParse,
+            url: api.documentInfoUpload,
             signal: controller.current.signal,
             data: formData,
             onUploadProgress: ({ progress }) => {

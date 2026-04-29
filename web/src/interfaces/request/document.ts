@@ -11,6 +11,18 @@ export interface IChangeParserConfigRequestBody {
   image_table_context_window?: number;
   image_context_size?: number;
   table_context_size?: number;
+  // Metadata fields
+  metadata?: Array<{
+    key?: string;
+    description?: string;
+    enum?: string[];
+  }>;
+  built_in_metadata?: Array<{
+    key?: string;
+    description?: string;
+    enum?: string[];
+  }>;
+  enable_metadata?: boolean;
 }
 
 export interface IChangeParserRequestBody {
@@ -22,5 +34,6 @@ export interface IChangeParserRequestBody {
 
 export interface IDocumentMetaRequestBody {
   documentId: string;
+  datasetId: string;
   meta: string; // json format string
 }

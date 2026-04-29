@@ -40,7 +40,7 @@ function useAuthBlobUrl(url: string) {
 }
 
 export function useImageBlobUrl(id: string, t?: string | number) {
-  return useAuthBlobUrl(`/v1/document/image/${id}${t ? `?_t=${t}` : ''}`);
+  return useAuthBlobUrl(`/api/v1/documents/images/${id}${t ? `?_t=${t}` : ''}`);
 }
 
 export function useThumbnailBlobUrl(thumbnailUrl: string) {

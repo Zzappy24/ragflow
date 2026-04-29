@@ -16,7 +16,6 @@ const {
   resetAgent,
   listAgentTemplate,
   testDbConnect,
-  getInputElements,
   trace,
   fetchVersionList,
   fetchVersion,
@@ -70,10 +69,6 @@ const methods = {
     url: testDbConnect,
     method: 'post',
   },
-  getInputElements: {
-    url: getInputElements,
-    method: 'get',
-  },
   debugSingle: {
     url: (config: { agentId: string; componentId: string }) =>
       api.debug(config.agentId, config.componentId),
@@ -107,11 +102,11 @@ const methods = {
   },
   cancelDataflow: {
     url: cancelDataflow,
-    method: 'put',
+    method: 'post',
   },
   cancelCanvas: {
     url: cancelCanvas,
-    method: 'put',
+    method: 'post',
   },
   createAgentSession: {
     url: api.createAgentSession,

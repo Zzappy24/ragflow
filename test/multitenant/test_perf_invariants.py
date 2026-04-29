@@ -103,8 +103,13 @@ class TestTaskExecutorPipeline:
 
 class TestTenantIsolationInHandlers:
     """
-    Key document and KB handlers must use active_tenant_id() for data scoping,
+    Key document and dataset handlers must use active_tenant_id() for data scoping,
     NOT current_user.id. Using current_user.id leaks data across workspaces.
+
+    kb_app.py and canvas_app.py were deleted in the upstream REST migration.
+    The equivalent routes now live in api/apps/restful_apis/dataset_api.py and
+    api/apps/restful_apis/document_api.py, which use add_tenant_id_to_kwargs
+    (which calls maybe_active_tenant_id()) for workspace-aware tenant resolution.
     """
 
     def test_document_app_uses_active_tenant(self):
@@ -114,25 +119,38 @@ class TestTenantIsolationInHandlers:
             "Data scoping may be broken — verify handlers use active_tenant_id(), not current_user.id."
         )
 
-    def test_kb_app_uses_active_tenant(self):
-        src = read("api/apps/kb_app.py")
-        assert "active_tenant_id()" in src, (
-            "active_tenant_id() not found in kb_app.py."
+    def test_dataset_api_uses_active_tenant(self):
+        """dataset_api.py (replacement for deleted kb_app.py) must use
+        add_tenant_id_to_kwargs, which calls maybe_active_tenant_id() internally."""
+        src = read("api/apps/restful_apis/dataset_api.py")
+        assert "add_tenant_id_to_kwargs" in src, (
+            "add_tenant_id_to_kwargs not found in dataset_api.py. "
+            "Workspace tenant resolution may be broken — handlers must use "
+            "add_tenant_id_to_kwargs (which calls maybe_active_tenant_id())."
+        )
+        # Also verify the underlying helper uses maybe_active_tenant_id
+        utils_src = read("api/utils/api_utils.py")
+        assert "maybe_active_tenant_id" in utils_src, (
+            "maybe_active_tenant_id() not found in api_utils.py add_tenant_id_to_kwargs. "
+            "Workspace-aware tenant resolution is broken."
         )
 
     def test_document_list_maps_run_status(self):
-        """The /list handler must contain the run_mapping dict (string enum conversion)."""
-        src = read("api/apps/document_app.py")
-        assert '"UNSTART"' in src and '"RUNNING"' in src, (
-            "run_mapping strings not found in document_app.py. "
-            "The /list endpoint may be returning raw integer run values to the frontend."
+        """The RESTful list handler (document_api.py) or its service layer must
+        contain the run_mapping dict (string enum conversion)."""
+        # Primary location: api/apps/services/document_api_service.py
+        service_src = read("api/apps/services/document_api_service.py")
+        assert '"UNSTART"' in service_src and '"RUNNING"' in service_src, (
+            "run_mapping strings not found in document_api_service.py. "
+            "The /datasets/<id>/documents endpoint may be returning raw integer run values."
         )
 
     def test_document_list_maps_chunk_count(self):
-        """The /list handler must alias chunk_num → chunk_count for the frontend."""
-        src = read("api/apps/document_app.py")
-        assert "chunk_count" in src, (
-            "'chunk_count' alias not found in document_app.py list handler. "
+        """The RESTful list handler or its service layer must alias
+        chunk_num → chunk_count for the frontend."""
+        service_src = read("api/apps/services/document_api_service.py")
+        assert "chunk_count" in service_src, (
+            "'chunk_count' alias not found in document_api_service.py. "
             "Frontend will show blank chunk column."
         )
 
