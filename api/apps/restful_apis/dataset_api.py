@@ -295,17 +295,20 @@ async def update(tenant_id, dataset_id):
     # |----------------|-------------|
     # | embedding_model| embd_id     |
     # | chunk_method   | parser_id   |
-    # CUSTOM B2B SaaS: block embedding_model changes for non-admins (FinOps — GPU cost control)
-    raw_body = await request.get_json() or {}
-    if "embedding_model" in raw_body and not has_permission(
-        current_user.id, tenant_id, Permission.LLM_CONFIGURE
-    ):
-        return get_error_argument_result("Only workspace admins can change the embedding model.")
-
     extras = {"dataset_id": dataset_id}
     req, err = await validate_and_parse_json_request(request, UpdateDatasetReq, extras=extras, exclude_unset=True)
     if err is not None:
         return get_error_argument_result(err)
+
+    # CUSTOM B2B SaaS: block embedding_model changes for non-admins (FinOps — GPU cost control).
+    # Must run AFTER validate_and_parse_json_request so we keep upstream's
+    # specific error codes/messages for malformed payloads (otherwise a raw
+    # request.get_json() call here would let werkzeug.BadRequest leak through
+    # as a generic 400/code:100 instead of the contract's 101 + helpful text).
+    if "embd_id" in req and not has_permission(
+        current_user.id, tenant_id, Permission.LLM_CONFIGURE
+    ):
+        return get_error_argument_result("Only workspace admins can change the embedding model.")
 
     try:
         success, result = await dataset_api_service.update_dataset(tenant_id, dataset_id, req)
