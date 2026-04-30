@@ -69,6 +69,15 @@ from api.db.services.workspace_service import (  # noqa: E402
 # ---------------------------------------------------------------------------
 os.environ.setdefault("ZHIPU_AI_API_KEY", "stub-not-actually-called")
 
+# Match the backend's DOC_ENGINE so upstream's @pytest.mark.skipif marks
+# (e.g. `skipif(os.getenv("DOC_ENGINE") == "infinity")` on tests with
+# Infinity-specific behaviour) are evaluated correctly at parametrize time.
+# Without this, those tests would run anyway and fail with what looks like
+# contract drift but is actually upstream's own "skip on Infinity"
+# annotation that we mis-evaluated. Set it BEFORE upstream test modules
+# are imported by `_bridge.py` (parametrize decorators run at import time).
+os.environ.setdefault("DOC_ENGINE", "infinity")
+
 
 # ---------------------------------------------------------------------------
 # STEP 3 — make upstream test infrastructure importable.
@@ -407,20 +416,6 @@ _ENV_SKIPS: list[tuple[str, str]] = [
     ("test_update_document.py::TestUpdateDocumentParserConfig::test_parser_config[naive-parser_config0-0-]",
      "fork uses workspace-tenant chat model, not glm-4-flash@ZHIPU-AI default"),
 
-    # ------------------------------------------------------------------
-    # Chunk-list contract drift on a few payload shapes — `id` field
-    # missing in nested chunk dicts and one keyword-search result count
-    # off by one. These look like RESTful chunk_api response shape diffs;
-    # not a security issue, just envelope keys. Track for follow-up.
-    # ------------------------------------------------------------------
-    ("test_delete_chunks.py::TestChunksDeletion::test_invalid_document_id",
-     "delete_chunks RESTful response shape diff vs upstream contract"),
-    ("test_list_chunks.py::TestChunksList::test_keywords[params4-1]",
-     "keyword filter result count divergence (chunk_api response shape)"),
-    ("test_list_chunks.py::TestChunksList::test_id[<lambda>-0-1-]",
-     "list-by-id contract drift (chunk_api response shape)"),
-    ("test_list_chunks.py::TestChunksList::test_get_chunk",
-     "single-chunk shape: KeyError 'id' — RESTful chunk_api uses 'chunk_id'?"),
 ]
 
 
