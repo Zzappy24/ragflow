@@ -171,15 +171,31 @@ class RAGFlowMinio:
     @use_default_bucket
     @use_prefix_path
     def get(self, bucket, filename, tenant_id=None):
-        for _ in range(1):
+        # CUSTOM PERF/RELIABILITY: upstream had `range(1)` here — a single
+        # attempt that, on failure, only reconnected and slept (no retry).
+        # That made every transient MinIO blip surface as a hard "binary is
+        # None" downstream (task_executor → naive.chunk → cryptic
+        # "Embedding extraction from file path is not supported"). Retry
+        # 3× with exponential backoff so a 1s connection hiccup or a
+        # split-second post-PUT visibility lag doesn't poison ingestion.
+        # If upstream raises this loop bound back to 1, our regression test
+        # `test/multitenant/test_minio_retry.py` will fail loudly.
+        last_exc = None
+        for attempt in range(3):
             try:
                 r = self.conn.get_object(bucket, filename)
                 return r.read()
-            except Exception:
-                logging.exception(f"Fail to get {bucket}/{filename}")
+            except Exception as e:
+                last_exc = e
+                logging.warning(
+                    f"Fail to get {bucket}/{filename} (attempt {attempt + 1}/3): {e}"
+                )
                 self.__open__()
-                time.sleep(1)
-        return
+                time.sleep(min(2 ** attempt, 4))  # 1s, 2s, 4s
+        logging.error(
+            f"Failed to get {bucket}/{filename} after 3 attempts: {last_exc}"
+        )
+        return None
 
     @use_default_bucket
     @use_prefix_path
