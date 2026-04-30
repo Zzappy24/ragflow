@@ -309,8 +309,27 @@ def construct_json_result(code: RetCode = RetCode.SUCCESS, message="success", da
     return _safe_jsonify({"code": code, "message": message, "data": data})
 
 
-def _track_active_user(user_id: str) -> None:
-    """Record user activity in Redis sorted set. Silent no-op on any error."""
+_INTERNAL_EMAIL_MARKERS = (".internal@", "@internal")
+
+
+def is_internal_user_email(email: str | None) -> bool:
+    """True if the email belongs to a CI/bot/system user. Centralised here so
+    `_track_active_user` and the dashboard's `total_users`/`active_users_15m`
+    use exactly the same filter — divergence is what made `ci.internal@...`
+    leak into the active-users count even though it was never a real user."""
+    if not email:
+        return False
+    return any(m in email for m in _INTERNAL_EMAIL_MARKERS)
+
+
+def _track_active_user(user_id: str, email: str = "") -> None:
+    """Record user activity in Redis sorted set. Silent no-op on any error.
+
+    Internal/bot/CI users (matched by email) are skipped so they don't
+    pollute the dashboard's active-user count.
+    """
+    if is_internal_user_email(email):
+        return
     try:
         import time as _time
         from rag.utils.redis_conn import REDIS_CONN
@@ -400,7 +419,7 @@ def token_required(func):
                     raise err
                 if resolved_tenant:
                     kwargs["tenant_id"] = resolved_tenant
-                    _track_active_user(user[0].id)
+                    _track_active_user(user[0].id, getattr(user[0], "email", "") or "")
                     # Store user_id in request context so require_permission can
                     # enforce workspace RBAC for login-token-as-API-key callers.
                     _g._rbac_user_id = user[0].id

@@ -254,9 +254,15 @@ def global_overview(_user=Depends(require_superuser)):
             .where(~WsModel.name.startswith("ws-"))
             .count()
         )
+        # CUSTOM PERF: filter must match api/utils/api_utils.py::is_internal_user_email
+        # so total_users and active_users_15m exclude the same set of CI/bot users.
+        # The pattern catches both `*@internal` and `*.internal@*` (e.g.
+        # `ci.internal@cyllene.com`, `viewer.internal@cyllene.com`) which a plain
+        # `endswith("@internal")` missed.
         total_users = (
             User.select()
             .where(User.status == "1")
+            .where(~User.email.contains(".internal@"))
             .where(~User.email.endswith("@internal"))
             .count()
         )

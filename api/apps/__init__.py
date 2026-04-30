@@ -244,7 +244,7 @@ def login_required(func: Callable[P, Awaitable[T]]) -> Callable[P, Awaitable[T]]
             raise QuartAuthUnauthorized()
         try:
             from api.utils.api_utils import _track_active_user
-            _track_active_user(user.id)
+            _track_active_user(user.id, getattr(user, "email", "") or "")
         except Exception:
             pass
         return await current_app.ensure_async(func)(*args, **kwargs)
