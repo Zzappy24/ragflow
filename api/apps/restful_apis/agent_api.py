@@ -122,6 +122,7 @@ def _agent_session_list_result(data, total):
 
 @manager.route("/agents/<agent_id>/sessions", methods=["GET"])  # noqa: F821
 @login_required
+@require_permission(Permission.CHAT_READ)
 @add_tenant_id_to_kwargs
 def list_agent_sessions(agent_id, tenant_id):
     if not UserCanvasService.accessible(agent_id, tenant_id):
