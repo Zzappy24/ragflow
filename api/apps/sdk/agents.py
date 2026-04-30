@@ -51,6 +51,7 @@ def _get_user_nickname(user_id: str) -> str:
 
 @manager.route('/agents', methods=['GET'])  # noqa: F821
 @token_required
+@require_permission(Permission.AGENT_READ)
 def list_agents(tenant_id):
     id = request.args.get("id")
     title = request.args.get("title")

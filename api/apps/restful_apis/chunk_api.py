@@ -182,6 +182,7 @@ async def list_chunks(tenant_id, dataset_id, document_id):
 
 @manager.route("/datasets/<dataset_id>/documents/<document_id>/chunks/<chunk_id>", methods=["GET"])  # noqa: F821
 @login_required
+@require_permission(Permission.DOCUMENT_READ)
 @add_tenant_id_to_kwargs
 async def get_chunk(tenant_id, dataset_id, document_id, chunk_id):
     if not KnowledgebaseService.accessible(kb_id=dataset_id, user_id=tenant_id):

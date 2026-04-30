@@ -393,6 +393,181 @@ def _collect_unauthed_get_routes(path: Path) -> list[tuple[str, str]]:
 # Test
 # ---------------------------------------------------------------------------
 
+# ---------------------------------------------------------------------------
+# GET-route RBAC: read endpoints must enforce permission, not just auth.
+# ---------------------------------------------------------------------------
+#
+# An authenticated user is NOT automatically authorized — a viewer in
+# workspace A still must be denied when reading a dataset from workspace B,
+# and a non-member of any workspace must not be able to list other people's
+# data just because they have a valid JWT.  GET routes that surface
+# workspace-scoped data therefore need `@require_permission(…READ)`.
+#
+# Each entry in EXEMPT_GET_RBAC must come with a one-line reason — reviewers
+# should question any new addition.
+
+EXEMPT_GET_RBAC: set[tuple[str, str]] = {
+    # Already exempt from auth altogether — re-listed here so this test
+    # doesn't double-flag them.  Keep in sync with EXEMPT_GET above.
+    *EXEMPT_GET,
+
+    # `current_user.id`-scoped endpoints — they intentionally only return the
+    # caller's own data; there is no permission gate to apply because there
+    # is no other user's data on the table.
+    ("api/apps/restful_apis/user_api.py", "user_info"),
+    ("api/apps/restful_apis/user_api.py", "user_setting"),
+    ("api/apps/restful_apis/user_api.py", "list_tenants"),
+    ("api/apps/restful_apis/user_api.py", "list_tenant_models"),
+    ("api/apps/restful_apis/user_api.py", "list_user_workspaces"),
+    ("api/apps/restful_apis/user_api.py", "list_user_organizations"),
+    ("api/apps/user_app.py", "user_info"),
+    ("api/apps/user_app.py", "list_tenants"),
+    ("api/apps/user_app.py", "tenant_info"),
+    ("api/apps/restful_apis/system_api.py", "list_tokens"),
+    ("api/apps/api_app.py", "token_list"),
+    ("api/apps/restful_apis/stats_api.py", "token_list"),
+
+    # Tenant/workspace listing — caller can only see their own memberships.
+    ("api/apps/tenant_app.py", "tenant_list"),
+
+    # llm_app.py — these inspect the user's PERSONAL tenant model defaults,
+    # not workspace-scoped business data.  Permission framework doesn't apply.
+    ("api/apps/llm_app.py", "factories"),
+    ("api/apps/llm_app.py", "list_app"),
+    ("api/apps/llm_app.py", "my_llms"),
+    ("api/apps/llm_app.py", "list_models"),
+
+    # Stats/observability — already gated to superusers via inline checks.
+    ("api/apps/api_app.py", "stats"),
+    ("api/apps/restful_apis/stats_api.py", "stats"),
+    ("api/apps/api_app.py", "list_apps"),
+    ("api/apps/restful_apis/stats_api.py", "list_apps"),
+
+    # --- restful_apis/system_api.py ---
+    # System-wide health / metadata — no workspace-scoped data on the wire.
+    ("api/apps/restful_apis/system_api.py", "version"),
+    ("api/apps/restful_apis/system_api.py", "status"),
+    ("api/apps/restful_apis/system_api.py", "oceanbase_status"),
+    ("api/apps/restful_apis/system_api.py", "get_logger_levels"),
+    # Current-user-scoped API tokens (scoped to active_tenant_id(), not other workspace data).
+    ("api/apps/restful_apis/system_api.py", "token_list"),
+
+    # --- restful_apis/tenant_api.py ---
+    # Caller's own tenant memberships only — no other user's data.
+    ("api/apps/restful_apis/tenant_api.py", "tenant_list"),
+    # Inline `current_user.id != tenant_id` gate — self-or-owner check, no workspace content.
+    ("api/apps/restful_apis/tenant_api.py", "user_list"),
+
+    # --- restful_apis/user_api.py ---
+    # Current-user-scoped self-info enriched with RBAC context (no other user's data).
+    ("api/apps/restful_apis/user_api.py", "user_profile"),
+    # Current-user-scoped default model config (calls TenantService.get_info_by(current_user.id)).
+    ("api/apps/restful_apis/user_api.py", "tenant_info"),
+
+    # --- restful_apis/langfuse_api.py ---
+    # Current-tenant-scoped LLM observability keys — no workspace business data.
+    ("api/apps/restful_apis/langfuse_api.py", "get_api_key"),
+
+    # --- restful_apis/mcp_api.py ---
+    # Inline `mcp_server.tenant_id == active_tenant_id()` ownership check; no wider scope.
+    ("api/apps/restful_apis/mcp_api.py", "detail"),
+
+    # --- restful_apis/plugin_api.py ---
+    # Global plugin metadata catalogue — workspace-agnostic, no user data on the wire.
+    ("api/apps/restful_apis/plugin_api.py", "llm_tools"),
+
+    # --- restful_apis/agent_api.py ---
+    # Global agent template catalogue — workspace-agnostic public read-only list.
+    ("api/apps/restful_apis/agent_api.py", "list_agent_template"),
+    # Static system-level prompt text — no workspace data, no per-user scope.
+    ("api/apps/restful_apis/agent_api.py", "prompts"),
+    # Webhook trace log — inline `cvs.user_id == current_user.id` owner gate; current-user-scoped only.
+    ("api/apps/restful_apis/agent_api.py", "webhook_trace"),
+
+    # --- api/apps/backward_compat.py GET forwarders ---
+    # Deprecated forwarders that delegate to the file_api.py target which enforces permission.
+    ("api/apps/backward_compat.py", "deprecated_file_get"),
+    ("api/apps/backward_compat.py", "deprecated_file_list"),
+    ("api/apps/backward_compat.py", "deprecated_file_all_parent_folder"),
+    ("api/apps/backward_compat.py", "deprecated_file_parent_folder"),
+    ("api/apps/backward_compat.py", "deprecated_file_root_folder"),
+}
+
+
+def _has_require_permission(decorators: list[ast.expr]) -> bool:
+    """Return True if any decorator is @require_permission(...)."""
+    for dec in decorators:
+        if isinstance(dec, ast.Call):
+            func = dec.func
+            if isinstance(func, ast.Name) and func.id == "require_permission":
+                return True
+            if isinstance(func, ast.Attribute) and func.attr == "require_permission":
+                return True
+    return False
+
+
+def _collect_unauthorized_get_routes(path: Path) -> list[tuple[str, str]]:
+    """
+    Return (rel_path, func_name) for every GET route that has auth (login_required
+    or token_required) but lacks @require_permission and is NOT in EXEMPT_GET_RBAC.
+    """
+    src = path.read_text(encoding="utf-8")
+    tree = ast.parse(src, filename=str(path))
+    rel = str(path.relative_to(ROOT))
+    violations = []
+
+    for node in ast.walk(tree):
+        if not isinstance(node, (ast.FunctionDef, ast.AsyncFunctionDef)):
+            continue
+        is_get = any(_is_get_route(dec) for dec in node.decorator_list)
+        if not is_get:
+            continue
+        if not _has_auth_decorator(node.decorator_list):
+            # Auth-less GET routes are handled by test_get_routes_require_auth.
+            continue
+        if _has_require_permission(node.decorator_list):
+            continue
+        if (rel, node.name) in EXEMPT_GET_RBAC:
+            continue
+        violations.append((rel, node.name))
+
+    return violations
+
+
+def test_get_routes_have_rbac():
+    """
+    Every authenticated GET route returning workspace-scoped data must carry
+    @require_permission(...) — auth alone (login_required / token_required)
+    only proves who the caller is, not that they can read this resource.
+
+    WHY THIS TEST EXISTS
+    --------------------
+    Discovered 2026-04-30: GET /api/v1/agents/<id>/sessions in restful_apis/
+    agent_api.py shipped with @login_required but no @require_permission, so
+    any authenticated user could list any agent's sessions. The shadow SDK
+    route had been masking it.  After we deleted the shadow this test would
+    have caught it on its own.
+
+    Adding a new GET route?  Either decorate it with the appropriate
+    @require_permission(...READ) OR add to EXEMPT_GET_RBAC with a one-line
+    reason explaining why permission gating doesn't apply (current-user-only
+    endpoint, public health probe, etc.).
+    """
+    all_violations: list[tuple[str, str]] = []
+    for path in ROUTE_FILES:
+        all_violations.extend(_collect_unauthorized_get_routes(path))
+
+    if all_violations:
+        lines = [
+            "\nAuthenticated GET routes missing @require_permission:\n",
+            "(add @require_permission(Permission.X_READ) OR add to "
+            "EXEMPT_GET_RBAC with a justification comment)\n",
+        ]
+        for rel, func in sorted(all_violations):
+            lines.append(f"  {rel}::{func}")
+        pytest.fail("\n".join(lines))
+
+
 def test_get_routes_require_auth():
     """
     Every GET route in the scanned files must have @login_required or

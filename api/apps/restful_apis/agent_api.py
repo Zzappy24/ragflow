@@ -207,6 +207,7 @@ async def create_agent_session(agent_id, tenant_id):
 
 @manager.route("/agents/<agent_id>/sessions/<session_id>", methods=["GET"])  # noqa: F821
 @login_required
+@require_permission(Permission.CHAT_READ)
 @add_tenant_id_to_kwargs
 def get_agent_session(agent_id, session_id, tenant_id):
     if not UserCanvasService.accessible(agent_id, tenant_id):
@@ -302,6 +303,7 @@ def prompts():
 
 @manager.route("/agents", methods=["GET"])  # noqa: F821
 @login_required
+@require_permission(Permission.AGENT_READ)
 @add_tenant_id_to_kwargs
 def list_agents(tenant_id):
     keywords = request.args.get("keywords", "")
@@ -435,6 +437,7 @@ async def upload_agent_file(agent_id):
 
 @manager.route("/agents/<agent_id>/components/<component_id>/input-form", methods=["GET"])  # noqa: F821
 @login_required
+@require_permission(Permission.AGENT_READ)
 @add_tenant_id_to_kwargs
 def get_agent_component_input_form(agent_id, component_id, tenant_id):
     try:
@@ -497,6 +500,7 @@ async def debug_agent_component(agent_id, component_id, tenant_id):
 
 @manager.route("/agents/<agent_id>", methods=["GET"])  # noqa: F821
 @login_required
+@require_permission(Permission.AGENT_READ)
 @add_tenant_id_to_kwargs
 def get_agent(agent_id, tenant_id):
     if not UserCanvasService.accessible(agent_id, tenant_id):
@@ -538,6 +542,7 @@ def get_agent(agent_id, tenant_id):
 
 @manager.route("/agents/<agent_id>/versions", methods=["GET"])  # noqa: F821
 @login_required
+@require_permission(Permission.AGENT_READ)
 @add_tenant_id_to_kwargs
 def list_agent_versions(agent_id, tenant_id):
     if not UserCanvasService.accessible(agent_id, tenant_id):
@@ -559,6 +564,7 @@ def list_agent_versions(agent_id, tenant_id):
 
 @manager.route("/agents/<agent_id>/versions/<version_id>", methods=["GET"])  # noqa: F821
 @login_required
+@require_permission(Permission.AGENT_READ)
 @add_tenant_id_to_kwargs
 def get_agent_version(agent_id, version_id, tenant_id):
     if not UserCanvasService.accessible(agent_id, tenant_id):
@@ -579,6 +585,7 @@ def get_agent_version(agent_id, version_id, tenant_id):
 
 @manager.route("/agents/<agent_id>/logs/<message_id>", methods=["GET"])  # noqa: F821
 @login_required
+@require_permission(Permission.AGENT_READ)
 @add_tenant_id_to_kwargs
 def get_agent_logs(agent_id, message_id, tenant_id):
     if not UserCanvasService.accessible(agent_id, tenant_id):

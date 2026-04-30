@@ -35,6 +35,7 @@ from api.apps.extensions.rbac import require_permission, has_permission, Permiss
 
 @manager.route("/datasets/tags/aggregation", methods=["GET"])  # noqa: F821
 @login_required
+@require_permission(Permission.DATASET_READ)
 @add_tenant_id_to_kwargs
 def aggregate_tags(tenant_id):
     dataset_ids = request.args.get("dataset_ids", "").split(",")
@@ -57,6 +58,7 @@ def aggregate_tags(tenant_id):
 
 @manager.route("/datasets/metadata/flattened", methods=["GET"])  # noqa: F821
 @login_required
+@require_permission(Permission.DATASET_READ)
 @add_tenant_id_to_kwargs
 def get_flattened_metadata(tenant_id):
     dataset_ids = request.args.get("dataset_ids", "").split(",")
@@ -404,6 +406,7 @@ def list_datasets(tenant_id):
 
 @manager.route("/datasets/<dataset_id>", methods=["GET"])  # noqa: F821
 @login_required
+@require_permission(Permission.DATASET_READ)
 @add_tenant_id_to_kwargs
 def get_dataset(tenant_id, dataset_id):
     try:
@@ -421,6 +424,7 @@ def get_dataset(tenant_id, dataset_id):
 
 @manager.route("/datasets/<dataset_id>/ingestions/summary", methods=["GET"])  # noqa: F821
 @login_required
+@require_permission(Permission.DATASET_READ)
 @add_tenant_id_to_kwargs
 def get_ingestion_summary(tenant_id, dataset_id):
     try:
@@ -438,6 +442,7 @@ def get_ingestion_summary(tenant_id, dataset_id):
 
 @manager.route("/datasets/<dataset_id>/tags", methods=["GET"])  # noqa: F821
 @login_required
+@require_permission(Permission.DATASET_READ)
 @add_tenant_id_to_kwargs
 def list_tags(tenant_id, dataset_id):
     try:
@@ -552,6 +557,7 @@ async def knowledge_graph(tenant_id, dataset_id):
 
 @manager.route("/datasets/<dataset_id>/graph", methods=["GET"])  # noqa: F821
 @login_required
+@require_permission(Permission.DATASET_READ)
 @add_tenant_id_to_kwargs
 async def get_knowledge_graph(tenant_id, dataset_id):
     """Get the knowledge graph of a dataset.
@@ -610,6 +616,7 @@ async def run_index(tenant_id, dataset_id):
 
 @manager.route("/datasets/<dataset_id>/index", methods=["GET"])  # noqa: F821
 @login_required
+@require_permission(Permission.DATASET_READ)
 @add_tenant_id_to_kwargs
 def trace_index(tenant_id, dataset_id):
     index_type = request.args.get("type", "")

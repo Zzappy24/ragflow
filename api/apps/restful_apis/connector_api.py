@@ -88,12 +88,14 @@ async def create_connector():
 
 @manager.route("/connectors", methods=["GET"])  # noqa: F821
 @login_required
+@require_permission(Permission.DATASOURCE_CONFIGURE)
 def list_connector():
     return get_json_result(data=ConnectorService.list(active_tenant_id()))
 
 
 @manager.route("/connectors/<connector_id>", methods=["GET"])  # noqa: F821
 @login_required
+@require_permission(Permission.DATASOURCE_CONFIGURE)
 def get_connector(connector_id):
     e, conn = ConnectorService.get_by_id(connector_id)
     if not e:
@@ -103,6 +105,7 @@ def get_connector(connector_id):
 
 @manager.route("/connectors/<connector_id>/logs", methods=["GET"])  # noqa: F821
 @login_required
+@require_permission(Permission.DATASOURCE_CONFIGURE)
 def list_logs(connector_id):
     req = request.args.to_dict(flat=True)
     arr, total = SyncLogsService.list_sync_tasks(connector_id, int(req.get("page", 1)), int(req.get("page_size", 15)))
