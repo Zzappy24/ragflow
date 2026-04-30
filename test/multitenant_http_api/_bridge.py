@@ -37,5 +37,15 @@ def import_upstream_tests(upstream_relative_path: str, globals_dict: dict) -> No
     spec.loader.exec_module(module)
 
     for attr_name in dir(module):
+        if attr_name.startswith("_"):
+            continue
+        attr = getattr(module, attr_name)
+        # Re-export Test classes so pytest collects their methods.
         if attr_name.startswith("Test"):
-            globals_dict[attr_name] = getattr(module, attr_name)
+            globals_dict[attr_name] = attr
+            continue
+        # Re-export module-level pytest fixtures defined in the upstream file
+        # itself (some upstream tests declare per-file fixtures next to the
+        # tests, not in a conftest). Pytest detects them by attribute.
+        if hasattr(attr, "_fixture_function_marker") or hasattr(attr, "_pytestfixturefunction"):
+            globals_dict[attr_name] = attr

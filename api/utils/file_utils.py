@@ -59,6 +59,27 @@ _EXTENSION_MIME_ALLOWLIST: dict[str, set[str]] = {
 }
 
 
+# Extensions whose canonical content is a ZIP container. libmagic on
+# trimmed/older databases routinely returns `application/octet-stream`
+# for these instead of `application/zip`, even on perfectly-valid files,
+# blocking legitimate Office uploads. For those extensions we authoritative-
+# check the file via stdlib's `zipfile.is_zipfile`, which validates the
+# end-of-central-directory record (i.e. the WHOLE ZIP structure), not just
+# the leading PK signature. A garbage binary that happens to start with
+# PK\x03\x04 still fails because it has no proper EOCD.
+_ZIP_BASED_EXTS = {"docx", "xlsx", "pptx", "zip"}
+
+
+def _is_valid_zip(blob: bytes) -> bool:
+    """True iff `blob` parses as a real ZIP archive (full structure check)."""
+    import io
+    import zipfile
+    try:
+        return zipfile.is_zipfile(io.BytesIO(blob))
+    except Exception:
+        return False
+
+
 def validate_upload_mime(filename: str, blob: bytes) -> str | None:
     """Check that the file's magic bytes match its declared extension.
 
@@ -80,9 +101,15 @@ def validate_upload_mime(filename: str, blob: bytes) -> str | None:
         return None  # python-magic not available — degrade gracefully
     except Exception:
         return None  # Unexpected error from libmagic — let it through
-    if detected not in allowed_mimes:
-        return f"File content does not match its extension (.{ext}): detected '{detected}'."
-    return None
+    if detected in allowed_mimes:
+        return None
+    # Fallback for ZIP-based formats (docx/xlsx/pptx/zip): libmagic is
+    # unreliable on these and often returns octet-stream for valid files.
+    # Authoritative check via zipfile.is_zipfile (stdlib, validates the full
+    # central directory).
+    if ext in _ZIP_BASED_EXTS and _is_valid_zip(blob):
+        return None
+    return f"File content does not match its extension (.{ext}): detected '{detected}'."
 
 
 GHOSTSCRIPT_TIMEOUT_SEC = 120  # Timeout for Ghostscript subprocess
