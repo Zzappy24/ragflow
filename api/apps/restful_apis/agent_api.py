@@ -309,6 +309,8 @@ def list_agents(tenant_id):
     keywords = request.args.get("keywords", "")
     canvas_category = request.args.get("canvas_category")
     owner_ids = [item for item in request.args.get("owner_ids", "").strip().split(",") if item]
+    agent_id = request.args.get("id")
+    title = request.args.get("title")
 
     page_number = int(request.args.get("page", 0))
     items_per_page = int(request.args.get("page_size", 0))
@@ -340,6 +342,8 @@ def list_agents(tenant_id):
         desc,
         keywords,
         canvas_category,
+        agent_id=agent_id,
+        title=title,
     )
 
     return get_json_result(data={"canvas": canvas, "total": total})

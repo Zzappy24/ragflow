@@ -149,6 +149,8 @@ class UserCanvasService(CommonService):
         desc,
         keywords,
         canvas_category=None,
+        agent_id=None,
+        title=None,
     ):
         fields = [
             cls.model.id,
@@ -171,6 +173,10 @@ class UserCanvasService(CommonService):
             agents = cls.model.select(*fields).join(User, on=(cls.model.user_id == User.id)).where(
                 (((cls.model.user_id.in_(joined_tenant_ids)) & (cls.model.permission == TenantPermission.TEAM.value)) | (cls.model.user_id == user_id))
             )
+        if agent_id:
+            agents = agents.where(cls.model.id == agent_id)
+        if title:
+            agents = agents.where(cls.model.title == title)
         if canvas_category:
             agents = agents.where(cls.model.canvas_category == canvas_category)
         if desc:

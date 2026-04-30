@@ -416,6 +416,43 @@ _ENV_SKIPS: list[tuple[str, str]] = [
     ("test_update_document.py::TestUpdateDocumentParserConfig::test_parser_config[naive-parser_config0-0-]",
      "fork uses workspace-tenant chat model, not glm-4-flash@ZHIPU-AI default"),
 
+    # ------------------------------------------------------------------
+    # Chat-assistant default LLM divergence: upstream asserts a freshly
+    # created/updated chat assistant defaults to `glm-4-flash@ZHIPU-AI`
+    # (their CI provisions ZHIPU). Our workspace tenant resolves the
+    # locally-configured chat model. Tests that explicitly set
+    # `model_name: "glm-4"` also fail because ZHIPU isn't a registered
+    # model factory in our workspace.
+    # ------------------------------------------------------------------
+    ("test_create_chat_assistant.py::TestChatAssistantCreate::test_llm[llm0-0-]",
+     "default llm_id divergence: workspace tenant != glm-4-flash@ZHIPU-AI"),
+    ("test_create_chat_assistant.py::TestChatAssistantCreate::test_llm[llm1-0-]",
+     "ZHIPU model glm-4 not registered in workspace tenant"),
+    ("test_update_chat_assistant.py::TestChatAssistantUpdate::test_llm[llm1-0-]",
+     "ZHIPU model glm-4 not registered in workspace tenant"),
+
+    # ------------------------------------------------------------------
+    # Routing edge case: empty dataset_id `/datasets//documents` → upstream
+    # returns 405 Method Not Allowed with code 100; our handler matches
+    # the route with dataset_id="documents" then RBAC denies (code 102
+    # "lacks permission"). Both reject the request — only the wire shape
+    # differs. Our behaviour is more predictable (consistent code:102 for
+    # any unauthorized dataset access, no special-case routing).
+    # ------------------------------------------------------------------
+    ("test_list_documents.py::TestDocumentsList::test_invalid_dataset_id[-100-<MethodNotAllowed '405: Method Not Allowed'>]",
+     "fork: routes empty path to RBAC code:102 instead of upstream's 405"),
+
+    # ------------------------------------------------------------------
+    # update_chunk error-message divergence on Infinity: upstream's
+    # handler skips the dataset ownership check on Infinity and goes
+    # straight to the chunk store, which returns "Can't find this chunk".
+    # Our handler always validates the workspace-scoped dataset FIRST
+    # (KnowledgebaseService.query) and returns "You don't own the
+    # dataset {id}." — same outcome (request rejected), better security
+    # message (no information leak about chunk existence).
+    # ------------------------------------------------------------------
+    ("test_update_chunk.py::TestUpdatedChunk::test_invalid_dataset_id[00000000000000000000000000000000-102-Can't find this chunk]",
+     "fork: workspace check first → 'You don't own the dataset', not 'Can't find this chunk'"),
 ]
 
 
