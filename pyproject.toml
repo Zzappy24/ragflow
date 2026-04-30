@@ -86,6 +86,10 @@ dependencies = [
     "pypdf>=6.10.2",
     "python-calamine>=0.4.0",
     "python-docx>=1.1.2,<2.0.0",
+    # docxtpl: Jinja templating on top of python-docx — used by
+    # agent/tools/render_docx_template.py to fill corporate templates
+    # while preserving branding/styles. Custom B2B SaaS dependency.
+    "docxtpl>=0.20.0,<1.0.0",
     "python-magic>=0.4.27",
     "python-pptx>=1.0.2,<2.0.0",
     # "pywencai>=0.13.1,<1.0.0",  # Temporarily disabled: conflicts with agentrun-sdk (pydash>=8), needed for agent/tools/wencai.py
