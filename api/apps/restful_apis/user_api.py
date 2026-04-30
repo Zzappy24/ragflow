@@ -629,9 +629,19 @@ async def user_profile():
                 return org_name_cache[oid]
 
             memberships = WsMemberService.list_workspaces_for_user(current_user.id)
+            # CUSTOM PERF: was N+1 — one WorkspaceService.get_by_id per membership.
+            # Bulk-load via WHERE id IN (...) so a user with K workspaces costs 1
+            # query instead of K. Audit on 2026-05-01 caught a 5x duplicate query
+            # here for a CI user with 5 workspaces.
+            from api.db.db_models import Workspace
+            ws_ids = [m.workspace_id for m in memberships]
+            ws_by_id = (
+                {ws.id: ws for ws in Workspace.select().where(Workspace.id.in_(ws_ids))}
+                if ws_ids else {}
+            )
             for m in memberships:
-                ok_ws, ws = WorkspaceService.get_by_id(m.workspace_id)
-                if ok_ws and ws and ws.status == "1":
+                ws = ws_by_id.get(m.workspace_id)
+                if ws and ws.status == "1":
                     workspaces.append({
                         "id": ws.id,
                         "name": ws.name,
