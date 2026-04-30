@@ -285,17 +285,22 @@ _UPSTREAM_HTTP_API = UPSTREAM_TESTS / "test_http_api"
 
 
 def _import_upstream_subconftests() -> None:
-    """Eagerly load every test_http_api/<subdir>/conftest.py and re-export its
-    @pytest.fixture-decorated callables into this module's globals.
+    """Eagerly load test_http_api/conftest.py AND every <subdir>/conftest.py,
+    re-exporting their @pytest.fixture-decorated callables into this module's
+    globals — without clobbering fixtures we already defined locally
+    (`HttpApiAuth`, `clear_datasets`, etc.).
     """
+    conftest_paths: list[Path] = [_UPSTREAM_HTTP_API / "conftest.py"]
     for subdir in sorted(_UPSTREAM_HTTP_API.iterdir()):
-        if not subdir.is_dir():
-            continue
-        sub_conf = subdir / "conftest.py"
-        if not sub_conf.exists():
-            continue
+        if subdir.is_dir():
+            sub_conf = subdir / "conftest.py"
+            if sub_conf.exists():
+                conftest_paths.append(sub_conf)
+
+    for sub_conf in conftest_paths:
         spec = _ilu.spec_from_file_location(
-            f"_upstream_subconftest_{subdir.name}", str(sub_conf)
+            f"_upstream_subconftest_{sub_conf.parent.name}_{sub_conf.stem}",
+            str(sub_conf),
         )
         mod = _ilu.module_from_spec(spec)
         try:
