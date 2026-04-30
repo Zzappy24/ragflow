@@ -240,3 +240,6 @@ bin/*
 !bin/.gitkeep
 .claude/settings.local.json
 .claude/scheduled_tasks.lock
+
+# pyinstrument scratch HTML reports from scripts/profile_endpoints.py
+.profile_*.html

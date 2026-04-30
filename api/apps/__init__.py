@@ -137,6 +137,16 @@ P = ParamSpec("P")
 
 
 def _load_user():
+    # CUSTOM PERF: per-request cache. Without this, current_user = LocalProxy(_load_user)
+    # re-invokes _load_user on every attribute access (e.g. current_user.id +
+    # current_user.email = 2 user-table queries). Profiling showed _load_user
+    # running 3x per authenticated request on hot endpoints (~30% of total time).
+    # The marker g._user_resolved gives us "fetched once per request" semantics;
+    # subsequent accesses return the cached g.user (which may be None if auth failed).
+    if getattr(g, "_user_resolved", False):
+        return g.user
+    g._user_resolved = True
+
     jwt = Serializer(secret_key=settings.SECRET_KEY)
     authorization = request.headers.get("Authorization")
     g.user = None
