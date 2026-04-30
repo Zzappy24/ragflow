@@ -114,6 +114,11 @@ from configs import HOST_ADDRESS, VERSION        # noqa: E402
 # ---------------------------------------------------------------------------
 
 CI_EMAIL = os.getenv("CI_EMAIL", "ci.internal@cyllene.com")
+# Each parallel pytest process selects its workspace via this env var.
+# - Sequential / single process: "Général" (or any user override)
+# - Shell-level parallelism: launch N pytest invocations, each with
+#   CI_WORKSPACE_NAME=ci-test-w0 / ci-test-w1 / ... — see the `parallel.sh`
+#   helper alongside this conftest.
 CI_WORKSPACE_NAME = os.getenv("CI_WORKSPACE_NAME", "Général")
 TEST_AUTH_TOKEN = os.getenv("TEST_AUTH_TOKEN")
 TEST_WORKSPACE_ID = os.getenv("TEST_WORKSPACE_ID")
@@ -123,7 +128,9 @@ def _generate_workspace_credentials() -> tuple[str, str] | None:
     """Derive (auth_token, workspace_id) directly from Redis + DB.
 
     Mirrors test/multitenant/conftest.py::_generate_credentials so the two
-    suites share the same identity in local dev.
+    suites share the same identity in local dev. The workspace name is
+    selected via `CI_WORKSPACE_NAME` (env var) — set per-process for
+    shell-level parallelism.
     """
     secret_key = REDIS_CONN.get("ragflow:system:secret_key")
     if not secret_key:
@@ -136,6 +143,7 @@ def _generate_workspace_credentials() -> tuple[str, str] | None:
             return None
         u = users[0]
         auth_token = jwt.dumps(u.access_token)
+
         memberships = _WsMemberService.list_workspaces_for_user(u.id)
         if not memberships:
             return None

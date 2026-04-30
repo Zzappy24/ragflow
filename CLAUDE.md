@@ -67,6 +67,12 @@ source .venv/bin/activate
 export PYTHONPATH=$(pwd)
 bash docker/launch_backend_service.sh
 
+# Local dev shortcuts (custom — not upstream):
+#   scripts/dev_simple.sh   # 1× server (hot-reload) + 1× task_executor — daily dev
+#   scripts/dev_scaled.sh   # 4× hypercorn + 4× task_executor — full-bridge runs
+# Scaled is ~1.8x faster on the slow batch, ~6-10 GB more RAM, no hot-reload.
+# See api/asgi.py for the multi-worker entry point.
+
 # Run tests
 uv run pytest
 

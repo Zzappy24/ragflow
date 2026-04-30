@@ -239,3 +239,4 @@ internal/cpp/cmake-build-debug/
 bin/*
 !bin/.gitkeep
 .claude/settings.local.json
+.claude/scheduled_tasks.lock
