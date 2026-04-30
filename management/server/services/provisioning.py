@@ -67,12 +67,20 @@ def provision_workspace(org_id: str, name: str, description: str, created_by: st
     technical_user_id = get_uuid()
 
     with DB.connection_context():
-        # 1. Create technical user (not meant for login)
+        # 1. Create technical user (not meant for login).
+        # access_token MUST be set to a non-empty value: api/apps/__init__.py
+        # `_load_user` rejects users with empty access_token even on the
+        # APIToken fallback path. Without it, API keys minted for this
+        # workspace can't authenticate against @login_required routes
+        # (which is most of the RESTful surface). Random UUID is fine —
+        # the field is never exposed and the user can't log in via JWT
+        # anyway (no shared password).
         UserService.save(**{
             "id": technical_user_id,
             "nickname": f"[WS] {name}",
             "email": technical_email,
             "password": get_uuid(),  # random, never used for login
+            "access_token": get_uuid(),
             "status": "1",
         })
 

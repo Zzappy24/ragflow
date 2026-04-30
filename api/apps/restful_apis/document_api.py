@@ -271,7 +271,8 @@ async def metadata_summary(dataset_id, tenant_id):
       200:
         description: Metadata summary retrieved successfully.
     """
-    if not KnowledgebaseService.accessible(kb_id=dataset_id, user_id=tenant_id):
+    # CUSTOM B2B SaaS: direct workspace scope — accessible() uses multi-workspace JOIN that leaks across workspaces
+    if not KnowledgebaseService.query(tenant_id=tenant_id, id=dataset_id):
         return get_error_data_result(message=f"You don't own the dataset {dataset_id}. ")
     # Get doc_ids from query parameters (comma-separated string)
     doc_ids_param = request.args.get("doc_ids", "")
@@ -318,7 +319,8 @@ async def metadata_batch_update(dataset_id, tenant_id):
       200:
         description: Metadata updated successfully.
     """
-    if not KnowledgebaseService.accessible(kb_id=dataset_id, user_id=tenant_id):
+    # CUSTOM B2B SaaS: direct workspace scope — accessible() uses multi-workspace JOIN that leaks across workspaces
+    if not KnowledgebaseService.query(tenant_id=tenant_id, id=dataset_id):
         return get_error_data_result(message=f"You don't own the dataset {dataset_id}. ")
 
     req = await get_request_json()
@@ -722,7 +724,8 @@ def list_docs(dataset_id, tenant_id):
                     type: string
                     description: Processing status.
     """
-    if not KnowledgebaseService.accessible(kb_id=dataset_id, user_id=tenant_id):
+    # CUSTOM B2B SaaS: direct workspace scope — accessible() uses multi-workspace JOIN that leaks across workspaces
+    if not KnowledgebaseService.query(tenant_id=tenant_id, id=dataset_id):
         logging.error(f"You don't own the dataset {dataset_id}. ")
         return get_error_data_result(message=f"You don't own the dataset {dataset_id}. ")
 
@@ -1020,8 +1023,8 @@ async def delete_documents(tenant_id, dataset_id):
         return get_error_argument_result(err)
 
     try:
-        # Validate dataset exists and user has permission
-        if not KnowledgebaseService.accessible(kb_id=dataset_id, user_id=tenant_id):
+        # CUSTOM B2B SaaS: direct workspace scope — accessible() uses multi-workspace JOIN that leaks across workspaces
+        if not KnowledgebaseService.query(tenant_id=tenant_id, id=dataset_id):
             return get_error_data_result(message=f"You don't own the dataset {dataset_id}. ")
 
         # Get documents to delete

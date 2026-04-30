@@ -99,9 +99,11 @@ def _strip_chunk_runtime_fields(chunk):
 
 @manager.route("/datasets/<dataset_id>/documents/<document_id>/chunks", methods=["GET"])  # noqa: F821
 @login_required
+@require_permission(Permission.DOCUMENT_READ)
 @add_tenant_id_to_kwargs
 async def list_chunks(tenant_id, dataset_id, document_id):
-    if not KnowledgebaseService.accessible(kb_id=dataset_id, user_id=tenant_id):
+    # CUSTOM B2B SaaS: direct workspace scope — accessible() uses multi-workspace JOIN that leaks across workspaces
+    if not KnowledgebaseService.query(tenant_id=tenant_id, id=dataset_id):
         return get_error_data_result(message=f"You don't own the dataset {dataset_id}.")
     doc = DocumentService.query(id=document_id, kb_id=dataset_id)
     if not doc:

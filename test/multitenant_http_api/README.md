@@ -77,6 +77,31 @@ don't paper over real divergences.
 | Drift risk | High (forget to update one file) | None |
 | Diagnosing failures | Mixed local + upstream blame | Pure upstream — the wrapper has no logic |
 
+## Known systemic divergence: SDK route shadow
+
+**Discovered 2026-04-30** by this very bridge — see also [project memo].
+
+`api/apps/sdk/doc.py` ships 11 legacy routes (POST/PUT/GET/DELETE on
+`/datasets/<id>/documents`, `metadata/summary`, etc.) that shadow upstream's
+new `restful_apis/document_api.py` routes. SDK is registered first, so:
+
+- Our `@require_permission` additions in `restful_apis/document_api.py` are
+  partially dead code for these URLs — the SDK versions intercept first.
+- SDK routes use `@token_required` (returns `code:0` on missing auth);
+  RESTful uses `@login_required` (returns `code:401`). Upstream test
+  contract expects `code:401`.
+- Implementations diverge in payload validation, error messages, and
+  edge-case handling.
+
+**Result**: ~50 of the currently-failing tests in this bridge fail because
+of this shadow, not because of real workspace bugs. Treat new failures with
+suspicion — they're often the SDK route disagreeing with the RESTful contract,
+not your code.
+
+**Fix**: 2-3h pass to delete the 11 redundant SDK routes after porting any
+unique workspace/RBAC logic into the RESTful equivalent. Tracked in memory
+under `project_sdk_vs_restful_route_shadow.md`.
+
 ## Limits
 
 - Tests requiring `hypothesis`, `concurrent.futures`, or other deps need those

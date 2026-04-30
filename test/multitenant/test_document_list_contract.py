@@ -98,18 +98,36 @@ class TestDocumentListAuth:
 class TestWorkspaceIsolation:
     """X-Workspace-Id must be enforced — missing or invalid → 401."""
 
+    @staticmethod
+    def _assert_denied(r, hint: str) -> None:
+        """A denial may be signalled either by HTTP 401/403 (auth layer) OR by
+        HTTP 200 with `code` 401/403 in the JSON body (RBAC denial inside the
+        handler returns code via get_json_result, leaving HTTP at 200).
+
+        Either form means "request was rejected" — what we care about is that
+        no data leaked, not the wire encoding. If the route ever returns
+        HTTP 200 + `code: 0` here, that IS a real cross-workspace leak.
+        """
+        body_code = r.json().get("code") if r.headers.get("Content-Type", "").startswith("application/json") else None
+        denied = r.status_code in (401, 403) or body_code in (401, 403)
+        assert denied, (
+            f"{hint} — got HTTP {r.status_code} body={r.json()}. "
+            "Both HTTP status AND body 'code' must indicate denial; if neither "
+            "does, the request was authorized when it should not have been."
+        )
+
     def test_missing_workspace_header_returns_401(self, bare_auth, ws_dataset):
-        """Without X-Workspace-Id the request must be rejected (HTTP 401/403 from
-        workspace middleware or RBAC fail-closed — both mean access denied)."""
+        """Without X-Workspace-Id the request must be rejected."""
         r = list_docs_response(bare_auth, ws_dataset)
-        assert r.status_code in (401, 403), (
-            f"Expected HTTP 401/403 when X-Workspace-Id is missing, got {r.status_code}: {r.json()}. "
-            "Check that add_tenant_id_to_kwargs uses active_tenant_id() in the list handler."
+        self._assert_denied(
+            r,
+            "Expected denial when X-Workspace-Id is missing — handler must "
+            "reject either at the auth/middleware layer (HTTP 401/403) or at "
+            "the RBAC layer (body code 403)",
         )
 
     def test_nonexistent_workspace_id_returns_401(self, bare_auth, ws_dataset):
-        """A fabricated workspace ID the user doesn't belong to → rejected
-        (HTTP 401/403 from workspace middleware or RBAC — both mean denied)."""
+        """A fabricated workspace ID the user doesn't belong to → rejected."""
         class _FakeWsAuth(AuthBase):
             def __init__(self, inner):
                 self._inner = inner
@@ -119,9 +137,10 @@ class TestWorkspaceIsolation:
                 return r
 
         r = list_docs_response(_FakeWsAuth(bare_auth), ws_dataset)
-        assert r.status_code in (401, 403), (
-            f"Expected HTTP 401/403 for fake workspace ID, got {r.status_code}: {r.json()}. "
-            "Cross-workspace data leak possible."
+        self._assert_denied(
+            r,
+            "Expected denial for fabricated workspace ID — cross-workspace "
+            "data leak possible if neither HTTP nor body code signals 401/403",
         )
 
     def test_valid_workspace_returns_200(self, ws_auth, ws_dataset):
