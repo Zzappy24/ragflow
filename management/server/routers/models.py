@@ -12,6 +12,8 @@ Supported providers (local-inference only):
 
 CUSTOM B2B SaaS — see CLAUDE.md "Custom B2B SaaS Multi-Tenant Layer" for merge warnings.
 """
+import os
+
 from fastapi import APIRouter, Depends, HTTPException, status
 
 from management.server.auth.dependencies import get_current_user_id
@@ -311,7 +313,7 @@ def delete_workspace_provider(
 # ---------------------------------------------------------------------------
 
 @router.post("/workspaces/{ws_id}/models/verify", response_model=WsLlmVerifyResponse)
-def verify_workspace_model(
+async def verify_workspace_model(
     ws_id: str,
     body: WsLlmVerifyRequest,
     user_id: str = Depends(get_current_user_id),
@@ -323,6 +325,12 @@ def verify_workspace_model(
     with verify=true) scoped to no tenant — pure connectivity check.
 
     CUSTOM B2B SaaS — see CLAUDE.md for merge warnings.
+
+    NOTE: chat verification uses `async_chat_streamly`. RAGFlow removed the
+    synchronous `Base.chat()` method (only some legacy subclasses still
+    define it), so calling `mdl.chat(...)` raises AttributeError on most
+    factories — including the OpenAI-compatible one used for Ollama/vLLM.
+    This handler is async so we can `await` the streaming generator.
     """
     _require_ws_org_admin(ws_id, user_id)
 
@@ -334,21 +342,22 @@ def verify_workspace_model(
     try:
         from rag.llm import EmbeddingModel, ChatModel, RerankModel, CvModel, TTSModel, Seq2txtModel
         from common.constants import LLMType
+        import asyncio
 
         factory = body.llm_factory
 
         if model_type == LLMType.EMBEDDING.value:
             mdl = EmbeddingModel[factory](api_key, stored_name, base_url=api_base)
-            mdl.encode(["Test if the api key is available"])
+            await asyncio.to_thread(mdl.encode, ["Test if the api key is available"])
 
         elif model_type == LLMType.RERANK.value:
             mdl = RerankModel[factory](api_key, stored_name, base_url=api_base)
-            mdl.similarity("What is RAGFlow?", ["RAGFlow is a RAG engine."])
+            await asyncio.to_thread(mdl.similarity, "What is RAGFlow?", ["RAGFlow is a RAG engine."])
 
         elif model_type == LLMType.IMAGE2TEXT.value:
             from rag.utils.base64_image import test_image
             mdl = CvModel[factory](api_key, stored_name, base_url=api_base)
-            mdl.describe(test_image)
+            await asyncio.to_thread(mdl.describe, test_image)
 
         elif model_type == LLMType.TTS.value:
             mdl = TTSModel[factory](api_key, stored_name, base_url=api_base)
@@ -360,15 +369,40 @@ def verify_workspace_model(
             pass
 
         else:
-            # Default: chat
+            # Default: chat — mirror api/apps/llm_app.py::set_api_key.
+            # async_chat_streamly is the canonical chat entry point on Base.
             mdl = ChatModel[factory](api_key, stored_name, base_url=api_base)
-            response = mdl.chat("You are a helpful assistant.", [{"role": "user", "content": "Hi"}], {"max_tokens": 10})
-            if isinstance(response, tuple):
-                msg, _ = response
-            else:
-                msg = response
-            if not msg or "**ERROR**" in str(msg):
-                return WsLlmVerifyResponse(ok=False, message=str(msg))
+            timeout_s = int(os.environ.get("LLM_TIMEOUT_SECONDS", 30))
+            received_chunk = False
+            error_text = ""
+
+            async def _check():
+                nonlocal received_chunk, error_text
+                async for chunk in mdl.async_chat_streamly(
+                    None,
+                    [{"role": "user", "content": "Hi"}],
+                    {"temperature": 0.7},
+                ):
+                    if not isinstance(chunk, str):
+                        continue
+                    if "**ERROR**" in chunk:
+                        error_text = chunk
+                        return
+                    if chunk.strip():
+                        received_chunk = True
+                        return
+
+            try:
+                await asyncio.wait_for(_check(), timeout=timeout_s)
+            except asyncio.TimeoutError:
+                return WsLlmVerifyResponse(
+                    ok=False,
+                    message=f"Timeout after {timeout_s}s — endpoint unreachable or model not warmed up.",
+                )
+            if error_text:
+                return WsLlmVerifyResponse(ok=False, message=error_text)
+            if not received_chunk:
+                return WsLlmVerifyResponse(ok=False, message="No response received from model.")
 
         return WsLlmVerifyResponse(ok=True, message="Connection successful")
 
