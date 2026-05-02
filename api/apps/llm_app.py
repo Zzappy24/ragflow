@@ -361,6 +361,30 @@ async def add_llm():
 
     if not TenantLLMService.filter_update([TenantLLM.tenant_id == active_tenant_id(), TenantLLM.llm_factory == factory, TenantLLM.llm_name == llm["llm_name"]], llm):
         TenantLLMService.save(**llm)
+
+    # CUSTOM B2B SaaS — let the admin opt in to function-calling support
+    # explicitly via a checkbox in the Add LLM modal. Upstream leaves the
+    # global `llm` row absent for self-hosted factories which makes
+    # is_tools default to False at resolve time, silently breaking agents
+    # that have tools attached. When the admin checks the box, we register
+    # both the bare and suffixed model names so config-resolution finds
+    # is_tools=1 regardless of which lookup variant is used.
+    # See docs/known-issues/pdg-demo-postmortem.md item #2.
+    if model_type == LLMType.CHAT.value and req.get("supports_tool_calling"):
+        from api.db.services.llm_service import LLMService
+        from api.db.db_models import LLM
+        bare_name = llm["llm_name"].split("___")[0]
+        for name in {bare_name, llm["llm_name"]}:
+            existing = LLMService.query(llm_name=name, fid=factory)
+            if existing:
+                LLMService.filter_update([LLM.llm_name == name, LLM.fid == factory], {"is_tools": 1})
+            else:
+                LLMService.save(
+                    llm_name=name, fid=factory, model_type=LLMType.CHAT.value,
+                    max_tokens=int(llm.get("max_tokens") or 32768),
+                    tags="LLM,CHAT", is_tools=1, status="1",
+                )
+
     from api.db.joint_services.tenant_model_service import _invalidate_model_config_cache
     _invalidate_model_config_cache(active_tenant_id())
     return get_json_result(data=True)

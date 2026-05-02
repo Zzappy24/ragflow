@@ -201,6 +201,23 @@ const OllamaModal = ({
       },
     });
 
+    // CUSTOM B2B SaaS — opt-in toggle for tool calling. Self-hosted models
+    // are registered without an entry in the global `llm` table, which makes
+    // is_tools default to False and silently breaks any agent that has tools
+    // attached. Users tick this for modern Qwen3 / Llama 3.3+ / DeepSeek that
+    // support function calling. See docs/known-issues/pdg-demo-postmortem.md.
+    baseFields.push({
+      name: 'supports_tool_calling',
+      label: t('supportsToolCalling'),
+      tooltip: t('supportsToolCallingTip'),
+      type: FormFieldType.Switch,
+      required: false,
+      dependencies: ['model_type'],
+      shouldRender: (formValues: any) => {
+        return formValues?.model_type === 'chat';
+      },
+    });
+
     return baseFields;
   }, [llmFactory, t]);
 
@@ -233,7 +250,10 @@ const OllamaModal = ({
         ? 'image2text'
         : values.model_type;
 
-    const data: IAddLlmRequestBody & { provider_order?: string } = {
+    const data: IAddLlmRequestBody & {
+      provider_order?: string;
+      supports_tool_calling?: boolean;
+    } = {
       llm_factory: llmFactory,
       llm_name: values.llm_name as string,
       model_type: modelType,
@@ -241,6 +261,10 @@ const OllamaModal = ({
       api_key: values.api_key as string,
       max_tokens: values.max_tokens as number,
     };
+
+    if (values.supports_tool_calling) {
+      data.supports_tool_calling = true;
+    }
 
     // Add provider_order only if it exists (for OpenRouter)
     if (values.provider_order) {

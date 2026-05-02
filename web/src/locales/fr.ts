@@ -608,6 +608,9 @@ export default {
         apiUrlRequired: 'L’URL de l’API PaddleOCR est obligatoire',
       },
       vision: 'Supporte-t-il la vision ?',
+      supportsToolCalling: 'Supporte-t-il le function calling ?',
+      supportsToolCallingTip:
+        "Activer pour les modèles qui supportent le tool/function calling style OpenAI (Qwen3, Llama 3.3+, DeepSeek, etc.). Indispensable pour rattacher ce modèle à un agent ayant des tools — sinon l'agent retombe silencieusement en mode texte.",
       ollamaLink: 'Comment intégrer {{name}}',
       FishAudioLink: 'Comment utiliser FishAudio',
       TencentCloudLink: 'Comment utiliser TencentCloud ASR',
