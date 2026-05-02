@@ -14,6 +14,7 @@
 #  limitations under the License.
 #
 
+import hashlib
 import json
 import logging
 import random
@@ -22,6 +23,22 @@ import time
 from api.db import CanvasCategory
 from agent.dsl_migration import normalize_chunker_dsl
 from rag.utils.redis_conn import REDIS_CONN, RedisDistributedLock
+
+
+def _dsl_fingerprint(dsl) -> str:
+    """Stable SHA-256 of a DSL dict, ignoring run-only fields that
+    legitimately change every run (history, retrieval, memory, path)."""
+    if isinstance(dsl, str):
+        try:
+            dsl = json.loads(dsl)
+        except Exception:
+            return hashlib.sha256(dsl.encode("utf-8", errors="replace")).hexdigest()
+    if not isinstance(dsl, dict):
+        return ""
+    snapshot = {k: v for k, v in dsl.items()
+                if k not in ("history", "retrieval", "memory", "path", "task_id")}
+    blob = json.dumps(snapshot, ensure_ascii=False, sort_keys=True)
+    return hashlib.sha256(blob.encode("utf-8")).hexdigest()
 
 
 class CanvasReplicaService:
@@ -106,13 +123,18 @@ class CanvasReplicaService:
         canvas_category=CanvasCategory.Agent,
         title="",
     ):
+        normalized = cls.normalize_dsl(dsl)
         return {
             "canvas_id": canvas_id,
             "tenant_id": str(tenant_id),
             "runtime_user_id": str(runtime_user_id),
             "title": title or "",
             "canvas_category": canvas_category or CanvasCategory.Agent,
-            "dsl": cls.normalize_dsl(dsl),
+            "dsl": normalized,
+            # CUSTOM B2B SaaS — fingerprint of the structural DSL (excluding
+            # per-run fields). Compared against the source-of-truth in MySQL
+            # at load_for_run time so an out-of-band edit auto-invalidates.
+            "dsl_fingerprint": _dsl_fingerprint(normalized),
             "updated_at": int(time.time()),
         }
 
@@ -160,9 +182,53 @@ class CanvasReplicaService:
 
     @classmethod
     def load_for_run(cls, canvas_id: str, tenant_id: str, runtime_user_id: str):
-        """Load current runtime replica used by /completion."""
+        """Load current runtime replica used by /completion.
+
+        Compares the replica's DSL fingerprint against the MySQL canonical
+        copy. On mismatch the replica is dropped and `None` is returned —
+        the caller (agent_api.completion) then re-bootstraps from MySQL,
+        guaranteeing that any out-of-band DSL edit (UI save, SQL migration,
+        version restore) reaches the runtime without manual cache flush.
+        """
         replica_key = cls._replica_key(canvas_id, str(tenant_id), str(runtime_user_id))
-        return cls._read_payload(replica_key)
+        payload = cls._read_payload(replica_key)
+        if not payload:
+            return None
+        try:
+            from api.db.services.canvas_service import UserCanvasService
+            ok, cvs = UserCanvasService.get_by_id(canvas_id)
+            if ok and cvs is not None:
+                canonical_fp = _dsl_fingerprint(cvs.dsl)
+                if canonical_fp and payload.get("dsl_fingerprint") != canonical_fp:
+                    logging.info(
+                        "Canvas %s DSL changed (fingerprint mismatch), dropping stale replica",
+                        canvas_id,
+                    )
+                    try:
+                        REDIS_CONN.REDIS.delete(replica_key)
+                    except Exception:
+                        pass
+                    return None
+        except Exception:
+            # Fingerprint check is best-effort; never block the run if the
+            # MySQL lookup hiccups.
+            logging.exception("DSL fingerprint check failed for canvas %s", canvas_id)
+        return payload
+
+
+    @classmethod
+    def invalidate(cls, canvas_id: str, tenant_id: str, runtime_user_id: str) -> int:
+        """Drop the calling user's Redis replica. Mostly redundant now that
+        load_for_run auto-invalidates on DSL fingerprint mismatch — kept as
+        an escape hatch for ops scripts when the cache mismatch is on a
+        non-DSL dimension (e.g. TenantLLM api_base changed). Per-user only,
+        so calling it never disturbs another user's in-flight session."""
+        replica_key = cls._replica_key(canvas_id, str(tenant_id), str(runtime_user_id))
+        try:
+            return int(REDIS_CONN.REDIS.delete(replica_key) or 0)
+        except Exception:
+            logging.exception("Failed to invalidate canvas replica %s", replica_key)
+            return 0
 
 
     @classmethod
