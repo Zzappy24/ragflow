@@ -137,6 +137,7 @@ RAGFlow supports switching between Elasticsearch (default) and Infinity:
 ## Known issues & post-mortems
 
 - [PDG demo postmortem](docs/known-issues/pdg-demo-postmortem.md) — caches stale, `is_tools=False` default, Ollama tool-call parsing bug, RBAC 403 on citation clicks, etc. Read before debugging the agentic flow.
+- [Multi-tenant SaaS roadmap](docs/roadmap-multitenant-saas.md) — game-changers à activer (MCP, Categorize, GraphRAG, Webhook/Cron) + manquants critiques pour scaler (analytics, audit RGPD, schema validation, CI agents).
 
 ## Custom B2B SaaS Multi-Tenant Layer
 
@@ -269,3 +270,4 @@ git checkout dev && git merge merge/upstream-$(date +%Y-%m-%d) --no-ff
 - Any change to `user_id == tenant_id` invariant in `api/db/init_data.py`
 - New top-level route group added outside `authorized` in `router.go` (won't get workspace middleware)
 - Rename of `GetInfoByUserID` in `internal/dao/tenant.go` (breaks `ListTenantDefaultModels`)
+- Any new Langfuse-related route or service that uses `user_id` instead of `active_tenant_id()` — would leak workspace traces into a wrong project. See [docs/roadmap-multitenant-saas.md](docs/roadmap-multitenant-saas.md) Tier 3 prerequisites.

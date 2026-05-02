@@ -85,6 +85,39 @@ Reste à monter la stack Langfuse (Postgres + ClickHouse + Redis + Node API
 + Worker + Web). **Lourd** : à ne lancer qu'avec ≥5 clients en prod et un
 besoin documenté qui dépasse Tier 1/2.
 
+**Pré-requis spécifiques à notre fork multi-tenant** (à vérifier AVANT d'allumer Langfuse) :
+
+1. **Audit UI de configuration Langfuse** — grep `langfuse` dans
+   `web/src/pages/user-setting/`. Vérifier que la page de config Langfuse
+   utilise `active_tenant_id()` (workspace) et pas `user_id`, et qu'elle
+   est gardée par une permission accessible aux ws_admin (typiquement
+   `LLM_CONFIGURE` ou équivalent). ~1 jour d'audit + correctifs.
+
+2. **Modèle déploiement : 1 projet Langfuse par workspace**
+   ```
+   Instance Langfuse (self-host on-prem)
+      ├── Projet "Cyllene-Workspace-Bodemer"
+      ├── Projet "Cyllene-Workspace-Maurin"
+      └── Projet "Cyllene-Workspace-Demo"
+   ```
+   Chaque `ws_admin` ne voit que son projet — isolation native Langfuse.
+   Création des projets via Langfuse API au moment de la création du
+   workspace côté Cyllene.
+
+3. **Fallback `_fallback_personal_tenant_id` ne doit PAS s'appliquer
+   à Langfuse** — sinon une workspace sans config Langfuse leak ses traces
+   dans le projet personnel du créateur du workspace. À tester
+   explicitement : workspace sans `tenant_langfuse` row → aucun appel
+   Langfuse, pas un fallback silencieux.
+
+4. **Champs `userId` et `sessionId` dans les traces Langfuse** — vérifier
+   que RAGFlow pousse :
+   - `userId` = vrai user ragflow qui a déclenché (pas le tenant_id)
+   - `sessionId` = canvas session_id (pour grouper la conversation)
+
+   Sinon les dashboards Langfuse vont confondre tous les users d'un
+   workspace en un seul. ~10 lignes à ajouter dans `LLMBundle` si manquant.
+
 **Custom reste nécessaire** pour la vue client-facing (factures B2B,
 SLA reporting affiché aux clients dans leur panel admin). Pas remplaçable
 par un outil tiers parce que c'est partie intégrante de ton produit.
