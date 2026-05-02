@@ -968,6 +968,14 @@
             "llm": []
         },
         {
+            "name": "Ollama-Hermes",
+            "logo": "",
+            "tags": "LLM",
+            "status": "1",
+            "rank": "831",
+            "llm": []
+        },
+        {
             "name": "ModelScope",
             "logo": "",
             "tags": "LLM",

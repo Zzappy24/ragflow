@@ -111,6 +111,15 @@ def init_superuser(nickname=DEFAULT_SUPERUSER_NICKNAME, email=DEFAULT_SUPERUSER_
 def init_llm_factory():
     LLMFactoriesService.filter_delete([1 == 1])
     factory_llm_infos = settings.FACTORY_LLM_INFOS
+    # CUSTOM B2B SaaS — for self-host factories (OpenAI-API-Compatible, VLLM,
+    # Ollama, etc.) the seed config in conf/llm_factories.json ships an empty
+    # `llm` list because users register their own MLX/vLLM/Ollama models at
+    # runtime via the admin panel. Upstream's wipe-then-reseed below would
+    # erase those user-added LLM rows on every restart, which (a) wipes the
+    # is_tools flag we set when adding the model, and (b) makes the model
+    # untracked in the LLM table — breaking get_model_config_by_type_and_name.
+    # We protect those factories by skipping the delete/reseed loop for them.
+    _SELF_HOST_FACTORIES = {"OpenAI-API-Compatible", "VLLM", "Ollama", "Ollama-Hermes"}
     for factory_llm_info in factory_llm_infos:
         info = deepcopy(factory_llm_info)
         llm_infos = info.pop("llm")
@@ -118,6 +127,10 @@ def init_llm_factory():
             LLMFactoriesService.save(**info)
         except Exception:
             pass
+        if factory_llm_info["name"] in _SELF_HOST_FACTORIES:
+            # User-managed factory: don't wipe LLM rows that the admin panel
+            # populated; only ensure the LLMFactories row exists (saved above).
+            continue
         LLMService.filter_delete([LLM.fid == factory_llm_info["name"]])
         for llm_info in llm_infos:
             llm_info["fid"] = factory_llm_info["name"]

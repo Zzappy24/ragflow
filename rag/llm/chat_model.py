@@ -78,6 +78,14 @@ def _apply_model_family_policies(
         sanitized_kwargs["extra_body"] = {"enable_thinking": False}
 
     if backend == "base":
+        # The Base class passes gen_conf via **spread into the OpenAI SDK call,
+        # but discards request_kwargs. Fold `extra_body` into gen_conf so the
+        # SDK forwards it (the SDK accepts `extra_body` as a top-level param).
+        if "extra_body" in sanitized_kwargs:
+            sanitized_gen_conf["extra_body"] = {
+                **sanitized_gen_conf.get("extra_body", {}),
+                **sanitized_kwargs["extra_body"],
+            }
         return sanitized_gen_conf, sanitized_kwargs
 
     if backend == "litellm":
@@ -179,6 +187,7 @@ class Base(ABC):
             "logprobs",
             "top_logprobs",
             "extra_headers",
+            "extra_body",
         }
 
         gen_conf = {k: v for k, v in gen_conf.items() if k in allowed_conf}
@@ -1860,5 +1869,11 @@ class RAGconChat(Base):
     def __init__(self, key, model_name, base_url=None, **kwargs):
         if not base_url:
             base_url = "https://connect.ragcon.com/v1"
-        
+
         super().__init__(key, model_name, base_url, **kwargs)
+
+
+# CUSTOM B2B SaaS — register additional chat factories from chat_model_custom.
+# Imported here so the rag/llm/__init__.py scan picks them up via getmembers().
+# Keep this block tiny to minimise upstream merge conflicts.
+from rag.llm.chat_model_custom import OllamaHermesChat  # noqa: E402, F401

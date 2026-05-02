@@ -26,6 +26,7 @@ export * from '@/constants/setting';
 
 export const LocalLlmFactories = [
   LLMFactory.Ollama,
+  LLMFactory.OllamaHermes,
   LLMFactory.Xinference,
   LLMFactory.LocalAI,
   LLMFactory.LMStudio,
