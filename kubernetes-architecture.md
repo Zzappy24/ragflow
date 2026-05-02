@@ -29,8 +29,12 @@ Stack : Quart/Hypercorn · Peewee/MySQL · Redis · Infinity · vLLM · Kubernet
 ### Inférence LLM (vLLM)
 
 - Aucun rate limiting par org dans RAGFlow ni dans vLLM (scheduler FIFO global).
-- **Fix** : LiteLLM Proxy devant vLLM. Rate limiting par org, budgets par org, virtual keys. Zéro code RAGFlow modifié.
-- Deux instances vLLM (standard/premium) derrière LiteLLM Proxy.
+- **Quota mensuel par org / virtual keys par workspace** : déjà couvert par notre layer custom (`api/db/services/quota_service.py`, `Organisation.max_tokens_monthly`, API keys per-workspace dans le panel admin).
+- **Rate limiting RPS real-time par org** : seul vrai gap restant. Plusieurs solutions possibles, par ordre de préférence pour notre contexte souverain :
+  1. **nginx ingress rate limiting** sur `X-Workspace-Id` (2h config, 0 nouvelle stack — privilégié)
+  2. **vLLM `--max-num-seqs N`** côté backend pour cap concurrent global (1h config)
+  3. **LiteLLM Proxy** devant vLLM — alternative plus complète (RPS + virtual keys + dashboards + failover) mais ajoute une stack supplémentaire (Postgres dédié + container LiteLLM). Voir section dédiée plus bas.
+- Deux instances vLLM (standard/premium) — l'isolation tier-level est de toute façon nécessaire pour la qualité de service.
 
 ### Stockage vectoriel (Infinity)
 
@@ -69,7 +73,7 @@ Stack : Quart/Hypercorn · Peewee/MySQL · Redis · Infinity · vLLM · Kubernet
 
 | Problème | Solution | Effort |
 |---|---|---|
-| Saturation vLLM inter-org | LiteLLM Proxy | 1-2 jours config |
+| Saturation vLLM inter-org | nginx ingress rate-limit + vLLM `--max-num-seqs` (option lourde : LiteLLM Proxy) | 2-3h (option lourde : 1-2 jours) |
 | Indexation inter-org | 2 queues + 2 Deployments | 1 jour |
 | Routage multi-Infinity | Code RAGFlow : org→URI router | 2-3 jours |
 | Rate limit HTTP par org | nginx ingress annotations | 2h |
@@ -133,8 +137,10 @@ Fichiers impactés : `infinity_conn_base.py`, `infinity_conn.py`, les services q
 | Priorité | Action | Effort | Quand |
 |---|---|---|---|
 | P0 | HPA + 2 replicas ragflow-api | 1h | Avant mise en prod |
-| P0 | LiteLLM Proxy devant vLLM | 1-2 jours | Avant mise en prod |
-| P0 | Rate limit nginx ingress | 2h | Avant mise en prod |
+| P0 | Rate limit nginx ingress sur `X-Workspace-Id` | 2h | Avant mise en prod |
+| P0 | vLLM `--max-num-seqs` cap concurrent global | 1h | Avant mise en prod |
+| P0 | Validation que le quota custom enforce bien | 1h | Avant mise en prod |
+| P2 | LiteLLM Proxy devant vLLM (alternative riche, voir section) | 1-2 jours | Si besoin opérationnel se confirme (multi-backend, virtual keys avancées, failover) |
 | P1 | 2 queues task-executor (std/premium) | 1 jour | J+1 mois |
 | P1 | 2 instances Infinity + routeur org | 2-3 jours | J+1 mois |
 | P2 | ProxySQL connection pooler MySQL | Demi-journée | Si >50 users actifs |
@@ -169,7 +175,20 @@ spare/overflow: 1× Blackwell                      →  burst ou second standard
 
 ---
 
-## LiteLLM Proxy — installation et base de données
+## LiteLLM Proxy — alternative à creuser (pas P0)
+
+> **Statut décisionnel** : pas adopté en P0 parce que notre stack custom
+> couvre déjà l'essentiel pour notre contexte souverain on-prem :
+> quotas mensuels par org, virtual keys per-workspace dans l'admin panel,
+> tracking async des tokens. Le seul vrai gap (RPS real-time) est couvert
+> par nginx ingress rate limiting (P0, 2h config). LiteLLM Proxy reste
+> documenté ici comme **option à activer plus tard** si :
+> - on ouvre du multi-backend LLM (rare vu la stratégie souveraineté)
+> - on veut un dashboard ops temps réel des appels LLM (overlap avec Langfuse)
+> - on veut des budgets par key au-delà du quota mensuel
+> - on a besoin de retry/failover automatique au niveau gateway
+>
+> Pas adopté ≠ exclu — on le réévalue si l'un des cas ci-dessus émerge.
 
 ### Tester en local
 
