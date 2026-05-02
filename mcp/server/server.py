@@ -365,6 +365,187 @@ class RAGFlowConnector:
 
         return mapped
 
+    # ------------------------------------------------------------------
+    # CUSTOM B2B SaaS — V1 exploration tools (Cyllene roadmap V1)
+    # See docs/roadmap-multitenant-saas.md MCP V1.
+    # ------------------------------------------------------------------
+
+    async def list_datasets_structured(
+        self,
+        *,
+        api_key: str,
+        page: int = 1,
+        page_size: int = 100,
+        name: str | None = None,
+    ):
+        """Structured list of accessible datasets — for the standalone
+        `list_datasets` MCP tool (different from `list_datasets` which
+        returns newline-JSON for tool descriptions)."""
+        res_json = await self._fetch_datasets_page(
+            api_key=api_key, page=page, page_size=page_size, name=name
+        )
+        items = []
+        for d in res_json.get("data", []):
+            items.append({
+                "id": d.get("id"),
+                "name": d.get("name"),
+                "description": d.get("description") or "",
+                "document_count": d.get("document_count"),
+                "chunk_count": d.get("chunk_count"),
+                "language": d.get("language"),
+                "embedding_model": d.get("embedding_model"),
+                "create_date": d.get("create_date"),
+                "update_date": d.get("update_date"),
+            })
+        return {
+            "datasets": items,
+            "pagination": {
+                "page": page,
+                "page_size": page_size,
+                "total": res_json.get("total", len(items)),
+            },
+        }
+
+    async def list_documents(
+        self,
+        *,
+        api_key: str,
+        dataset_id: str,
+        page: int = 1,
+        page_size: int = 30,
+        keywords: str | None = None,
+    ):
+        """List documents in a specific dataset, paginated."""
+        params = {"page": page, "page_size": page_size}
+        if keywords:
+            params["keywords"] = keywords
+        # Build query string manually to keep it simple
+        from urllib.parse import urlencode
+        query = urlencode(params)
+        res = await self._get(f"/datasets/{dataset_id}/documents?{query}", api_key=api_key)
+        if not res or res.status_code != 200:
+            raise Exception([types.TextContent(type="text", text="Cannot list documents.")])
+        body = res.json()
+        if body.get("code") != 0:
+            raise Exception([types.TextContent(type="text", text=body.get("message", "Cannot list documents."))])
+        data = body.get("data", {})
+        docs_raw = data.get("docs", [])
+        docs = []
+        for d in docs_raw:
+            docs.append({
+                "id": d.get("id"),
+                "name": d.get("name"),
+                "type": d.get("type"),
+                "size": d.get("size"),
+                "chunk_count": d.get("chunk_count"),
+                "token_count": d.get("token_count"),
+                "create_date": d.get("create_date"),
+                "update_date": d.get("update_date"),
+                "run": d.get("run"),  # parsing status
+                "progress": d.get("progress"),
+                "meta_fields": d.get("meta_fields") or {},
+            })
+        return {
+            "dataset_id": dataset_id,
+            "documents": docs,
+            "pagination": {
+                "page": page,
+                "page_size": page_size,
+                "total": data.get("total", len(docs)),
+            },
+        }
+
+    async def get_document_chunks(
+        self,
+        *,
+        api_key: str,
+        document_id: str,
+        max_chunks: int = 100,
+    ):
+        """Return all chunks of a specific document by triggering a
+        retrieval scoped to that document_id. Uses the document's own
+        name as the question — sufficient to match every chunk in the
+        document at near-zero similarity threshold (because every chunk
+        shares the doc's context). The /retrieval endpoint refuses an
+        empty question, so we can't ask for chunks without a query token."""
+        accessible = await self.resolve_dataset_ids(api_key=api_key)
+        if not accessible:
+            raise Exception([types.TextContent(type="text", text="No accessible datasets.")])
+
+        # Resolve the document's name + dataset for the query token.
+        doc_name = None
+        dataset_id_for_doc = None
+        for ds_id in accessible:
+            try:
+                page = 1
+                while True:
+                    res = await self._get(
+                        f"/datasets/{ds_id}/documents?page={page}&page_size=100",
+                        api_key=api_key,
+                    )
+                    if not res or res.status_code != 200:
+                        break
+                    body = res.json()
+                    if body.get("code") != 0:
+                        break
+                    docs = body.get("data", {}).get("docs", [])
+                    for d in docs:
+                        if d.get("id") == document_id:
+                            doc_name = d.get("name")
+                            dataset_id_for_doc = ds_id
+                            break
+                    if doc_name or len(docs) < 100:
+                        break
+                    page += 1
+                if doc_name:
+                    break
+            except Exception:
+                continue
+
+        if not doc_name:
+            raise Exception([types.TextContent(type="text", text=f"Document {document_id} not found in any accessible dataset.")])
+
+        # Use the doc name as the query token — every chunk of that doc
+        # shares its title context so all match at threshold 0.
+        data_json = {
+            "page": 1,
+            "page_size": max_chunks,
+            "similarity_threshold": 0.0,
+            "vector_similarity_weight": 0.0,  # pure keyword match — more reliable here
+            "top_k": max_chunks,
+            "keyword": True,
+            "question": doc_name,
+            "dataset_ids": [dataset_id_for_doc],
+            "document_ids": [document_id],
+        }
+        res = await self._post("/retrieval", json=data_json, api_key=api_key)
+        if not res or res.status_code != 200:
+            raise Exception([types.TextContent(type="text", text="Cannot fetch document chunks.")])
+        body = res.json()
+        if body.get("code") != 0:
+            raise Exception([types.TextContent(type="text", text=body.get("message", "Cannot fetch document chunks."))])
+
+        data = body.get("data", {})
+        chunks_raw = data.get("chunks", [])
+        chunks = []
+        for c in chunks_raw:
+            chunks.append({
+                "id": c.get("id") or c.get("chunk_id"),
+                "content": c.get("content_with_weight") or c.get("content"),
+                "document_id": c.get("document_id"),
+                "document_name": c.get("document_keyword"),
+                "dataset_id": c.get("dataset_id") or c.get("kb_id"),
+                "positions": c.get("positions"),
+                "similarity": c.get("similarity"),
+            })
+        return {
+            "document_id": document_id,
+            "document_name": doc_name,
+            "dataset_id": dataset_id_for_doc,
+            "chunks": chunks,
+            "total_returned": len(chunks),
+        }
+
 
 class RAGFlowCtx:
     def __init__(self, connector: RAGFlowConnector):
@@ -528,6 +709,80 @@ async def list_tools(*, connector: RAGFlowConnector, api_key: str) -> list[types
                 "required": ["question"],
             },
         ),
+        # CUSTOM B2B SaaS — V1 exploration tools (Cyllene roadmap V1)
+        types.Tool(
+            name="list_datasets",
+            description=(
+                "List datasets (knowledge bases) accessible to the authenticated "
+                "user in the current workspace. Returns id, name, description, "
+                "document/chunk counts, language, embedding model, and timestamps. "
+                "Use this to discover available datasets before calling "
+                "ragflow_retrieval, list_documents, or get_document_chunks."
+            ),
+            inputSchema={
+                "type": "object",
+                "properties": {
+                    "name": {
+                        "type": "string",
+                        "description": "Optional case-insensitive name filter.",
+                    },
+                    "page": {"type": "integer", "default": 1, "minimum": 1},
+                    "page_size": {"type": "integer", "default": 100, "minimum": 1, "maximum": 1000},
+                },
+                "required": [],
+            },
+        ),
+        types.Tool(
+            name="list_documents",
+            description=(
+                "List documents inside a specific dataset, paginated. Returns id, "
+                "name, type, size, chunk_count, parsing status (run/progress), and "
+                "metadata fields. Use after list_datasets to browse a dataset, "
+                "then call get_document_chunks for the actual content."
+            ),
+            inputSchema={
+                "type": "object",
+                "properties": {
+                    "dataset_id": {
+                        "type": "string",
+                        "description": "ID of the dataset to list documents from.",
+                    },
+                    "keywords": {
+                        "type": "string",
+                        "description": "Optional keyword filter on document names.",
+                    },
+                    "page": {"type": "integer", "default": 1, "minimum": 1},
+                    "page_size": {"type": "integer", "default": 30, "minimum": 1, "maximum": 100},
+                },
+                "required": ["dataset_id"],
+            },
+        ),
+        types.Tool(
+            name="get_document_chunks",
+            description=(
+                "Return all chunks of a specific document, in their natural order. "
+                "Useful when you want the full content of an indexed file (RFC, "
+                "ADR, procedure, etc.) rather than only the top-N relevant chunks. "
+                "Bounded by max_chunks to avoid blowing the context window."
+            ),
+            inputSchema={
+                "type": "object",
+                "properties": {
+                    "document_id": {
+                        "type": "string",
+                        "description": "ID of the document to fetch chunks from.",
+                    },
+                    "max_chunks": {
+                        "type": "integer",
+                        "description": "Maximum number of chunks to return.",
+                        "default": 100,
+                        "minimum": 1,
+                        "maximum": 500,
+                    },
+                },
+                "required": ["document_id"],
+            },
+        ),
     ]
 
 
@@ -567,6 +822,41 @@ async def call_tool(
             rerank_id=rerank_id,
             force_refresh=force_refresh,
         )
+
+    # CUSTOM B2B SaaS — V1 exploration tools dispatch
+    if name == "list_datasets":
+        result = await connector.list_datasets_structured(
+            api_key=api_key,
+            page=arguments.get("page", 1),
+            page_size=arguments.get("page_size", 100),
+            name=arguments.get("name"),
+        )
+        return [types.TextContent(type="text", text=json.dumps(result, ensure_ascii=False))]
+
+    if name == "list_documents":
+        dataset_id = arguments.get("dataset_id")
+        if not dataset_id:
+            raise ValueError("list_documents requires dataset_id")
+        result = await connector.list_documents(
+            api_key=api_key,
+            dataset_id=dataset_id,
+            page=arguments.get("page", 1),
+            page_size=arguments.get("page_size", 30),
+            keywords=arguments.get("keywords"),
+        )
+        return [types.TextContent(type="text", text=json.dumps(result, ensure_ascii=False))]
+
+    if name == "get_document_chunks":
+        document_id = arguments.get("document_id")
+        if not document_id:
+            raise ValueError("get_document_chunks requires document_id")
+        result = await connector.get_document_chunks(
+            api_key=api_key,
+            document_id=document_id,
+            max_chunks=arguments.get("max_chunks", 100),
+        )
+        return [types.TextContent(type="text", text=json.dumps(result, ensure_ascii=False))]
+
     raise ValueError(f"Tool not found: {name}")
 
 
