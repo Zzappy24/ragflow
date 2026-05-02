@@ -455,6 +455,132 @@ class RAGFlowConnector:
             },
         }
 
+    # ------------------------------------------------------------------
+    # CUSTOM B2B SaaS — V2 write tools (Cyllene roadmap V2)
+    # ------------------------------------------------------------------
+
+    async def create_dataset(
+        self,
+        *,
+        api_key: str,
+        name: str,
+        description: str | None = None,
+        embedding_model: str | None = None,
+        chunk_method: str | None = None,
+        permission: str = "me",
+    ):
+        """Create a new dataset (knowledge base) in the workspace."""
+        body = {"name": name, "permission": permission}
+        if description:
+            body["description"] = description
+        if embedding_model:
+            body["embedding_model"] = embedding_model
+        if chunk_method:
+            body["chunk_method"] = chunk_method
+
+        res = await self._post("/datasets", json=body, api_key=api_key)
+        if not res or res.status_code != 200:
+            text = res.text[:200] if res else "no response"
+            raise Exception([types.TextContent(type="text", text=f"create_dataset failed: {text}")])
+        ret = res.json()
+        if ret.get("code") != 0:
+            raise Exception([types.TextContent(type="text", text=ret.get("message", "create_dataset failed"))])
+        return {"dataset": ret.get("data", {})}
+
+    async def index_document(
+        self,
+        *,
+        api_key: str,
+        dataset_id: str,
+        content: str,
+        filename: str,
+        auto_parse: bool = True,
+    ):
+        """Upload a document to a dataset and (optionally) trigger parsing.
+
+        Encodes the content as a UTF-8 file in a multipart form. Filename
+        extension drives RAGFlow's parser selection (.md, .txt, .pdf, etc.)
+        — pass a sensible name so the right parser is invoked."""
+        client = await self._get_client()
+        files = {
+            "file": (filename, content.encode("utf-8") if isinstance(content, str) else content),
+        }
+        upload_res = await client.post(
+            f"{self.api_url}/datasets/{dataset_id}/documents",
+            files=files,
+            headers={"Authorization": f"Bearer {api_key}"},
+        )
+        if upload_res.status_code != 200:
+            raise Exception([types.TextContent(type="text", text=f"upload failed: HTTP {upload_res.status_code} — {upload_res.text[:200]}")])
+        body = upload_res.json()
+        if body.get("code") != 0:
+            raise Exception([types.TextContent(type="text", text=body.get("message", "upload failed"))])
+
+        uploaded = body.get("data", [])
+        if not uploaded:
+            raise Exception([types.TextContent(type="text", text="upload returned no documents")])
+        doc = uploaded[0]
+        doc_id = doc.get("id")
+
+        result = {
+            "document": {
+                "id": doc_id,
+                "name": doc.get("name"),
+                "size": doc.get("size"),
+                "type": doc.get("type"),
+                "dataset_id": dataset_id,
+            },
+            "parse_triggered": False,
+        }
+
+        if auto_parse and doc_id:
+            parse_res = await self._post(
+                f"/datasets/{dataset_id}/documents/parse",
+                json={"document_ids": [doc_id]},
+                api_key=api_key,
+            )
+            if parse_res and parse_res.status_code == 200:
+                pbody = parse_res.json()
+                result["parse_triggered"] = pbody.get("code") == 0
+                if pbody.get("code") != 0:
+                    result["parse_error"] = pbody.get("message")
+            else:
+                result["parse_error"] = "parse endpoint did not return 200"
+
+        return result
+
+    async def delete_documents(
+        self,
+        *,
+        api_key: str,
+        dataset_id: str,
+        document_ids: list[str],
+    ):
+        """Delete one or more documents from a dataset.
+
+        WARNING: deletes the file row. The chunks indexed in Infinity/ES are
+        also dropped server-side. RGPD-compliant in this respect."""
+        if not document_ids:
+            raise Exception([types.TextContent(type="text", text="delete_documents requires non-empty document_ids")])
+
+        client = await self._get_client()
+        res = await client.request(
+            "DELETE",
+            f"{self.api_url}/datasets/{dataset_id}/documents",
+            json={"ids": document_ids},
+            headers={"Authorization": f"Bearer {api_key}"},
+        )
+        if res.status_code != 200:
+            raise Exception([types.TextContent(type="text", text=f"delete_documents failed: HTTP {res.status_code} — {res.text[:200]}")])
+        body = res.json()
+        if body.get("code") != 0:
+            raise Exception([types.TextContent(type="text", text=body.get("message", "delete failed"))])
+        return {
+            "dataset_id": dataset_id,
+            "deleted_ids": document_ids,
+            "status": "ok",
+        }
+
     async def list_agents(
         self,
         *,
@@ -925,6 +1051,85 @@ async def list_tools(*, connector: RAGFlowConnector, api_key: str) -> list[types
                 "required": ["dataset_id"],
             },
         ),
+        # CUSTOM B2B SaaS — V2 write tools (Cyllene roadmap V2)
+        types.Tool(
+            name="create_dataset",
+            description=(
+                "Create a new dataset (knowledge base) in the current "
+                "workspace. Specify a name and optional description. The "
+                "embedding model defaults to the workspace's default if not "
+                "set. Use chunk_method=naive for plain markdown/text/PDF; "
+                "see RAGFlow docs for advanced parsers."
+            ),
+            inputSchema={
+                "type": "object",
+                "properties": {
+                    "name": {"type": "string", "description": "Dataset name (required, must be unique in the workspace)."},
+                    "description": {"type": "string", "description": "Optional description."},
+                    "embedding_model": {
+                        "type": "string",
+                        "description": "Embedding model to use (e.g. 'nomic-embed-text@Ollama'). Defaults to workspace default.",
+                    },
+                    "chunk_method": {
+                        "type": "string",
+                        "description": "Chunk method: naive | book | qa | manual | paper | one | etc. Defaults to naive.",
+                    },
+                    "permission": {
+                        "type": "string",
+                        "enum": ["me", "team"],
+                        "description": "Visibility: 'me' (private) or 'team' (workspace-wide).",
+                        "default": "me",
+                    },
+                },
+                "required": ["name"],
+            },
+        ),
+        types.Tool(
+            name="index_document",
+            description=(
+                "Upload a document into a dataset and (by default) trigger "
+                "parsing/embedding. The content is sent as a UTF-8 file with "
+                "the supplied filename — the extension drives RAGFlow's "
+                "parser selection (.md, .txt, .pdf, .docx, .json, ...). "
+                "Returns the new document_id; you can poll list_documents "
+                "to watch parse progress."
+            ),
+            inputSchema={
+                "type": "object",
+                "properties": {
+                    "dataset_id": {"type": "string", "description": "ID of the dataset to upload into."},
+                    "content": {"type": "string", "description": "Full text content of the document."},
+                    "filename": {"type": "string", "description": "Filename including extension (e.g. 'rfc-2026-auth.md')."},
+                    "auto_parse": {
+                        "type": "boolean",
+                        "description": "Trigger parse + embed after upload. Default true.",
+                        "default": True,
+                    },
+                },
+                "required": ["dataset_id", "content", "filename"],
+            },
+        ),
+        types.Tool(
+            name="delete_documents",
+            description=(
+                "Delete one or more documents from a dataset. Deletes the "
+                "file rows AND the indexed chunks in Infinity/ES (RGPD-"
+                "compliant)."
+            ),
+            inputSchema={
+                "type": "object",
+                "properties": {
+                    "dataset_id": {"type": "string", "description": "ID of the dataset."},
+                    "document_ids": {
+                        "type": "array",
+                        "items": {"type": "string"},
+                        "description": "List of document IDs to delete.",
+                        "minItems": 1,
+                    },
+                },
+                "required": ["dataset_id", "document_ids"],
+            },
+        ),
         # CUSTOM B2B SaaS — V4 agents-as-tools (Cyllene roadmap V4)
         types.Tool(
             name="list_agents",
@@ -1092,6 +1297,47 @@ async def call_tool(
             page=arguments.get("page", 1),
             page_size=arguments.get("page_size", 30),
             keywords=arguments.get("keywords"),
+        )
+        return [types.TextContent(type="text", text=json.dumps(result, ensure_ascii=False))]
+
+    if name == "create_dataset":
+        ds_name = arguments.get("name")
+        if not ds_name:
+            raise ValueError("create_dataset requires name")
+        result = await connector.create_dataset(
+            api_key=api_key,
+            name=ds_name,
+            description=arguments.get("description"),
+            embedding_model=arguments.get("embedding_model"),
+            chunk_method=arguments.get("chunk_method"),
+            permission=arguments.get("permission", "me"),
+        )
+        return [types.TextContent(type="text", text=json.dumps(result, ensure_ascii=False))]
+
+    if name == "index_document":
+        dataset_id = arguments.get("dataset_id")
+        content = arguments.get("content", "")
+        filename = arguments.get("filename")
+        if not dataset_id or not filename:
+            raise ValueError("index_document requires dataset_id and filename")
+        result = await connector.index_document(
+            api_key=api_key,
+            dataset_id=dataset_id,
+            content=content,
+            filename=filename,
+            auto_parse=arguments.get("auto_parse", True),
+        )
+        return [types.TextContent(type="text", text=json.dumps(result, ensure_ascii=False))]
+
+    if name == "delete_documents":
+        dataset_id = arguments.get("dataset_id")
+        document_ids = arguments.get("document_ids") or []
+        if not dataset_id or not document_ids:
+            raise ValueError("delete_documents requires dataset_id and a non-empty document_ids array")
+        result = await connector.delete_documents(
+            api_key=api_key,
+            dataset_id=dataset_id,
+            document_ids=document_ids,
         )
         return [types.TextContent(type="text", text=json.dumps(result, ensure_ascii=False))]
 
