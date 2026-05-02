@@ -122,6 +122,10 @@ export enum Operator {
   Extractor = 'Extractor',
   Loop = 'Loop',
   LoopStart = 'LoopItem',
+  // CUSTOM B2B SaaS — render a workspace .docx template with LLM-generated JSON.
+  // Backend: agent/tools/render_docx_template.py (canvas-node) +
+  //          agent/plugin/embedded_plugins/llm_tools/render_docx_template.py
+  RenderDocxTemplate = 'RenderDocxTemplate',
   ExitLoop = 'ExitLoop',
   ExcelProcessor = 'ExcelProcessor',
 }

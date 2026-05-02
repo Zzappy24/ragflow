@@ -436,6 +436,21 @@ export const initialCodeValues = {
 
 export const initialWaitingDialogueValues = {};
 
+// CUSTOM B2B SaaS — render_docx_template tool defaults.
+// Mirrors agent/tools/render_docx_template.py::RenderDocxTemplateParam.
+// `template_file_id` and `output_folder_id` are workspace-bound IDs the user
+// fills at canvas-design time. `output_filename` is a Jinja pattern with
+// access to the rendered content + a `ts` (UTC timestamp).
+export const initialRenderDocxTemplateValues = {
+  template_file_id: '',
+  output_folder_id: '',
+  output_filename: "{{procedure_name|default('document')|slugify}}-{{ts}}.docx",
+  outputs: {
+    formalized_content: { value: '', type: 'string' },
+    json: { value: {}, type: 'Object' },
+  },
+};
+
 export const initialAgentValues = {
   ...initialLlmBaseValues,
   description: '',

@@ -1011,6 +1011,8 @@ export default {
       },
       publish: 'API',
       exeSQL: 'ExeSQL',
+      // CUSTOM B2B SaaS
+      renderDocxTemplate: 'Rendu DOCX (template Word)',
       exeSQLDescription:
         'Un composant qui exécute des requêtes SQL sur une base de données relationnelle, supportant MySQL, PostgreSQL ou MariaDB.',
       dbType: 'Type de base de données',

@@ -1884,6 +1884,8 @@ Best for: Documents with flowing, contextually connected content — such as boo
       exeSQL: 'Execute SQL',
       exeSQLDescription:
         'A component that performs SQL queries on a relational database, supporting querying from MySQL, PostgreSQL, or MariaDB.',
+      // CUSTOM B2B SaaS
+      renderDocxTemplate: 'Render DOCX template',
       dbType: 'Database type',
       database: 'Database',
       username: 'Username',

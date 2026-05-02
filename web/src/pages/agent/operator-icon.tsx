@@ -57,6 +57,8 @@ export const LucideIconMap = {
   [Operator.Loop]: InfinityIcon,
   [Operator.ExitLoop]: LogOut,
   [Operator.DocGenerator]: FileText,
+  // CUSTOM B2B SaaS
+  [Operator.RenderDocxTemplate]: FileText,
 };
 
 const Empty = () => {

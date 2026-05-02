@@ -34,6 +34,8 @@ import {
   initialNoteValues,
   initialParserValues,
   initialPubMedValues,
+  // CUSTOM B2B SaaS
+  initialRenderDocxTemplateValues,
   initialRetrievalValues,
   initialRewriteQuestionValues,
   initialSearXNGValues,
@@ -75,7 +77,7 @@ const GroupStartNodeMap = {
       name: Operator.IterationStart,
       form: initialIterationStartValues,
     },
-    extent: 'parent' as 'parent',
+    extent: 'parent' as const,
   },
   [Operator.Loop]: {
     id: `${Operator.LoopStart}:${humanId()}`,
@@ -86,7 +88,7 @@ const GroupStartNodeMap = {
       name: Operator.LoopStart,
       form: {},
     },
-    extent: 'parent' as 'parent',
+    extent: 'parent' as const,
   },
 };
 
@@ -144,6 +146,8 @@ export const useInitializeOperatorParams = () => {
       [Operator.SearXNG]: initialSearXNGValues,
       [Operator.GitHub]: initialGithubValues,
       [Operator.ExeSQL]: initialExeSqlValues,
+      // CUSTOM B2B SaaS
+      [Operator.RenderDocxTemplate]: initialRenderDocxTemplateValues,
       [Operator.Switch]: initialSwitchValues,
       [Operator.WenCai]: initialWenCaiValues,
       [Operator.YahooFinance]: initialYahooFinanceValues,

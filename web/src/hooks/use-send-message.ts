@@ -113,11 +113,22 @@ export const useSendMessageBySSE = (url: string) => {
       initializeSseRef();
       try {
         setDone(false);
+        // CUSTOM B2B SaaS — this hook uses raw fetch() and bypasses the
+        // umi `request` interceptor at web/src/utils/request.ts. Without
+        // this manual injection, SSE-streamed routes (chat completions,
+        // agent chat, dataflow runs) hit the backend without the
+        // workspace header, our @require_permission decorator can't
+        // resolve a tenant, and every authenticated chat returns
+        // "Permission denied: chat.use".
+        const activeWorkspaceId = localStorage.getItem('active_workspace_id');
         const response = await fetch(url, {
           method: 'POST',
           headers: {
             [Authorization]: getAuthorization(),
             'Content-Type': 'application/json',
+            ...(activeWorkspaceId
+              ? { 'X-Workspace-Id': activeWorkspaceId }
+              : {}),
           },
           body: JSON.stringify(body),
           signal: controller?.signal || sseRef.current?.signal,

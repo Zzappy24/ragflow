@@ -47,6 +47,11 @@ const Menus = [
     label: t('flow.developer'),
     list: [Operator.GitHub, Operator.ExeSQL, Operator.Code, Operator.Retrieval],
   },
+  // CUSTOM B2B SaaS — workspace document generation tools.
+  {
+    label: 'Documents',
+    list: [Operator.RenderDocxTemplate],
+  },
 ];
 
 type ToolCommandProps = {
