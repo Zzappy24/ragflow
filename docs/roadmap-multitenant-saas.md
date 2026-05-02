@@ -58,23 +58,36 @@ Tokens p/workspace existe déjà. Manque :
 - Trend hebdo/mensuel/trimestriel
 - Token cost vs business value (« 240 h économisées »)
 
-**Stack recommandée** :
+**Approche tiered, par ordre d'effort** :
 
-| Couche | Outil | Pour quoi |
-|---|---|---|
-| LLM observability | **Langfuse** (open-source, self-host) | Tokens, latence, traces, audit RGPD |
-| Product analytics | PostHog (free tier) | DAU/WAU, funnel, top queries, feature adoption |
-| Billing & SLA | Custom (déjà fait pour tokens) | Vue client dans le panel admin |
-| Infra | Datadog/Grafana existants | ASGI, MySQL, Redis |
+**Tier 1 — 1-2 jours, zéro infra ajoutée** (recommandé pour stade actuel)
+Table `llm_call_log` dans le MySQL existant : `tenant_id`, `canvas_id`,
+`agent_id`, `model`, `started_at`, `ended_at`, `prompt_tokens`,
+`completion_tokens`, `success`, `error`. Wrap les appels LLM dans
+`LLMBundle` pour écrire une ligne. Vues admin via SQL (latence p95,
+top failures, top queries, cost par agent). **Couvre 80% du besoin
+réel** : pas de nouvelle stack à maintenir.
 
-**Surprise : Langfuse est déjà câblé dans RAGFlow** —
-[api/db/services/tenant_llm_service.py:491-502](api/db/services/tenant_llm_service.py#L491-L502)
-gère per-tenant les credentials Langfuse. Activer = configurer une instance
-Langfuse + renseigner les clés par workspace via `TenantLangfuseService`.
-Pas besoin de réécrire l'observability LLM, juste de l'allumer.
+**Tier 2 — 1 semaine, si Datadog/Grafana déjà en place**
+SDK OpenTelemetry dans `LLMBundle` → traces + métriques dans l'obs infra
+existante. Pas de stack séparée, dashboards partagés avec les SRE.
 
-Custom reste nécessaire pour la **vue client-facing** (factures B2B,
-SLA reporting), mais Langfuse couvre 80% du gap interne.
+**Tier 3 — 2 semaines, +Langfuse self-host**
+Justifié quand on a vraiment besoin de :
+- Visualisation traces multi-step parent/child (agent → tool → retrieval)
+- Workflow d'annotation/feedback collaboratif client-side
+- Volumes >10M traces/mois (ClickHouse pertinent à ce volume)
+
+À noter : RAGFlow câble déjà Langfuse per-tenant nativement
+([api/db/services/tenant_llm_service.py:491-502](api/db/services/tenant_llm_service.py#L491-L502)),
+donc le jour où Tier 3 devient justifié, l'intégration côté code = 0.
+Reste à monter la stack Langfuse (Postgres + ClickHouse + Redis + Node API
++ Worker + Web). **Lourd** : à ne lancer qu'avec ≥5 clients en prod et un
+besoin documenté qui dépasse Tier 1/2.
+
+**Custom reste nécessaire** pour la vue client-facing (factures B2B,
+SLA reporting affiché aux clients dans leur panel admin). Pas remplaçable
+par un outil tiers parce que c'est partie intégrante de ton produit.
 
 ### 7. Audit trail RGPD
 Qui, quand, quel agent, quelle query, quels chunks retrieved, quel
