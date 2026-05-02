@@ -81,11 +81,16 @@ def _apply_model_family_policies(
         # The Base class passes gen_conf via **spread into the OpenAI SDK call,
         # but discards request_kwargs. Fold `extra_body` into gen_conf so the
         # SDK forwards it (the SDK accepts `extra_body` as a top-level param).
+        # We MUST also pop it from sanitized_kwargs — call sites that spread
+        # both gen_conf and kwargs together (e.g. `**gen_conf, **kwargs` at
+        # rag/llm/chat_model.py:585) would otherwise raise TypeError "multiple
+        # values for keyword argument 'extra_body'".
         if "extra_body" in sanitized_kwargs:
             sanitized_gen_conf["extra_body"] = {
                 **sanitized_gen_conf.get("extra_body", {}),
                 **sanitized_kwargs["extra_body"],
             }
+            sanitized_kwargs.pop("extra_body", None)
         return sanitized_gen_conf, sanitized_kwargs
 
     if backend == "litellm":
