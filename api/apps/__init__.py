@@ -190,6 +190,35 @@ def _load_user():
     try:
         objs = APIToken.query(token=auth_token)
         if objs:
+            # CUSTOM B2B SaaS — workspace tokens have tenant_id = workspace
+            # tenant_id, NOT a user_id. Upstream's `UserService.query(id=tenant_id)`
+            # then finds only the synthetic `ws-*@internal` user, which has no
+            # ws_member rows and consequently fails every @require_permission
+            # check. We resolve to the human creator stored in ApiKeyScope first
+            # so the RBAC layer sees the real owner. Falls back to upstream
+            # behavior for legacy/unscoped tokens.
+            try:
+                from api.db.services.workspace_service import ApiKeyScopeService
+                scope = ApiKeyScopeService.get_by_token(auth_token)
+                if scope and scope.created_by:
+                    user = UserService.query(id=scope.created_by, status=StatusEnum.VALID.value)
+                    if user and user[0].access_token and user[0].access_token.strip():
+                        g.user = user[0]
+                        # Inject the workspace context so add_tenant_id_to_kwargs
+                        # resolves to the workspace tenant (not the user's
+                        # personal tenant). Mirrors what the X-Workspace-Id
+                        # middleware does for browser/JWT requests.
+                        if scope.workspace_id:
+                            g._ws_header = scope.workspace_id
+                            # Pre-resolve the workspace tenant_id so that
+                            # `active_tenant_id()` returns the workspace tenant
+                            # rather than the user's personal one.
+                            g.active_tenant_id = objs[0].tenant_id
+                        return user[0]
+            except Exception as e_scope:
+                logging.warning(f"load_user: ApiKeyScope resolution failed: {e_scope}")
+
+            # Fallback: legacy unscoped token → resolve via tenant_id (upstream)
             user = UserService.query(id=objs[0].tenant_id, status=StatusEnum.VALID.value)
             if user:
                 if not user[0].access_token or not user[0].access_token.strip():

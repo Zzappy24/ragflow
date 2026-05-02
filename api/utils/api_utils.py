@@ -376,6 +376,19 @@ def token_required(func):
                     if scope.status != "1":
                         raise WerkzeugUnauthorized(description="API key disabled")
                     ApiKeyScopeService.touch_last_used(token)
+                    # CUSTOM B2B SaaS — propagate the human owner so
+                    # @require_permission can resolve the actual creator's
+                    # role rather than treating this as an anonymous service
+                    # token. Without this, MCP-style API key auth could not
+                    # respect per-user RBAC for routes that use @token_required.
+                    # We only set g._rbac_user_id (NOT kwargs["user_id"]) to
+                    # avoid TypeError on route handlers that don't declare a
+                    # user_id parameter.
+                    if scope.created_by:
+                        try:
+                            g._rbac_user_id = scope.created_by
+                        except Exception:
+                            pass
             except WerkzeugUnauthorized:
                 raise
             except Exception:
