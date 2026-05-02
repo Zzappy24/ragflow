@@ -6,6 +6,106 @@ mais sous-utilisés, vs. à construire nous-mêmes.
 
 ---
 
+## 🌟 Priorité transversale — GraphRAG sur tous les datasets de docs
+
+**Foundation, pas une phase.** À activer dès la création de chaque dataset
+documentaire (RFCs, ARCHITECTURE.md, ADRs, procédures, conventions).
+RAGFlow l'a built-in (`rag/graphrag/search.py`) mais cassé chez nous par
+la config par défaut (`localhost:6380` embedding inexistant).
+
+Bénéfices :
+- Cross-project pattern discovery (« quels projets utilisent JWT + Postgres ? »)
+- Asset cumulatif : chaque doc ingéré enrichit le graph d'entités
+- Coût marginal : 2-3× temps d'ingestion mais pas de runtime overhead majeur
+- Réutilisable au-delà du code : pour les KBs métier, juridiques, etc.
+
+Setup (~1 jour) :
+1. Configurer un LLM extraction d'entités (Qwen3:4b local OK pour démarrer,
+   DeepSeek V4 Flash sur Blackwell en prod)
+2. Activer `use_kg=true` au niveau dataset (entity extraction à l'ingestion)
+3. Ré-ingestion progressive des docs existants
+4. Activer `use_kg=true` dans les nœuds Retrieval des canvases qui en bénéficient
+
+À ne PAS appliquer au code source — pour ça, FFF MCP (grep) + Read couvrent
+mieux. GraphRAG est pour les **artefacts business**.
+
+---
+
+## 🚀 Roadmap MCP server — V1 à V5
+
+Le serveur MCP RAGFlow upstream existe (`mcp/server/server.py`) et marche
+out-of-the-box avec notre auth multi-tenant après les fixes RBAC du
+2026-05-02. La roadmap ci-dessous étend ses tools.
+
+### Scope retenu (skip V3 codebase graph)
+
+| Phase | Items | Effort |
+|---|---|---|
+| **V0 — Acquis** | `ragflow_retrieval` (upstream) + auth multi-tenant + RBAC per-user via API key | ✅ Done |
+| **V1 — Exploration richer** | `list_datasets` séparé, `list_documents`, `get_document` | 3 jours |
+| **V2 — Write basique** | `index_document`, `index_url`, `delete_document`, `update_document`, `create_dataset` | 1-2 sem |
+| **V3 — Codebase graph** | DEFERRED — wrappe code-graph-mcp/graphify quand client demande | T+6-12 mois |
+| **V4 — Agents-as-tools** | `run_agent`, `list_agents`, `continue_agent_session` | 1-2 sem |
+| **V5 — Prompts catalog** | MCP `prompts/list`, `prompts/get` | 1 sem |
+| **Bonus** | UI per-user API keys + Service Accounts + Audit dashboard | 1-2 sem |
+| **Total** | | **~6-8 semaines** |
+
+### Ordre d'attaque (facile → impact → différenciant)
+
+```
+1. Commit RBAC fixes (déjà appliqués 2026-05-02)
+   ↓
+2. V1 (exploration)         [3 jours, pattern multi-tools établi]
+   ↓
+3. V4 (run_agent)           [1-2 sem, KILLER FEATURE — workforce IA via IDE]
+   ↓
+4. V2 partiel (index_document) [1 sem, write IDE-friendly]
+   ↓
+5. V5 (Prompts catalog)     [1 sem, méthodo Cyllene packagée]
+   ↓
+6. V2 reste                 [3 jours, completion]
+   ↓
+7. UI per-user API keys     [1-2 sem, scale-up]
+```
+
+### Points d'attention opérationnelle (à intégrer durant l'implémentation)
+
+| # | Item | Criticité | Quand |
+|---|---|:---:|---|
+| 1 | Cancellation + streaming progress sur `run_agent` | 🔴 Élevée | À spec **avant V4** |
+| 2 | Schema validation JSON Schema sur tous les tools (avant exécution) | 🟠 Moyenne | Pattern dès V1 |
+| 3 | Doc client / SDK config (Claude Code, Cursor, OpenCode) | 🔴 Élevée | Avant 1er client externe |
+| 4 | Migration script tokens legacy sans `ApiKeyScope` | 🟠 Moyenne | Avant prod |
+| 5 | HPA MCP server pour multi-replicas K8s | 🟠 Moyenne | Avant prod scale |
+| 6 | Versioning de l'API MCP | 🟢 Basse | T+6 mois |
+| 7 | Test que `LLMBundle._check_token_quota` enforce bien sur calls MCP | 🔴 Élevée | Avant 1er client payant |
+| 8 | Cancellation propagée au `canvas.run()` côté serveur | 🟠 Moyenne | T+3 mois |
+| 9 | GDPR delete pipeline (suppression chunks Infinity quand `delete_document`) | 🔴 Élevée | Avant client régulé (Bodemer/Maurin) |
+| 10 | Healthchecks `/health` + readiness/liveness probes K8s | 🟢 Basse | Avant deploy K8s |
+
+→ Total +11 jours additionnels sur les 6-8 semaines de roadmap MCP. Pas de
+quoi changer la structure, juste à ne pas oublier.
+
+### V3 codebase graph — pourquoi deferred
+
+FFF (file-finder MCP avec grep frecency-ranked) couvre l'usage dev quotidien.
+À 200K+ LOC du fork RAGFlow, grep + Read + multi_grep sémantique reste
+performant. Vector search sur le code ajoute marginalement.
+
+Reactivable plus tard via :
+- **Wrapper code-graph-mcp** : 10 tools out-of-the-box (call_graph, impact_analysis,
+  find_dead_code, etc.), tree-sitter + SQLite + sqlite-vec, ~1 sem pour ajouter
+  notre auth multi-tenant
+- **Wrapper graphify** : multimodal (code + docs + images + vidéos), NetworkX
+  + Leiden, plus exotique mais riche
+
+Conditions de réactivation :
+- Client demande explicitement code search avancé sur SES repos
+- Onboarding interne explose (>10 nouveaux devs / an sur le fork)
+- Cyllene packe une offre « code-aware AI » premium
+
+---
+
 ## 🎯 Présents dans RAGFlow, à activer
 
 ### 1. MCP (Model Context Protocol) comme tools agents
