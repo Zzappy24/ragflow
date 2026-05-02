@@ -134,6 +134,10 @@ RAGFlow supports switching between Elasticsearch (default) and Infinity:
 - uv package manager
 - 16GB+ RAM, 50GB+ disk space
 
+## Known issues & post-mortems
+
+- [PDG demo postmortem](docs/known-issues/pdg-demo-postmortem.md) — caches stale, `is_tools=False` default, Ollama tool-call parsing bug, RBAC 403 on citation clicks, etc. Read before debugging the agentic flow.
+
 ## Custom B2B SaaS Multi-Tenant Layer
 
 This fork adds a multi-tenant RBAC system (workspaces, organizations, roles) on top of upstream RAGFlow's single-tenant model.
