@@ -51,6 +51,8 @@ import re
 from datetime import datetime
 from abc import ABC
 
+import json_repair
+
 from agent.tools.base import ToolParamBase, ToolBase, ToolMeta
 from common.connection_utils import timeout
 
@@ -73,10 +75,18 @@ class RenderDocxTemplateParam(ToolParamBase):
                 "content": {
                     "type": "string",
                     "description": (
-                        "JSON object (as a string) with the field values "
-                        "expected by the template. The exact schema depends "
-                        "on the template; see the template's documentation "
-                        "or its placeholder list."
+                        "JSON object (passed as a STRING) with the document content. "
+                        "MUST be valid JSON with these exact keys:\n"
+                        "  procedure_name: string (title in UPPERCASE)\n"
+                        "  beneficiaires: array of strings (concerned roles)\n"
+                        "  finalite: string (short purpose statement)\n"
+                        "  revision_date: string (DD/MM/YYYY)\n"
+                        "  revision_number: string (e.g. 'V1')\n"
+                        "  revision_auteur: string (author full name)\n"
+                        "  revision_approbateur: string (approver title)\n"
+                        "  revision_nature: string (e.g. 'Création')\n"
+                        "  sections: array of {titre, intro, puces[]} (min 3 sections, 3-5 puces each)\n"
+                        "Plain text only, NO markdown (**, *, #, etc.)."
                     ),
                     "default": "{}",
                     "required": True,
@@ -109,12 +119,18 @@ class RenderDocxTemplateParam(ToolParamBase):
 
 
 def _slugify(value: str) -> str:
-    """Filesystem-safe slug. Keeps unicode letters out for portability."""
+    """Filesystem-safe slug. Transliterates accented chars (é→e, à→a, etc.)
+    so a French title doesn't lose letters when stripped to ASCII."""
     if not value:
         return "document"
-    value = re.sub(r"[^\w\s-]", "", str(value), flags=re.ASCII)
-    value = re.sub(r"[\s_-]+", "-", value).strip("-")
-    return value.lower() or "document"
+    import unicodedata
+    # NFKD splits "é" into "e" + combining acute accent; then we drop the
+    # combining marks so we keep "e" rather than turning the whole token into ""
+    normalized = unicodedata.normalize("NFKD", str(value))
+    ascii_only = "".join(c for c in normalized if not unicodedata.combining(c))
+    ascii_only = re.sub(r"[^\w\s-]", "", ascii_only, flags=re.ASCII)
+    ascii_only = re.sub(r"[\s_-]+", "-", ascii_only).strip("-")
+    return ascii_only.lower() or "document"
 
 
 def _format_filename(pattern: str, content: dict) -> str:
@@ -137,16 +153,71 @@ def _format_filename(pattern: str, content: dict) -> str:
 
 def _ensure_dict(content):
     """The LLM may pass `content` as a JSON string or as an already-parsed
-    dict (function-calling sometimes deserialises). Coerce safely."""
+    dict (function-calling sometimes deserialises). Coerce safely.
+
+    Local Q4/Q8 models routinely emit *almost*-valid JSON: stray `\'` escapes,
+    smart quotes, trailing commas, unescaped newlines in strings, and the
+    classic "half-escaped JSON-in-string" bug where keys are written `\"key\"`
+    but values use plain `"`. `json_repair` swallows that one silently and
+    keeps the literal `\\\"` as part of the key, so the Jinja placeholder
+    `{{ key }}` never matches and the rendered DOCX comes back empty. We
+    detect that failure mode and retry after unescaping."""
     if isinstance(content, dict):
         return content
     if isinstance(content, str):
         text = content.strip()
         if not text:
             return {}
-        # Strip ```json fences the LLM occasionally adds even with structured output
         text = re.sub(r"^```(?:json)?\s*|\s*```$", "", text, flags=re.MULTILINE)
-        return json.loads(text)
+        parsed = json_repair.loads(text)
+        if not isinstance(parsed, dict) or any(
+            isinstance(k, str) and ('\\"' in k or k.endswith('"'))
+            for k in parsed
+        ):
+            # Fallback: model emitted backslash-escaped quotes outside string
+            # literals. Strip them and reparse.
+            cleaned_text = text.replace('\\"', '"').replace("\\'", "'")
+            reparsed = json_repair.loads(cleaned_text)
+            if isinstance(reparsed, dict):
+                parsed = reparsed
+        if not isinstance(parsed, dict):
+            raise ValueError(
+                f"render_docx_template: `content` must decode to a JSON object, got {type(parsed).__name__}"
+            )
+
+        def _clean(v):
+            if isinstance(v, str):
+                return v.replace("\\'", "'").replace('\\"', '"')
+            if isinstance(v, list):
+                return [_clean(x) for x in v]
+            if isinstance(v, dict):
+                return {k.replace('\\"', '"'): _clean(x) for k, x in v.items()}
+            return v
+        cleaned = _clean(parsed)
+
+        # Minimal safety nets — small models occasionally violate the contract
+        # set in the system prompt. We coerce the most damaging mistakes (a
+        # string where the template iterates a list, or a missing/None field
+        # that would crash docxtpl mid-render) so a tiny slip doesn't ruin the
+        # whole document. Anything beyond this is the prompt's job.
+        def _coerce_list(value):
+            if value is None:
+                return []
+            if isinstance(value, str):
+                stripped = value.strip().lstrip("[").rstrip("]").strip()
+                return [s.strip() for s in stripped.split(",") if s.strip()]
+            return value
+
+        cleaned["beneficiaires"] = _coerce_list(cleaned.get("beneficiaires"))
+        cleaned["sections"] = _coerce_list(cleaned.get("sections"))
+        if isinstance(cleaned["sections"], list):
+            for sec in cleaned["sections"]:
+                if isinstance(sec, dict):
+                    sec["puces"] = _coerce_list(sec.get("puces"))
+                    sec["intro"] = sec.get("intro") or ""
+                    sec["titre"] = sec.get("titre") or ""
+
+        return cleaned
     raise ValueError(
         f"render_docx_template: `content` must be a JSON object or string, got {type(content).__name__}"
     )
@@ -171,7 +242,7 @@ class RenderDocxTemplate(ToolBase, ABC):
         # 1. Validate + parse the content the LLM gave us.
         try:
             content = _ensure_dict(kwargs.get("content", "{}"))
-        except json.JSONDecodeError as e:
+        except (json.JSONDecodeError, ValueError) as e:
             msg = f"render_docx_template: invalid JSON in `content`: {e}. Pass a JSON object."
             logging.warning(msg)
             self.set_output("error", msg)
