@@ -455,6 +455,174 @@ class RAGFlowConnector:
             },
         }
 
+    async def list_agents(
+        self,
+        *,
+        api_key: str,
+        keywords: str | None = None,
+        canvas_category: str | None = None,
+        page: int = 1,
+        page_size: int = 30,
+    ):
+        """List agent canvases accessible to the authenticated user in the
+        current workspace. Returns id, title, description, category, and
+        timestamps. Use the returned id as canvas_id when calling run_agent."""
+        params = {"page": page, "page_size": page_size, "orderby": "update_time", "desc": "true"}
+        if keywords:
+            params["keywords"] = keywords
+        if canvas_category:
+            params["canvas_category"] = canvas_category
+        from urllib.parse import urlencode
+        res = await self._get(f"/agents?{urlencode(params)}", api_key=api_key)
+        if not res or res.status_code != 200:
+            raise Exception([types.TextContent(type="text", text="Cannot list agents.")])
+        body = res.json()
+        if body.get("code") != 0:
+            raise Exception([types.TextContent(type="text", text=body.get("message", "Cannot list agents."))])
+        data = body.get("data", {})
+        canvases = data.get("canvas", [])
+        agents = []
+        for c in canvases:
+            agents.append({
+                "id": c.get("id"),
+                "title": c.get("title"),
+                "description": c.get("description") or "",
+                "canvas_category": c.get("canvas_category"),
+                "user_id": c.get("user_id"),
+                "create_date": c.get("create_date"),
+                "update_date": c.get("update_date"),
+            })
+        return {
+            "agents": agents,
+            "pagination": {
+                "page": page,
+                "page_size": page_size,
+                "total": data.get("total", len(agents)),
+            },
+        }
+
+    async def run_agent(
+        self,
+        *,
+        api_key: str,
+        agent_id: str,
+        query: str,
+        inputs: dict | None = None,
+        session_id: str | None = None,
+        max_seconds: int = 300,
+    ):
+        """Invoke an agent canvas synchronously: post to /agents/chat/completion,
+        read the SSE stream until workflow_finished, return the final text
+        content and any artefacts (downloads, tool_calls) emitted along the way.
+
+        Blocking by design — MCP V1. Streaming variant comes in V2 once we
+        validate the cancellation/progress UX with real client SDKs."""
+        body = {
+            "agent_id": agent_id,
+            "query": query,
+            "inputs": inputs or {},
+        }
+        if session_id:
+            body["session_id"] = session_id
+
+        client = await self._get_client()
+        # CUSTOM B2B SaaS — runs without a session_id need the canvas's runtime
+        # replica to exist in Redis. The replica is bootstrapped lazily by
+        # GET /agents/<id>; fire that first so /chat/completion doesn't 404.
+        if not session_id:
+            try:
+                bootstrap_res = await client.get(
+                    f"{self.api_url}/agents/{agent_id}",
+                    headers={"Authorization": f"Bearer {api_key}"},
+                    timeout=httpx.Timeout(30.0),
+                )
+                if bootstrap_res.status_code != 200:
+                    text = bootstrap_res.text[:200]
+                    raise Exception([types.TextContent(type="text", text=f"run_agent bootstrap failed: HTTP {bootstrap_res.status_code} — {text}")])
+            except httpx.RequestError as exc:
+                raise Exception([types.TextContent(type="text", text=f"run_agent bootstrap network error: {exc}")])
+
+        # Don't reuse self._post — we need streaming and a longer timeout.
+        try:
+            async with client.stream(
+                "POST",
+                f"{self.api_url}/agents/chat/completion",
+                json=body,
+                headers={"Authorization": f"Bearer {api_key}"},
+                timeout=httpx.Timeout(max_seconds, connect=10.0),
+            ) as response:
+                if response.status_code != 200:
+                    text = await response.aread()
+                    raise Exception([types.TextContent(type="text", text=f"run_agent failed: HTTP {response.status_code} — {text[:300].decode(errors='ignore')}")])
+
+                final_content = ""
+                last_message = ""
+                tool_calls: list[dict] = []
+                downloads: list[str] = []
+                events_seen: list[str] = []
+                run_session_id = session_id
+
+                async for line in response.aiter_lines():
+                    line = (line or "").strip()
+                    if not line or not line.startswith("data:"):
+                        continue
+                    payload = line[5:].strip()
+                    if not payload:
+                        continue
+                    try:
+                        evt = json.loads(payload)
+                    except Exception:
+                        continue
+
+                    ev_name = evt.get("event")
+                    events_seen.append(ev_name)
+                    data = evt.get("data") or {}
+
+                    if ev_name == "message":
+                        chunk = data.get("content") or ""
+                        if chunk:
+                            last_message = chunk
+                            final_content += chunk
+                    elif ev_name == "node_finished":
+                        # Capture component output if it's the terminal Message node
+                        outputs = data.get("outputs") or {}
+                        downloads.extend(outputs.get("downloads") or [])
+                        if data.get("component_type") == "Message":
+                            content = outputs.get("content")
+                            if content:
+                                final_content = content if isinstance(content, str) else json.dumps(content, ensure_ascii=False)
+                    elif ev_name == "workflow_finished":
+                        outputs = data.get("outputs") or {}
+                        if outputs.get("content"):
+                            content = outputs["content"]
+                            final_content = content if isinstance(content, str) else json.dumps(content, ensure_ascii=False)
+                        downloads.extend(outputs.get("downloads") or [])
+                        break
+
+                    # Track tool calls if present in the event payload
+                    if "tool_calls" in data:
+                        tcs = data.get("tool_calls") or []
+                        if isinstance(tcs, list):
+                            tool_calls.extend(tcs)
+
+                    if ev_name == "session_started":
+                        run_session_id = data.get("session_id") or run_session_id
+
+                # Final answer fallback if workflow_finished was missed
+                if not final_content and last_message:
+                    final_content = last_message
+
+                return {
+                    "agent_id": agent_id,
+                    "session_id": run_session_id,
+                    "content": final_content,
+                    "downloads": list(dict.fromkeys(downloads)),
+                    "tool_calls": tool_calls,
+                    "events_seen": events_seen[:20],  # debug aid, capped
+                }
+        except httpx.TimeoutException:
+            raise Exception([types.TextContent(type="text", text=f"run_agent timed out after {max_seconds}s")])
+
     async def get_document_chunks(
         self,
         *,
@@ -757,6 +925,87 @@ async def list_tools(*, connector: RAGFlowConnector, api_key: str) -> list[types
                 "required": ["dataset_id"],
             },
         ),
+        # CUSTOM B2B SaaS — V4 agents-as-tools (Cyllene roadmap V4)
+        types.Tool(
+            name="list_agents",
+            description=(
+                "List agent canvases (workflows) accessible in the current "
+                "workspace. Each canvas can be invoked with run_agent. Returns "
+                "id, title, description, canvas_category. Filter by keywords or "
+                "canvas_category if needed."
+            ),
+            inputSchema={
+                "type": "object",
+                "properties": {
+                    "keywords": {"type": "string", "description": "Optional title keyword filter."},
+                    "canvas_category": {
+                        "type": "string",
+                        "description": "Optional category filter (Agent, DataFlow, etc.).",
+                    },
+                    "page": {"type": "integer", "default": 1, "minimum": 1},
+                    "page_size": {"type": "integer", "default": 30, "minimum": 1, "maximum": 100},
+                },
+                "required": [],
+            },
+        ),
+        types.Tool(
+            name="run_agent",
+            description=(
+                "Invoke an agent canvas synchronously and return its final "
+                "output. Blocks until the workflow_finished event (or timeout). "
+                "Use list_agents first to discover available canvas ids. "
+                "Returns the final text content plus any generated downloads "
+                "(file_ids in the workspace) and a debug log of events."
+            ),
+            inputSchema={
+                "type": "object",
+                "properties": {
+                    "agent_id": {
+                        "type": "string",
+                        "description": "Canvas ID returned by list_agents.",
+                    },
+                    "query": {
+                        "type": "string",
+                        "description": "Natural-language query / instruction for the agent.",
+                    },
+                    "inputs": {
+                        "type": "object",
+                        "description": "Optional structured inputs for canvas Begin form fields.",
+                    },
+                    "session_id": {
+                        "type": "string",
+                        "description": "Optional existing session id to continue a conversation.",
+                    },
+                    "max_seconds": {
+                        "type": "integer",
+                        "description": "Hard timeout in seconds (default 300). Long agents must stay under this.",
+                        "default": 300,
+                        "minimum": 30,
+                        "maximum": 1800,
+                    },
+                },
+                "required": ["agent_id", "query"],
+            },
+        ),
+        types.Tool(
+            name="continue_agent_session",
+            description=(
+                "Continue an existing agent conversation by posting another "
+                "message to the same session. Same return shape as run_agent. "
+                "Useful for multi-turn dialogs where the agent should keep "
+                "context (history, retrieved chunks, etc.)."
+            ),
+            inputSchema={
+                "type": "object",
+                "properties": {
+                    "agent_id": {"type": "string", "description": "Canvas ID of the agent."},
+                    "session_id": {"type": "string", "description": "Existing session id from a previous run_agent call."},
+                    "message": {"type": "string", "description": "User message to send next."},
+                    "max_seconds": {"type": "integer", "default": 300, "minimum": 30, "maximum": 1800},
+                },
+                "required": ["agent_id", "session_id", "message"],
+            },
+        ),
         types.Tool(
             name="get_document_chunks",
             description=(
@@ -843,6 +1092,48 @@ async def call_tool(
             page=arguments.get("page", 1),
             page_size=arguments.get("page_size", 30),
             keywords=arguments.get("keywords"),
+        )
+        return [types.TextContent(type="text", text=json.dumps(result, ensure_ascii=False))]
+
+    if name == "list_agents":
+        result = await connector.list_agents(
+            api_key=api_key,
+            keywords=arguments.get("keywords"),
+            canvas_category=arguments.get("canvas_category"),
+            page=arguments.get("page", 1),
+            page_size=arguments.get("page_size", 30),
+        )
+        return [types.TextContent(type="text", text=json.dumps(result, ensure_ascii=False))]
+
+    if name == "run_agent":
+        agent_id = arguments.get("agent_id")
+        query = arguments.get("query", "")
+        if not agent_id:
+            raise ValueError("run_agent requires agent_id")
+        if not query:
+            raise ValueError("run_agent requires query")
+        result = await connector.run_agent(
+            api_key=api_key,
+            agent_id=agent_id,
+            query=query,
+            inputs=arguments.get("inputs"),
+            session_id=arguments.get("session_id"),
+            max_seconds=arguments.get("max_seconds", 300),
+        )
+        return [types.TextContent(type="text", text=json.dumps(result, ensure_ascii=False))]
+
+    if name == "continue_agent_session":
+        agent_id = arguments.get("agent_id")
+        session_id = arguments.get("session_id")
+        message = arguments.get("message", "")
+        if not agent_id or not session_id or not message:
+            raise ValueError("continue_agent_session requires agent_id, session_id, and message")
+        result = await connector.run_agent(
+            api_key=api_key,
+            agent_id=agent_id,
+            query=message,
+            session_id=session_id,
+            max_seconds=arguments.get("max_seconds", 300),
         )
         return [types.TextContent(type="text", text=json.dumps(result, ensure_ascii=False))]
 
