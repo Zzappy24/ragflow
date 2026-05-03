@@ -124,6 +124,16 @@ EXEMPT: set[tuple[str, str]] = {
     ("api/apps/restful_apis/connector_api.py", "poll_google_web_result"),
     ("api/apps/restful_apis/connector_api.py", "poll_box_web_result"),
 
+    # Per-user API key management — intentionally accessible to ANY logged-in
+    # user (each user manages their own keys). The route clamps the requested
+    # permissions to the caller's effective permissions in
+    # `_user_effective_permissions`, so a viewer cannot self-elevate by
+    # minting a write-scoped key. Workspace-wide / service-key management
+    # lives in the management panel and is admin-only.
+    ("api/apps/restful_apis/api_key_api.py", "list_my_api_keys"),
+    ("api/apps/restful_apis/api_key_api.py", "create_my_api_key"),
+    ("api/apps/restful_apis/api_key_api.py", "revoke_my_api_key"),
+
     # --- api/apps/sdk/ ---
     # Embedded chatbot/searchbot widgets — use inline API-token validation, intentionally public.
     ("api/apps/sdk/session.py", "chatbot_completions"),
@@ -414,6 +424,10 @@ EXEMPT_GET_RBAC: set[tuple[str, str]] = {
     # `current_user.id`-scoped endpoints — they intentionally only return the
     # caller's own data; there is no permission gate to apply because there
     # is no other user's data on the table.
+    # Per-user API key listing — filters by `created_by = current_user.id`,
+    # so the caller can only ever see their own keys (cf. justification in
+    # EXEMPT for the matching write routes).
+    ("api/apps/restful_apis/api_key_api.py", "list_my_api_keys"),
     ("api/apps/restful_apis/user_api.py", "user_info"),
     ("api/apps/restful_apis/user_api.py", "user_setting"),
     ("api/apps/restful_apis/user_api.py", "list_tenants"),

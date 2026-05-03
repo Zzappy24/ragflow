@@ -25,26 +25,40 @@ import requests
 # ---------------------------------------------------------------------------
 # Sys-path + minimal mocks so rbac.py can be imported without the full stack
 # (avoids the xgboost / rag / deepdoc heavy import chain).
+#
+# CRITICAL: install + remove the mocks within the same module body so
+# subsequent test files can still import the real ``api.utils.api_utils``.
+# Earlier versions left the MagicMock in ``sys.modules`` permanently, which
+# silently broke ``test_active_users_filter.py`` whenever it ran in the same
+# pytest session — every assertion against ``is_internal_user_email`` then
+# resolved to a truthy MagicMock.
 # ---------------------------------------------------------------------------
 sys.path.insert(0, str(Path(__file__).resolve().parents[2]))
 
 import importlib.util  # noqa: E402
 from unittest.mock import MagicMock  # noqa: E402
 
-# Load rbac.py directly — bypasses api/apps/__init__.py (Flask app init)
-# and avoids the xgboost/deepdoc heavy import chain.
-for _mod in ["api.utils.api_utils", "api.utils.tenant_context"]:
+_MOCKED_MODULES = ("api.utils.api_utils", "api.utils.tenant_context")
+_INSTALLED_MOCKS = []
+for _mod in _MOCKED_MODULES:
     if _mod not in sys.modules:
         sys.modules[_mod] = MagicMock()
+        _INSTALLED_MOCKS.append(_mod)
 
-_rbac_path = Path(__file__).resolve().parents[2] / "api" / "apps" / "extensions" / "rbac.py"
-_spec = importlib.util.spec_from_file_location("rbac_standalone", _rbac_path)
-_rbac = importlib.util.module_from_spec(_spec)
-_spec.loader.exec_module(_rbac)
+try:
+    _rbac_path = Path(__file__).resolve().parents[2] / "api" / "apps" / "extensions" / "rbac.py"
+    _spec = importlib.util.spec_from_file_location("rbac_standalone", _rbac_path)
+    _rbac = importlib.util.module_from_spec(_spec)
+    _spec.loader.exec_module(_rbac)
 
-ROLE_PERMISSIONS = _rbac.ROLE_PERMISSIONS
-WsRole = _rbac.WsRole
-Permission = _rbac.Permission
+    ROLE_PERMISSIONS = _rbac.ROLE_PERMISSIONS
+    WsRole = _rbac.WsRole
+    Permission = _rbac.Permission
+finally:
+    # Roll back the mocks unconditionally so other test modules in the same
+    # session see the real implementation when they import these names.
+    for _mod in _INSTALLED_MOCKS:
+        sys.modules.pop(_mod, None)
 
 HOST = os.getenv("HOST_ADDRESS", "http://127.0.0.1:9380")
 API = f"{HOST}/api/v1"
