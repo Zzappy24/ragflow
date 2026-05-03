@@ -168,3 +168,65 @@ class TestTokenAuth:
         assert "no security block" not in msg, (
             f"Correct token still triggered 'no security block' refusal — bug: {body}"
         )
+
+
+# ---------------------------------------------------------------------------
+# Audit log persistence — every refused/accepted webhook must leave a row in
+# cyllene_audit_log so cross-tenant probe attempts and successful triggers
+# both have a paper trail.
+# ---------------------------------------------------------------------------
+
+class TestWebhookAuditLog:
+    def test_refusal_writes_audit_row(self, make_canvas):
+        from api.db.db_models import AuditLog, DB
+
+        agent_id = make_canvas(with_security=None)
+        before = _audit_count(AuditLog, DB, agent_id, "WEBHOOK_REJECTED_NO_SECURITY")
+        r = requests.post(f"{SDK_WEBHOOK}/{agent_id}", json={"x": 1}, timeout=10)
+        assert r.json().get("code") == 403
+        after = _audit_count(AuditLog, DB, agent_id, "WEBHOOK_REJECTED_NO_SECURITY")
+        assert after == before + 1, (
+            f"Refusal must write an audit row; before={before} after={after}"
+        )
+
+    def test_successful_invoke_writes_audit_row(self, make_canvas):
+        from api.db.db_models import AuditLog, DB
+
+        # Token-auth DSL contract:
+        #   security.token = {token_header: <header>, token_value: <secret>}
+        agent_id = make_canvas(
+            with_security={
+                "auth_type": "token",
+                "token": {
+                    "token_header": "X-Webhook-Token",
+                    "token_value": "test-token-XXXXXXXXXX",
+                },
+            },
+        )
+        before = _audit_count(AuditLog, DB, agent_id, "WEBHOOK_INVOKE")
+        # The canvas itself may 400/500 (empty DSL), but the audit row is
+        # written BEFORE Canvas() is constructed, so it must land regardless.
+        requests.post(
+            f"{SDK_WEBHOOK}/{agent_id}",
+            json={},
+            headers={"X-Webhook-Token": "test-token-XXXXXXXXXX"},
+            timeout=10,
+        )
+        after = _audit_count(AuditLog, DB, agent_id, "WEBHOOK_INVOKE")
+        assert after == before + 1, (
+            f"Successful (security-passed) invoke must write an audit row; "
+            f"before={before} after={after}"
+        )
+
+
+def _audit_count(AuditLog, DB, resource_id: str, action: str) -> int:
+    with DB.connection_context():
+        return (
+            AuditLog.select()
+            .where(
+                (AuditLog.action == action)
+                & (AuditLog.resource_id == resource_id)
+                & (AuditLog.resource_type == "canvas")
+            )
+            .count()
+        )

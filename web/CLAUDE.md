@@ -49,6 +49,9 @@ The folder `src/components/ui/` is the project's **shared UI library** — it co
 - Exceptions require **explicit user approval** in the same conversation. When in doubt, ask first and propose a wrapper-based alternative.
 - Adding a new shared component to `src/components/ui/`, or upgrading a shadcn primitive via the official `shadcn` CLI, is allowed only when the user explicitly requests it.
 
+### XSS Hardening — `dangerouslySetInnerHTML`
+Any new use of `dangerouslySetInnerHTML` MUST wrap the HTML through `DOMPurify.sanitize(...)` before injection. Tenant-uploaded content (Word docs via Mammoth, translated rich-text strings via `i18next` with `escapeValue:false`, MD/HTML rendered from canvas output) is NOT trusted. Existing patterns: [doc-preview.tsx](src/components/document-preview/doc-preview.tsx), [dataflow-result/index.tsx](src/pages/dataflow-result/index.tsx). Same rule for `t(..., {var})` interpolation reaching `dangerouslySetInnerHTML` — sanitize the final string, not the var.
+
 ### React Patterns and Conventions
 - **Prefer `requestAnimationFrame` or `useLayoutEffect`** over `setTimeout(..., 0)` for focus or DOM measurement operations.
 - **Prefer `useTranslation` from `react-i18next`** over project-wrapped utilities like `useTranslate`.
