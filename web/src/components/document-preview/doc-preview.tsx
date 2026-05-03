@@ -2,6 +2,7 @@ import message from '@/components/ui/message';
 import { Spin } from '@/components/ui/spin';
 import request from '@/utils/request';
 import classNames from 'classnames';
+import DOMPurify from 'dompurify';
 import mammoth from 'mammoth';
 import { useEffect, useState } from 'react';
 
@@ -64,8 +65,6 @@ export const DocPreviewer: React.FC<DocPreviewerProps> = ({
 
     try {
       const blob: Blob = res.data;
-      const contentType: string =
-        blob.type || (res as any).headers?.['content-type'] || '';
 
       // Execution path selection: ZIP-like payloads are treated as .docx and rendered via Mammoth;
       // non-ZIP payloads receive an explicit unsupported notice.
@@ -128,7 +127,15 @@ export const DocPreviewer: React.FC<DocPreviewerProps> = ({
         </div>
       )}
 
-      {!loading && <div dangerouslySetInnerHTML={{ __html: htmlContent }} />}
+      {!loading && (
+        // Mammoth converts .docx → HTML but does not strip embedded scripts.
+        // A maliciously crafted .docx (uploaded to a workspace, opened in
+        // preview by an admin reviewing the doc) could execute JS in the
+        // admin's session. Sanitize before injection.
+        <div
+          dangerouslySetInnerHTML={{ __html: DOMPurify.sanitize(htmlContent) }}
+        />
+      )}
     </div>
   );
 };

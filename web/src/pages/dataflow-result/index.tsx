@@ -1,5 +1,6 @@
 import DocumentPreview from '@/components/document-preview';
 import { useFetchNextChunkList } from '@/hooks/use-chunk-request';
+import DOMPurify from 'dompurify';
 import { useMemo, useState } from 'react';
 import { useTranslation } from 'react-i18next';
 import {
@@ -99,10 +100,15 @@ const DataflowResult = () => {
         children: (
           <div
             className="text-sm text-text-secondary"
+            // i18n is configured with escapeValue:false so interpolated step
+            // titles (which come from the canvas DSL — user-controlled) are
+            // injected raw into the modal HTML. Sanitize at the boundary.
             dangerouslySetInnerHTML={{
-              __html: t('dataflowParser.changeStepModalContent', {
-                step: step?.title,
-              }),
+              __html: DOMPurify.sanitize(
+                t('dataflowParser.changeStepModalContent', {
+                  step: step?.title,
+                }),
+              ),
             }}
           ></div>
         ),
