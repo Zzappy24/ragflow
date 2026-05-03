@@ -14,7 +14,7 @@ import { ApiKeyScope } from '@/services/api-key-service';
 import { useState } from 'react';
 import { useTranslation } from 'react-i18next';
 
-import { useCreateWorkspaceApiKey } from './hooks';
+import { useCreateMyApiKey } from './hooks';
 
 const ALL_PERMISSIONS = [
   'dataset.read',
@@ -60,7 +60,7 @@ type Props = {
 
 const CreateApiKeyModal = ({ open, onClose, onCreated }: Props) => {
   const { t } = useTranslation();
-  const create = useCreateWorkspaceApiKey();
+  const create = useCreateMyApiKey();
 
   const [name, setName] = useState('');
   const [permissions, setPermissions] = useState<string[]>(
