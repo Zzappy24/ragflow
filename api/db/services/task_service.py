@@ -19,10 +19,22 @@ import random
 import xxhash
 from datetime import datetime
 
+import peewee
 from api.db.db_utils import bulk_insert_into_db
 from deepdoc.parser import PdfParser
 from peewee import JOIN
 from api.db.db_models import DB, File2Document, File
+
+
+# MySQL error codes for row-lock contention. 1205 = lock wait timeout,
+# 3572 = SKIP/NOWAIT conflict. We swallow only these two so genuine DB
+# errors (connection drops, schema mismatches) still bubble up.
+_MYSQL_LOCK_CONFLICT_ERRORS = (1205, 3572)
+
+
+def _is_lock_conflict(exc: peewee.OperationalError) -> bool:
+    args = getattr(exc, "args", ())
+    return bool(args) and args[0] in _MYSQL_LOCK_CONFLICT_ERRORS
 from api.db import FileType
 from api.db.db_models import Task, Document, Knowledgebase, Tenant
 from api.db.services.common_service import CommonService
@@ -84,7 +96,8 @@ class TaskService(CommonService):
 
         Returns:
             dict: Task details dictionary containing all task information and related metadata.
-                 Returns None if task is not found or has exceeded retry limit.
+                 Returns None if task is not found, has exceeded retry limit, or is
+                 already being claimed by another worker (contention → re-queue).
         """
         doc_id = cls.model.doc_id
         if doc_id == CANVAS_DEBUG_DOC_ID and doc_ids:
@@ -113,28 +126,47 @@ class TaskService(CommonService):
             Tenant.llm_id,
             cls.model.update_time,
         ]
-        docs = (
-            cls.model.select(*fields)
-                .join(Document, on=(doc_id == Document.id))
-                .join(Knowledgebase, on=(Document.kb_id == Knowledgebase.id))
-                .join(Tenant, on=(Knowledgebase.tenant_id == Tenant.id))
-                .where(cls.model.id == task_id)
-        )
-        docs = list(docs.dicts())
-        if not docs:
-            return None
+        # Wrap the read+update in a transaction with row-level locking so
+        # two task_executor workers that pick the same Redis stream message
+        # can't both claim the task. The SECOND caller hits NOWAIT, raises
+        # peewee.OperationalError(3572), and we return None — the message
+        # stays in the stream and the first worker owns the task. The
+        # alternative (per-tenant lock around the call site) would
+        # serialise ALL pickups for that tenant, hurting throughput.
+        try:
+            with DB.atomic():
+                docs = list(
+                    cls.model.select(*fields)
+                        .join(Document, on=(doc_id == Document.id))
+                        .join(Knowledgebase, on=(Document.kb_id == Knowledgebase.id))
+                        .join(Tenant, on=(Knowledgebase.tenant_id == Tenant.id))
+                        .where(cls.model.id == task_id)
+                        .for_update(nowait=True)
+                        .dicts()
+                )
+                if not docs:
+                    return None
 
-        msg = f"\n{datetime.now().strftime('%H:%M:%S')} Task has been received."
-        prog = random.random() / 10.0
-        if docs[0]["retry_count"] >= 3:
-            msg = "\nERROR: Task is abandoned after 3 times attempts."
-            prog = -1
+                msg = f"\n{datetime.now().strftime('%H:%M:%S')} Task has been received."
+                prog = random.random() / 10.0
+                if docs[0]["retry_count"] >= 3:
+                    msg = "\nERROR: Task is abandoned after 3 times attempts."
+                    prog = -1
 
-        cls.model.update(
-            progress_msg=cls.model.progress_msg + msg,
-            progress=prog,
-            retry_count=docs[0]["retry_count"] + 1,
-        ).where(cls.model.id == docs[0]["id"]).execute()
+                cls.model.update(
+                    progress_msg=cls.model.progress_msg + msg,
+                    progress=prog,
+                    retry_count=docs[0]["retry_count"] + 1,
+                ).where(cls.model.id == docs[0]["id"]).execute()
+        except peewee.OperationalError as e:
+            if _is_lock_conflict(e):
+                logging.info(
+                    "task_service.get_task: %s already claimed by another worker — "
+                    "leaving the message in the stream",
+                    task_id,
+                )
+                return None
+            raise
 
         if docs[0]["retry_count"] >= 3:
             return None
