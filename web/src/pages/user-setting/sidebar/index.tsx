@@ -11,7 +11,12 @@ import {
 import { cn } from '@/lib/utils';
 import { Routes } from '@/routes';
 import { TFunction } from 'i18next';
-import { LucideServer, LucideUnplug, LucideUser } from 'lucide-react';
+import {
+  LucideKeyRound,
+  LucideServer,
+  LucideUnplug,
+  LucideUser,
+} from 'lucide-react';
 import { useEffect } from 'react';
 import { useTranslation } from 'react-i18next';
 import { useHandleMenuClick } from './hooks';
@@ -27,6 +32,14 @@ const menuItems = (t: TFunction, isAdmin: boolean) => {
       icon: <LucideUser className="size-[1em]" />,
       label: t('setting.profile'),
       key: Routes.Profile,
+    },
+    // CUSTOM B2B SaaS — per-user API keys (anyone can mint a key scoped to
+    // their own RBAC). Workspace-wide / org-wide key management lives in the
+    // admin panel and is org_admin/ws_admin only.
+    {
+      icon: <LucideKeyRound className="size-[1em]" />,
+      label: t('setting.apiKeys'),
+      key: Routes.ApiKeys,
     },
   ];
   // CUSTOM B2B SaaS — Model configuration is managed exclusively via the admin

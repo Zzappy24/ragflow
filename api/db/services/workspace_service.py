@@ -88,3 +88,16 @@ class ApiKeyScopeService(CommonService):
         cls.model.update(last_used_at=datetime.utcnow()).where(
             cls.model.token == token
         ).execute()
+
+    @classmethod
+    @DB.connection_context()
+    def list_by_creator(cls, workspace_id, user_id):
+        """Per-user keys: only the rows the caller created in this workspace."""
+        return list(
+            cls.model.select()
+            .where(
+                (cls.model.workspace_id == workspace_id)
+                & (cls.model.created_by == user_id)
+                & (cls.model.status == "1")
+            )
+        )

@@ -43,6 +43,7 @@ export enum Routes {
   Prompt = '/prompt',
   DataSource = '/data-source',
   DataSourceDetailPage = '/data-source-detail-page',
+  ApiKeys = '/api-keys',
   ProfileMcp = `${ProfileSetting}${Mcp}`,
   ProfileTeam = `${ProfileSetting}${Team}`,
   ProfilePlan = `${ProfileSetting}${Plan}`,
@@ -299,6 +300,10 @@ const routeConfigOptions = [
           {
             path: `${Routes.UserSetting}${Routes.DataSource}`,
             Component: () => import('@/pages/user-setting/data-source'),
+          },
+          {
+            path: `${Routes.UserSetting}${Routes.ApiKeys}`,
+            Component: () => import('@/pages/user-setting/api-keys'),
           },
         ],
       },

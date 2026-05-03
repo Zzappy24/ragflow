@@ -238,6 +238,11 @@ export default {
     `${restAPIv1}/mcp/servers/${id}?mode=download`,
   testMcpServer: (id: string) => `${restAPIv1}/mcp/servers/${id}/test`,
 
+  // per-user workspace-scoped API keys (cf. /user-setting/api-keys)
+  listMyApiKeys: `${restAPIv1}/api_keys`,
+  createMyApiKey: `${restAPIv1}/api_keys`,
+  revokeMyApiKey: (id: string) => `${restAPIv1}/api_keys/${id}`,
+
   // next-search
   createSearch: `${restAPIv1}/searches`,
   getSearchList: `${restAPIv1}/searches`,
