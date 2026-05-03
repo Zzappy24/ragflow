@@ -16,10 +16,12 @@
 
 import logging
 import os
+import random
 import re
 import json
 import time
 from abc import abstractmethod
+from typing import Callable, TypeVar
 
 import infinity
 from infinity.common import ConflictType
@@ -30,6 +32,86 @@ from common.file_utils import get_project_base_directory
 from rag.nlp import is_english
 from common import settings
 from common.doc_store.doc_store_base import DocStoreConnection, MatchExpr, OrderByExpr
+
+
+# CUSTOM B2B SaaS — retry around Infinity metadata writes.
+#
+# Infinity's RocksDB-backed catalog rejects parallel writers on shared keys
+# (e.g. `db|1|next_table_id`, `db|1|next_index_id`) immediately with
+# "Resource busy" instead of waiting on a lock. Two concurrent CREATE TABLE
+# / DROP TABLE / CREATE INDEX requests therefore have a coin-flip chance of
+# one losing the race. In a multi-tenant SaaS this surfaces as a flaky
+# create-knowledge-base when two ws_admins click the button at the same
+# instant — and as 50+ test failures in the parallel HTTP-API bridge.
+#
+# We scope the retry to METADATA paths (CREATE/DROP table+index). Data-path
+# operations (INSERT chunks, SELECT for retrieval) go through per-table
+# code paths in Infinity that don't share the global counter and don't
+# benefit from this wrapper.
+#
+# Tunable from the environment so prod can widen the budget if the cluster
+# is under heavier write contention than dev:
+#   INFINITY_META_RETRY_MAX           (default 5)
+#   INFINITY_META_RETRY_BASE_DELAY_MS (default 50)
+
+_T = TypeVar("_T")
+
+_META_RETRY_MAX = int(os.getenv("INFINITY_META_RETRY_MAX", "5"))
+_META_RETRY_BASE_DELAY_MS = int(os.getenv("INFINITY_META_RETRY_BASE_DELAY_MS", "50"))
+
+
+def _is_meta_contention_error(exc: BaseException) -> bool:
+    """
+    True iff the exception describes a RocksDB metadata-counter contention
+    that retry will (very likely) clear. We match on the textual signature
+    because Infinity's C++ engine surfaces error 9003 with this prefix and
+    the Python SDK does not expose a stable code for it.
+    """
+    msg = str(exc)
+    return "Resource busy" in msg and "rocksdb" in msg.lower()
+
+
+def _retry_on_meta_contention(
+    op_name: str,
+    operation: Callable[[], _T],
+    *,
+    logger: logging.Logger | None = None,
+    max_attempts: int = _META_RETRY_MAX,
+    base_delay_ms: int = _META_RETRY_BASE_DELAY_MS,
+) -> _T:
+    """
+    Run ``operation()`` and retry on RocksDB "Resource busy" errors.
+
+    Exponential backoff with ±50% jitter to avoid thundering-herd when many
+    workers retry simultaneously. ``ConflictType.Ignore`` makes the wrapped
+    Infinity calls idempotent, so re-running them on a conflicted retry is
+    safe (worst case: a no-op on a table that was already created).
+    """
+    log = logger or logging.getLogger(__name__)
+    last_exc: BaseException | None = None
+    for attempt in range(max_attempts):
+        try:
+            return operation()
+        except Exception as exc:
+            if not _is_meta_contention_error(exc):
+                raise
+            last_exc = exc
+            if attempt == max_attempts - 1:
+                break
+            base = (base_delay_ms / 1000.0) * (2 ** attempt)
+            sleep_for = base + random.uniform(0, base * 0.5)
+            log.info(
+                "INFINITY meta contention on %s (attempt %d/%d), "
+                "retrying in %.3fs: %s",
+                op_name, attempt + 1, max_attempts, sleep_for, exc,
+            )
+            time.sleep(sleep_for)
+    log.warning(
+        "INFINITY meta contention on %s exhausted %d attempts — propagating: %s",
+        op_name, max_attempts, last_exc,
+    )
+    assert last_exc is not None
+    raise last_exc
 
 
 class InfinityConnectionBase(DocStoreConnection):
@@ -274,7 +356,11 @@ class InfinityConnectionBase(DocStoreConnection):
 
         inf_conn = self.connPool.get_conn()
         try:
-            inf_db = inf_conn.create_database(self.dbName, ConflictType.Ignore)
+            inf_db = _retry_on_meta_contention(
+                f"create_database({self.dbName})",
+                lambda: inf_conn.create_database(self.dbName, ConflictType.Ignore),
+                logger=self.logger,
+            )
 
             # Use configured schema
             fp_mapping = os.path.join(get_project_base_directory(), "conf", self.mapping_file_name)
@@ -293,24 +379,32 @@ class InfinityConnectionBase(DocStoreConnection):
 
             vector_name = f"q_{vector_size}_vec"
             schema[vector_name] = {"type": f"vector,{vector_size},float"}
-            inf_table = inf_db.create_table(
-                table_name,
-                schema,
-                ConflictType.Ignore,
-            )
-            inf_table.create_index(
-                "q_vec_idx",
-                IndexInfo(
-                    vector_name,
-                    IndexType.Hnsw,
-                    {
-                        "M": "16",
-                        "ef_construction": "50",
-                        "metric": "cosine",
-                        "encode": "lvq",
-                    },
+            inf_table = _retry_on_meta_contention(
+                f"create_table({table_name})",
+                lambda: inf_db.create_table(
+                    table_name,
+                    schema,
+                    ConflictType.Ignore,
                 ),
-                ConflictType.Ignore,
+                logger=self.logger,
+            )
+            _retry_on_meta_contention(
+                f"create_index(q_vec_idx, {table_name})",
+                lambda: inf_table.create_index(
+                    "q_vec_idx",
+                    IndexInfo(
+                        vector_name,
+                        IndexType.Hnsw,
+                        {
+                            "M": "16",
+                            "ef_construction": "50",
+                            "metric": "cosine",
+                            "encode": "lvq",
+                        },
+                    ),
+                    ConflictType.Ignore,
+                ),
+                logger=self.logger,
             )
             for field_name, field_info in schema.items():
                 if field_info["type"] != "varchar" or "analyzer" not in field_info:
@@ -319,10 +413,15 @@ class InfinityConnectionBase(DocStoreConnection):
                 if isinstance(analyzers, str):
                     analyzers = [analyzers]
                 for analyzer in analyzers:
-                    inf_table.create_index(
-                        f"ft_{re.sub(r'[^a-zA-Z0-9]', '_', field_name)}_{re.sub(r'[^a-zA-Z0-9]', '_', analyzer)}",
-                        IndexInfo(field_name, IndexType.FullText, {"ANALYZER": analyzer}),
-                        ConflictType.Ignore,
+                    idx_name = f"ft_{re.sub(r'[^a-zA-Z0-9]', '_', field_name)}_{re.sub(r'[^a-zA-Z0-9]', '_', analyzer)}"
+                    _retry_on_meta_contention(
+                        f"create_index({idx_name}, {table_name})",
+                        lambda fn=field_name, an=analyzer, name=idx_name: inf_table.create_index(
+                            name,
+                            IndexInfo(fn, IndexType.FullText, {"ANALYZER": an}),
+                            ConflictType.Ignore,
+                        ),
+                        logger=self.logger,
                     )
 
             # Create secondary indexes for fields with index_type
@@ -331,10 +430,14 @@ class InfinityConnectionBase(DocStoreConnection):
                     continue
                 index_config = field_info["index_type"]
                 if isinstance(index_config, str) and index_config == "secondary":
-                    inf_table.create_index(
-                        f"sec_{field_name}",
-                        IndexInfo(field_name, IndexType.Secondary),
-                        ConflictType.Ignore,
+                    _retry_on_meta_contention(
+                        f"create_index(sec_{field_name}, {table_name})",
+                        lambda fn=field_name: inf_table.create_index(
+                            f"sec_{fn}",
+                            IndexInfo(fn, IndexType.Secondary),
+                            ConflictType.Ignore,
+                        ),
+                        logger=self.logger,
                     )
                     self.logger.info(f"INFINITY created secondary index sec_{field_name} for field {field_name}")
                 elif isinstance(index_config, dict):
@@ -342,10 +445,14 @@ class InfinityConnectionBase(DocStoreConnection):
                         params = {}
                         if "cardinality" in index_config:
                             params = {"cardinality": index_config["cardinality"]}
-                        inf_table.create_index(
-                            f"sec_{field_name}",
-                            IndexInfo(field_name, IndexType.Secondary, params),
-                            ConflictType.Ignore,
+                        _retry_on_meta_contention(
+                            f"create_index(sec_{field_name}, {table_name})",
+                            lambda fn=field_name, p=params: inf_table.create_index(
+                                f"sec_{fn}",
+                                IndexInfo(fn, IndexType.Secondary, p),
+                                ConflictType.Ignore,
+                            ),
+                            logger=self.logger,
                         )
                         self.logger.info(f"INFINITY created secondary index sec_{field_name} for field {field_name} with params {params}")
 
@@ -363,7 +470,11 @@ class InfinityConnectionBase(DocStoreConnection):
         """
         table_name = index_name
         inf_conn = self.connPool.get_conn()
-        inf_db = inf_conn.create_database(self.dbName, ConflictType.Ignore)
+        inf_db = _retry_on_meta_contention(
+            f"create_database({self.dbName})",
+            lambda: inf_conn.create_database(self.dbName, ConflictType.Ignore),
+            logger=self.logger,
+        )
         try:
             fp_mapping = os.path.join(get_project_base_directory(), "conf", "doc_meta_infinity_mapping.json")
             if not os.path.exists(fp_mapping):
@@ -371,10 +482,14 @@ class InfinityConnectionBase(DocStoreConnection):
                 return False
             with open(fp_mapping) as f:
                 schema = json.load(f)
-            inf_db.create_table(
-                table_name,
-                schema,
-                ConflictType.Ignore,
+            _retry_on_meta_contention(
+                f"create_table({table_name})",
+                lambda: inf_db.create_table(
+                    table_name,
+                    schema,
+                    ConflictType.Ignore,
+                ),
+                logger=self.logger,
             )
 
             # Create secondary indexes on id and kb_id for better query performance
@@ -417,7 +532,11 @@ class InfinityConnectionBase(DocStoreConnection):
         inf_conn = self.connPool.get_conn()
         try:
             db_instance = inf_conn.get_database(self.dbName)
-            db_instance.drop_table(table_name, ConflictType.Ignore)
+            _retry_on_meta_contention(
+                f"drop_table({table_name})",
+                lambda: db_instance.drop_table(table_name, ConflictType.Ignore),
+                logger=self.logger,
+            )
             self.logger.info(f"INFINITY dropped table {table_name}")
         finally:
             self.connPool.release_conn(inf_conn)
