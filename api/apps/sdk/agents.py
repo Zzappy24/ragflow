@@ -29,6 +29,7 @@ import jwt
 from agent.canvas import Canvas
 from api.apps.services.canvas_replica_service import CanvasReplicaService
 from api.db import CanvasCategory
+from api.db.services.audit_service import AuditService
 from api.db.services.canvas_service import UserCanvasService
 from api.db.services.file_service import FileService
 from api.db.services.user_service import UserService
@@ -38,6 +39,16 @@ from common.misc_utils import get_uuid
 from api.utils.api_utils import get_data_error_result, get_json_result, get_request_json
 from quart import request, Response
 from rag.utils.redis_conn import REDIS_CONN
+
+# Webhooks run as the canvas creator (cvs.user_id), so the DSL `security`
+# block is the ONLY tenant boundary protecting cross-tenant invocation.
+# We refuse webhook traffic when no security block is configured — see
+# `_WEBHOOK_NO_SECURITY_MSG` and the callsite below.
+_WEBHOOK_NO_SECURITY_MSG = (
+    "Webhook rejected: no security block defined in canvas DSL. "
+    "Add `security: {auth_type: \"token\", token: \"<secret>\"}` or "
+    "`security: {ip_whitelist: [\"0.0.0.0/0\"]}` to enable webhook traffic."
+)
 
 
 def _get_user_nickname(user_id: str) -> str:
@@ -293,11 +304,36 @@ async def webhook(agent_id: str):
 
         return decoded
 
+    security_config = webhook_cfg.get("security", {})
+    if not security_config:
+        # Cross-tenant safety: webhooks run as the canvas creator, so an
+        # unsecured webhook lets anyone who learns the canvas_id invoke it
+        # against the creator's data sources. Refuse and log the attempt.
+        AuditService.record(
+            user_id=cvs.user_id,
+            action="WEBHOOK_REJECTED_NO_SECURITY",
+            resource_type="canvas",
+            resource_id=agent_id,
+            status="failure",
+            details={"is_test": is_test, "method": request.method, "path": request.path},
+            ip_address=request.remote_addr,
+            user_agent=request.headers.get("User-Agent", "")[:512],
+        )
+        return get_data_error_result(code=RetCode.FORBIDDEN, message=_WEBHOOK_NO_SECURITY_MSG), RetCode.FORBIDDEN
     try:
-        security_config=webhook_cfg.get("security", {})
         await validate_webhook_security(security_config)
     except Exception as e:
         return get_data_error_result(code=RetCode.BAD_REQUEST,message=str(e)),RetCode.BAD_REQUEST
+
+    AuditService.record(
+        user_id=cvs.user_id,
+        action="WEBHOOK_INVOKE",
+        resource_type="canvas",
+        resource_id=agent_id,
+        details={"is_test": is_test, "method": request.method, "path": request.path},
+        ip_address=request.remote_addr,
+        user_agent=request.headers.get("User-Agent", "")[:512],
+    )
     if not isinstance(cvs.dsl, str):
         dsl = json.dumps(cvs.dsl, ensure_ascii=False)
     try:

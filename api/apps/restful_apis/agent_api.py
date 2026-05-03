@@ -38,6 +38,7 @@ from api.apps.services.canvas_replica_service import CanvasReplicaService
 from api.db import CanvasCategory
 from api.db.db_models import Task
 from api.db.services.api_service import API4ConversationService
+from api.db.services.audit_service import AuditService
 from api.db.services.canvas_service import (
     CanvasTemplateService,
     UserCanvasService,
@@ -1327,11 +1328,41 @@ async def webhook(agent_id: str):
 
         return decoded
 
+    security_config = webhook_cfg.get("security", {})
+    if not security_config:
+        # Cross-tenant safety: webhooks run as the canvas creator, so an
+        # unsecured webhook lets anyone who learns the canvas_id invoke it
+        # against the creator's data sources. Refuse and log the attempt.
+        AuditService.record(
+            user_id=cvs.user_id,
+            action="WEBHOOK_REJECTED_NO_SECURITY",
+            resource_type="canvas",
+            resource_id=agent_id,
+            status="failure",
+            details={"is_test": is_test, "method": request.method, "path": request.path},
+            ip_address=request.remote_addr,
+            user_agent=request.headers.get("User-Agent", "")[:512],
+        )
+        msg = (
+            "Webhook rejected: no security block defined in canvas DSL. "
+            "Add `security: {auth_type: \"token\", token: \"<secret>\"}` or "
+            "`security: {ip_whitelist: [\"0.0.0.0/0\"]}` to enable webhook traffic."
+        )
+        return get_data_error_result(code=RetCode.FORBIDDEN, message=msg), RetCode.FORBIDDEN
     try:
-        security_config=webhook_cfg.get("security", {})
         await validate_webhook_security(security_config)
     except Exception as e:
         return get_data_error_result(code=RetCode.BAD_REQUEST,message=str(e)),RetCode.BAD_REQUEST
+
+    AuditService.record(
+        user_id=cvs.user_id,
+        action="WEBHOOK_INVOKE",
+        resource_type="canvas",
+        resource_id=agent_id,
+        details={"is_test": is_test, "method": request.method, "path": request.path},
+        ip_address=request.remote_addr,
+        user_agent=request.headers.get("User-Agent", "")[:512],
+    )
     if not isinstance(cvs.dsl, str):
         dsl = json.dumps(cvs.dsl, ensure_ascii=False)
     try:
