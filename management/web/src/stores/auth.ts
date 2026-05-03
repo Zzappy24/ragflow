@@ -8,6 +8,12 @@ interface UserInfo {
   nickname: string | null;
   is_superuser: boolean;
   orgs: Array<{ org_id: string; org_name: string; role: string }>;
+  workspaces: Array<{
+    ws_id: string;
+    ws_name: string;
+    org_id: string;
+    role: string;
+  }>;
 }
 
 interface AuthState {

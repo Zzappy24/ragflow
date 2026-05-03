@@ -27,7 +27,11 @@ class UserInfo(BaseModel):
     email: str
     nickname: str | None = None
     is_superuser: bool = False
-    orgs: list[dict] = []  # [{org_id, org_name, role}]
+    orgs: list[dict] = []         # [{org_id, org_name, role}]
+    # Workspaces the caller belongs to (any role). Used by the management UI
+    # to land ws_admin-only users directly on their workspace without ever
+    # showing the org-level pages.
+    workspaces: list[dict] = []   # [{ws_id, ws_name, org_id, role}]
 
 
 # -- Organisation -----------------------------------------------------------

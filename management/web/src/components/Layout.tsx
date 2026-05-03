@@ -17,13 +17,38 @@ const { Text } = Typography;
 export default function AppLayout() {
   const { user, fetchMe, logout, isLoggedIn } = useAuthStore();
 
+  // ws_admin-only users (no org_admin role anywhere) see a slimmed-down
+  // sidebar. The org-scoped pages would 403 for them anyway — hiding the
+  // entry prevents confusion and dead-end navigation.
+  const hasOrgAdminElsewhere =
+    !!user?.is_superuser ||
+    !!user?.orgs?.some((o) => o.role === 'org_admin');
+
   const menuItems = [
     { key: '/', icon: <DashboardOutlined />, label: <Link to="/">Dashboard</Link> },
-    { key: '/organisations', icon: <BankOutlined />, label: <Link to="/organisations">Organisations</Link> },
-    ...(user?.is_superuser ? [
-      { key: '/archives', icon: <InboxOutlined />, label: <Link to="/archives">Archives</Link> },
-      { key: '/audit', icon: <AuditOutlined />, label: <Link to="/audit">Audit Global</Link> },
-    ] : []),
+    ...(hasOrgAdminElsewhere
+      ? [
+          {
+            key: '/organisations',
+            icon: <BankOutlined />,
+            label: <Link to="/organisations">Organisations</Link>,
+          },
+        ]
+      : []),
+    ...(user?.is_superuser
+      ? [
+          {
+            key: '/archives',
+            icon: <InboxOutlined />,
+            label: <Link to="/archives">Archives</Link>,
+          },
+          {
+            key: '/audit',
+            icon: <AuditOutlined />,
+            label: <Link to="/audit">Audit Global</Link>,
+          },
+        ]
+      : []),
   ];
   const navigate = useNavigate();
   const location = useLocation();

@@ -728,6 +728,42 @@ function SuperDashboard() {
   );
 }
 
+// ── ws_admin landing — list of own workspaces ─────────────────────────────────
+
+function WsAdminDashboard({ workspaces }: {
+  workspaces: Array<{ ws_id: string; ws_name: string; org_id: string; role: string }>;
+}) {
+  return (
+    <Card title="Mes workspaces">
+      <Table
+        size="small"
+        rowKey="ws_id"
+        pagination={false}
+        dataSource={workspaces}
+        columns={[
+          {
+            title: 'Workspace',
+            dataIndex: 'ws_name',
+            key: 'name',
+            render: (name: string, row: any) => (
+              <Link to={`/workspaces/${row.ws_id}`} className="text-indigo-600 hover:underline">
+                {name}
+              </Link>
+            ),
+          },
+          {
+            title: 'Rôle',
+            dataIndex: 'role',
+            key: 'role',
+            width: 120,
+            render: (r: string) => <Tag color={r === 'ws_admin' ? 'blue' : 'default'}>{r}</Tag>,
+          },
+        ]}
+      />
+    </Card>
+  );
+}
+
 // ── Root export ───────────────────────────────────────────────────────────────
 
 export default function DashboardPage() {
@@ -737,15 +773,26 @@ export default function DashboardPage() {
 
   if (user.is_superuser) return <SuperDashboard />;
 
-  if (user.orgs && user.orgs.length > 0) {
-    const org = user.orgs[0];
+  const hasOrgAdminRole = !!user.orgs?.some((o) => o.role === 'org_admin');
+  if (hasOrgAdminRole) {
+    const org = user.orgs.find((o) => o.role === 'org_admin') ?? user.orgs[0];
     return <OrgDashboard orgId={org.org_id} orgName={org.org_name} />;
+  }
+
+  // ws_admin landing: only their own workspaces are visible. Drilling into a
+  // workspace opens the same detail page as for org_admin/superuser, with
+  // backend RBAC scoping every tab to that workspace.
+  const adminWorkspaces = (user.workspaces ?? []).filter(
+    (w) => w.role === 'ws_admin',
+  );
+  if (adminWorkspaces.length > 0) {
+    return <WsAdminDashboard workspaces={adminWorkspaces} />;
   }
 
   return (
     <Card>
       <p className="text-gray-500">
-        Bienvenue, {user.email}. Sélectionnez une organisation dans la barre latérale.
+        Bienvenue, {user.email}. Aucun rôle admin n'est configuré sur votre compte.
       </p>
     </Card>
   );

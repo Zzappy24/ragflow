@@ -64,8 +64,9 @@ def login(body: LoginRequest):
 
 @router.get("/me", response_model=UserInfo)
 def me(user=Depends(get_current_user)):
-    """Get current user info with org memberships."""
+    """Get current user info with org and workspace memberships."""
     from api.db.services.org_service import OrgMemberService, OrgService
+    from api.db.services.workspace_service import WorkspaceService, WsMemberService
     org_memberships = OrgMemberService.list_orgs_for_user(user.id)
     orgs = []
     for m in org_memberships:
@@ -78,12 +79,26 @@ def me(user=Depends(get_current_user)):
             "role": m.role,
         })
 
+    workspaces = []
+    ws_memberships = WsMemberService.list_workspaces_for_user(user.id)
+    for m in ws_memberships:
+        ok, ws = WorkspaceService.get_by_id(m.workspace_id)
+        if not ok or not ws or getattr(ws, "status", "1") != "1":
+            continue
+        workspaces.append({
+            "ws_id": ws.id,
+            "ws_name": ws.name,
+            "org_id": ws.org_id,
+            "role": m.role,
+        })
+
     return UserInfo(
         id=user.id,
         email=user.email,
         nickname=getattr(user, "nickname", None),
         is_superuser=bool(user.is_superuser),
         orgs=orgs,
+        workspaces=workspaces,
     )
 
 

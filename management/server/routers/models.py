@@ -1,9 +1,10 @@
 """
 Workspace LLM model configuration routes.
 
-Allows org_admins and superusers to configure LLM providers and default models
-for workspace tenants — without touching the active_tenant_id() context used by
-RAGFlow's own routes.
+Allows ws_admins, org_admins, and superusers to configure LLM providers and
+default models for workspace tenants — without touching the active_tenant_id()
+context used by RAGFlow's own routes. ws_admin access is scoped to their own
+workspace via ``require_ws_admin``.
 
 Supported providers (local-inference only):
   - Ollama          factory="Ollama",                 no name suffix
@@ -16,7 +17,7 @@ import os
 
 from fastapi import APIRouter, Depends, HTTPException, status
 
-from management.server.auth.dependencies import get_current_user_id
+from management.server.auth.dependencies import get_current_user_id, require_ws_admin
 from management.server.models.schemas import (
     WsLlmProviderAdd,
     WsLlmProviderUpdate,
@@ -55,27 +56,6 @@ def _display_name(factory: str, llm_name: str) -> str:
     return llm_name
 
 
-def _require_ws_org_admin(ws_id: str, user_id: str):
-    """Allow org_admin of the workspace's org, or superuser."""
-    from api.db.services.user_service import UserService
-    ok, user = UserService.get_by_id(user_id)
-    if not ok or not user:
-        raise HTTPException(status_code=401, detail="User not found")
-    if user.is_superuser:
-        return user
-
-    from api.db.services.workspace_service import WorkspaceService
-    from api.db.services.org_service import OrgMemberService
-    ok, ws = WorkspaceService.get_by_id(ws_id)
-    if not ok or not ws:
-        raise HTTPException(status_code=404, detail="Workspace not found")
-
-    membership = OrgMemberService.get_membership(ws.org_id, user_id)
-    if not membership or membership.role != "org_admin":
-        raise HTTPException(status_code=403, detail="Org admin access required")
-    return user
-
-
 def _get_ws_tenant(ws_id: str) -> str:
     """Return tenant_id for the workspace or raise 404."""
     from api.db.services.workspace_service import WorkspaceService
@@ -92,7 +72,7 @@ def _get_ws_tenant(ws_id: str) -> str:
 @router.get("/workspaces/{ws_id}/models/providers", response_model=list[WsLlmProviderResponse])
 def list_workspace_providers(ws_id: str, user_id: str = Depends(get_current_user_id)):
     """List all LLM providers configured for this workspace tenant."""
-    _require_ws_org_admin(ws_id, user_id)
+    require_ws_admin(ws_id, user_id)
     tenant_id = _get_ws_tenant(ws_id)
 
     from api.db.services.tenant_llm_service import TenantLLMService
@@ -130,7 +110,7 @@ def add_workspace_provider(
     The llm_name is stored with the factory suffix automatically
     (e.g. "llama3___VLLM" for VLLM factory) — mirroring RAGFlow's add_llm.
     """
-    _require_ws_org_admin(ws_id, user_id)
+    require_ws_admin(ws_id, user_id)
     tenant_id = _get_ws_tenant(ws_id)
 
     from api.db.services.tenant_llm_service import TenantLLMService
@@ -187,7 +167,7 @@ def update_workspace_provider(
     user_id: str = Depends(get_current_user_id),
 ):
     """Update an existing LLM model configuration (api_key, api_base, max_tokens)."""
-    _require_ws_org_admin(ws_id, user_id)
+    require_ws_admin(ws_id, user_id)
     tenant_id = _get_ws_tenant(ws_id)
 
     from api.db.services.tenant_llm_service import TenantLLMService
@@ -244,7 +224,7 @@ def toggle_workspace_provider_status(
     user_id: str = Depends(get_current_user_id),
 ):
     """Enable (enabled=true) or disable (enabled=false) a model."""
-    _require_ws_org_admin(ws_id, user_id)
+    require_ws_admin(ws_id, user_id)
     tenant_id = _get_ws_tenant(ws_id)
 
     from api.db.services.tenant_llm_service import TenantLLMService
@@ -294,7 +274,7 @@ def delete_workspace_provider(
     user_id: str = Depends(get_current_user_id),
 ):
     """Remove a specific model from the workspace tenant."""
-    _require_ws_org_admin(ws_id, user_id)
+    require_ws_admin(ws_id, user_id)
     tenant_id = _get_ws_tenant(ws_id)
 
     from api.db.services.tenant_llm_service import TenantLLMService
@@ -332,7 +312,7 @@ async def verify_workspace_model(
     factories — including the OpenAI-compatible one used for Ollama/vLLM.
     This handler is async so we can `await` the streaming generator.
     """
-    _require_ws_org_admin(ws_id, user_id)
+    require_ws_admin(ws_id, user_id)
 
     stored_name = _stored_name(body.llm_factory, body.llm_name)
     api_key = body.api_key or "x"
@@ -417,7 +397,7 @@ async def verify_workspace_model(
 @router.get("/workspaces/{ws_id}/models/defaults", response_model=WsLlmDefaultsResponse)
 def get_workspace_defaults(ws_id: str, user_id: str = Depends(get_current_user_id)):
     """Get the default model IDs configured on this workspace tenant."""
-    _require_ws_org_admin(ws_id, user_id)
+    require_ws_admin(ws_id, user_id)
     tenant_id = _get_ws_tenant(ws_id)
 
     from api.db.services.tenant_llm_service import TenantService
@@ -446,7 +426,7 @@ def set_workspace_defaults(
     user_id: str = Depends(get_current_user_id),
 ):
     """Set the default model IDs for this workspace tenant."""
-    _require_ws_org_admin(ws_id, user_id)
+    require_ws_admin(ws_id, user_id)
     tenant_id = _get_ws_tenant(ws_id)
 
     params = body.model_dump(exclude_none=True)
