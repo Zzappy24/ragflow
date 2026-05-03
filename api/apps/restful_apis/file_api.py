@@ -24,8 +24,10 @@ from api.utils.api_utils import (
     add_tenant_id_to_kwargs,
     get_error_argument_result,
     get_error_data_result,
+    get_json_result,
     get_result,
 )
+from common.constants import RetCode
 from api.utils.validation_utils import (
     CreateFolderReq,
     DeleteFileReq,
@@ -38,13 +40,11 @@ from api.utils.web_utils import CONTENT_TYPE_MAP, apply_safe_file_response_heade
 from common import settings
 from common.misc_utils import thread_pool_exec
 from api.apps.services import file_api_service
-from api.apps.extensions.rbac import require_permission, Permission
 
 
 @manager.route("/files", methods=["POST"])  # noqa: F821
 @login_required
 @add_tenant_id_to_kwargs
-@require_permission(Permission.DOCUMENT_CREATE)
 async def create_or_upload(tenant_id: str = None):
     """
     Upload files or create a folder.
@@ -101,7 +101,6 @@ async def create_or_upload(tenant_id: str = None):
 @manager.route("/files", methods=["GET"])  # noqa: F821
 @login_required
 @add_tenant_id_to_kwargs
-@require_permission(Permission.DOCUMENT_READ)
 async def list_files(tenant_id: str = None):
     """
     List files under a folder.
@@ -157,7 +156,6 @@ async def list_files(tenant_id: str = None):
 @manager.route("/files", methods=["DELETE"])  # noqa: F821
 @login_required
 @add_tenant_id_to_kwargs
-@require_permission(Permission.DOCUMENT_DELETE)
 async def delete(tenant_id: str = None):
     """
     Delete files.
@@ -189,10 +187,22 @@ async def delete(tenant_id: str = None):
         return get_error_argument_result(err)
 
     try:
-        success, result = await file_api_service.delete_files(tenant_id, req["ids"])
+        # Get Authorization header to pass to Go backend
+        auth_header = request.headers.get("Authorization", "")
+        success, result = await file_api_service.delete_files(tenant_id, req["ids"], auth_header)
         if success:
             return get_result(data=result)
         else:
+            if isinstance(result, dict):
+                success_count = result.get("success_count", 0)
+                errors = result.get("errors", [])
+                return get_json_result(
+                    code=RetCode.DATA_ERROR,
+                    message=f"Partially deleted {success_count} files with {len(errors)} errors"
+                    if success_count > 0
+                    else f"Deleted files failed with {len(errors)} errors",
+                    data=result,
+                )
             return get_error_data_result(message=result)
     except Exception as e:
         logging.exception(e)
@@ -203,7 +213,6 @@ async def delete(tenant_id: str = None):
 @manager.route("/files/move", methods=["POST"])  # noqa: F821
 @login_required
 @add_tenant_id_to_kwargs
-@require_permission(Permission.DOCUMENT_CREATE)
 async def move(tenant_id: str = None):
     """
     Move and/or rename files. Follows Linux mv semantics:
@@ -260,7 +269,6 @@ async def move(tenant_id: str = None):
 @manager.route("/files/<file_id>", methods=["GET"])  # noqa: F821
 @login_required
 @add_tenant_id_to_kwargs
-@require_permission(Permission.DOCUMENT_READ)
 async def download(tenant_id: str = None, file_id: str = None):
     """
     Download a file.
@@ -309,7 +317,6 @@ async def download(tenant_id: str = None, file_id: str = None):
 @manager.route("/files/<file_id>/parent", methods=["GET"])  # noqa: F821
 @login_required
 @add_tenant_id_to_kwargs
-@require_permission(Permission.DOCUMENT_READ)
 async def parent_folder(tenant_id: str = None, file_id: str = None):
     """
     Get parent folder of a file.
@@ -328,7 +335,7 @@ async def parent_folder(tenant_id: str = None, file_id: str = None):
         description: Parent folder information.
     """
     try:
-        success, result = file_api_service.get_parent_folder(file_id, tenant_id)
+        success, result = file_api_service.get_parent_folder(file_id)
         if success:
             return get_result(data=result)
         else:
@@ -341,7 +348,6 @@ async def parent_folder(tenant_id: str = None, file_id: str = None):
 @manager.route("/files/<file_id>/ancestors", methods=["GET"])  # noqa: F821
 @login_required
 @add_tenant_id_to_kwargs
-@require_permission(Permission.DOCUMENT_READ)
 async def ancestors(tenant_id: str = None, file_id: str = None):
     """
     Get all ancestor folders of a file.
@@ -360,7 +366,7 @@ async def ancestors(tenant_id: str = None, file_id: str = None):
         description: List of ancestor folders.
     """
     try:
-        success, result = file_api_service.get_all_parent_folders(file_id, tenant_id)
+        success, result = file_api_service.get_all_parent_folders(file_id)
         if success:
             return get_result(data=result)
         else:
@@ -368,5 +374,3 @@ async def ancestors(tenant_id: str = None, file_id: str = None):
     except Exception as e:
         logging.exception(e)
         return get_error_data_result(message="Internal server error")
-
-

@@ -17,7 +17,6 @@ import logging
 from datetime import datetime
 
 from api.apps import login_required
-from api.apps.extensions.rbac import require_permission, Permission
 from api.db.services.task_service import TaskService, CANVAS_DEBUG_DOC_ID, GRAPH_RAPTOR_FAKE_DOC_ID
 from api.utils.api_utils import (
     get_json_result,
@@ -30,7 +29,6 @@ from rag.utils.redis_conn import REDIS_CONN
 
 @manager.route("/tasks/<task_id>/cancel", methods=["POST"])  # noqa: F821
 @login_required
-@require_permission(Permission.DOCUMENT_CREATE)
 async def cancel_task(task_id):
     """Cancel a running task.
     """
@@ -39,7 +37,6 @@ async def cancel_task(task_id):
 
 @manager.route("/tasks/<task_id>", methods=["PATCH"])  # noqa: F821
 @login_required
-@require_permission(Permission.DOCUMENT_CREATE)
 @validate_request("action")
 async def patch_task(task_id):
     req = await get_request_json()

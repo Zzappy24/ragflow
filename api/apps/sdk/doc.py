@@ -256,6 +256,20 @@ async def update_doc(tenant_id, dataset_id, document_id):
     return get_result(data=renamed_doc)
 
 
+from api.utils.reference_metadata_utils import (
+    enrich_chunks_with_document_metadata,
+    resolve_reference_metadata_preferences,
+)
+
+
+def _resolve_reference_metadata(req: dict, search_config: dict | None = None):
+    return resolve_reference_metadata_preferences(req, search_config)
+
+
+def _enrich_chunks_with_document_metadata(chunks: list[dict], metadata_fields=None) -> None:
+    enrich_chunks_with_document_metadata(chunks, metadata_fields)
+
+
 @manager.route("/datasets/<dataset_id>/documents/<document_id>", methods=["GET"])  # noqa: F821
 @token_required
 @require_permission(Permission.DOCUMENT_READ)
@@ -902,6 +916,7 @@ async def retrieval_test(tenant_id):
             return get_error_data_result("`highlight` should be a boolean")
     else:
         return get_error_data_result("`highlight` should be a boolean")
+    include_metadata, metadata_fields = _resolve_reference_metadata(req)
     try:
         tenant_ids = list(set([kb.tenant_id for kb in kbs]))
         e, kb = KnowledgebaseService.get_by_id(kb_ids[0])
@@ -959,6 +974,15 @@ async def retrieval_test(tenant_id):
 
         for c in ranks["chunks"]:
             c.pop("vector", None)
+
+        if include_metadata:
+            logging.info(
+                "sdk.retrieval reference_metadata enabled dataset_ids=%s fields=%s chunks=%s",
+                kb_ids,
+                sorted(metadata_fields) if metadata_fields else None,
+                len(ranks["chunks"]),
+            )
+            enrich_chunks_with_document_metadata(ranks["chunks"], metadata_fields)
 
         ##rename keys
         renamed_chunks = []
