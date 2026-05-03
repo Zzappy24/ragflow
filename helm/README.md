@@ -104,6 +104,88 @@ env:
   OPENSEARCH_PASSWORD: "<os-pass>"
 ```
 
+## MCP Server
+
+Expose the RAGFlow MCP server alongside the main RAGFlow process. This is what
+IDE assistants (Claude Code, Cursor, OpenCode, ...) connect to in order to
+search workspace KBs, list documents, and run agent canvases. See
+[docs/develop/mcp/](../docs/develop/mcp/) for the full guide.
+
+```yaml
+ragflow:
+  mcp:
+    enabled: true
+    mode: host         # "host" for multi-tenant, "self-host" for single-tenant
+    port: 9382
+    baseUrl: http://127.0.0.1:9380
+    transport:
+      sse: true
+      streamableHttp: true
+      jsonResponse: true
+    service:
+      type: ClusterIP   # or LoadBalancer / NodePort if exposed directly
+```
+
+Mode summary:
+
+- **`host`** — recommended for B2B SaaS. Each MCP client must include an
+  `api_key` (or `Authorization`) header bound to the workspace it should access.
+  The fork's RBAC layer scopes every tool call to that workspace.
+- **`self-host`** — single-tenant. The MCP server itself authenticates with
+  the RAGFlow REST API using a fixed token. All clients see one tenant.
+  Provide the token via either:
+
+  ```yaml
+  ragflow:
+    mcp:
+      mode: self-host
+      hostApiKey: ragflow-XXXXXXXXXXXX   # inline (dev/test only)
+  ```
+
+  …or, for production, reference an existing Secret containing the key
+  `host-api-key`:
+
+  ```yaml
+  ragflow:
+    mcp:
+      mode: self-host
+      existingSecret: ragflow-mcp-host-key
+  ```
+
+To expose the MCP server through Ingress with TLS:
+
+```yaml
+ingress:
+  enabled: true
+  className: nginx
+  hosts:
+    - host: ragflow-mcp.example.com
+      paths:
+        - path: /sse
+          pathType: Prefix
+          backend:
+            service:
+              name: ragflow-mcp
+              port: { name: mcp }
+        - path: /mcp
+          pathType: Prefix
+          backend:
+            service:
+              name: ragflow-mcp
+              port: { name: mcp }
+        - path: /messages
+          pathType: Prefix
+          backend:
+            service:
+              name: ragflow-mcp
+              port: { name: mcp }
+```
+
+> The legacy SSE transport requires `/messages/` for tool POSTs (see
+> [docs/develop/mcp/launch_mcp_server.md](../docs/develop/mcp/launch_mcp_server.md)).
+> If you only want the streamable-HTTP transport, set
+> `ragflow.mcp.transport.sse: false` and route only `/mcp`.
+
 ## Ingress
 
 Expose the web UI via Ingress:

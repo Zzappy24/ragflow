@@ -10,6 +10,8 @@ sidebar_custom_props: {
 
 Python and curl MCP client examples.
 
+> Looking to plug an IDE assistant (Claude Code, Cursor, OpenCode) instead of writing your own client? See [Connect an IDE assistant](./mcp_ide_setup.md).
+
 ------
 
 ## Example MCP Python client

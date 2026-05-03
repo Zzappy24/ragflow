@@ -41,9 +41,31 @@ spec:
         {{- with .Values.ragflow.image.pullPolicy }}
         imagePullPolicy: {{ . }}
         {{- end }}
-        {{- if .Values.ragflow.admin.enabled }}
+        {{- if or .Values.ragflow.admin.enabled .Values.ragflow.mcp.enabled }}
         args:
+          {{- if .Values.ragflow.admin.enabled }}
           - "--enable-adminserver"
+          {{- end }}
+          {{- if .Values.ragflow.mcp.enabled }}
+          - "--enable-mcpserver"
+          - "--mcp-host=0.0.0.0"
+          - "--mcp-port={{ .Values.ragflow.mcp.port }}"
+          - "--mcp-base-url={{ .Values.ragflow.mcp.baseUrl }}"
+          - "--mcp-mode={{ .Values.ragflow.mcp.mode }}"
+          - "--mcp-script-path=/ragflow/mcp/server/server.py"
+          {{- if eq .Values.ragflow.mcp.mode "self-host" }}
+          - "--mcp-host-api-key=$(MCP_HOST_API_KEY)"
+          {{- end }}
+          {{- if not .Values.ragflow.mcp.transport.sse }}
+          - "--no-transport-sse-enabled"
+          {{- end }}
+          {{- if not .Values.ragflow.mcp.transport.streamableHttp }}
+          - "--no-transport-streamable-http-enabled"
+          {{- end }}
+          {{- if not .Values.ragflow.mcp.transport.jsonResponse }}
+          - "--no-json-response"
+          {{- end }}
+          {{- end }}
         {{- end }}
         ports:
           - containerPort: 80
@@ -53,6 +75,10 @@ spec:
           {{- if .Values.ragflow.admin.enabled }}
           - containerPort: 9381
             name: admin
+          {{- end }}
+          {{- if .Values.ragflow.mcp.enabled }}
+          - containerPort: {{ .Values.ragflow.mcp.port }}
+            name: mcp
           {{- end }}
         volumeMounts:
           - mountPath: /etc/nginx/conf.d/ragflow.conf.python
@@ -77,6 +103,21 @@ spec:
         envFrom:
           - secretRef:
               name: {{ include "ragflow.fullname" . }}-env-config
+        {{- if and .Values.ragflow.mcp.enabled (eq .Values.ragflow.mcp.mode "self-host") }}
+        env:
+          - name: MCP_HOST_API_KEY
+            {{- if .Values.ragflow.mcp.existingSecret }}
+            valueFrom:
+              secretKeyRef:
+                name: {{ .Values.ragflow.mcp.existingSecret }}
+                key: host-api-key
+            {{- else }}
+            valueFrom:
+              secretKeyRef:
+                name: {{ include "ragflow.fullname" . }}-mcp
+                key: host-api-key
+            {{- end }}
+        {{- end }}
         {{- with .Values.ragflow.deployment.resources }}
         resources:
           {{- . | toYaml | nindent 10 }}
@@ -146,4 +187,39 @@ spec:
       targetPort: admin
       name: admin
   type: {{ .Values.ragflow.admin.serviceType }}
+{{- end }}
+
+{{- if .Values.ragflow.mcp.enabled }}
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: {{ .Release.Name }}-mcp
+  labels:
+    {{- include "ragflow.labels" . | nindent 4 }}
+    app.kubernetes.io/component: ragflow
+spec:
+  selector:
+    {{- include "ragflow.selectorLabels" . | nindent 4 }}
+    app.kubernetes.io/component: ragflow
+  ports:
+    - protocol: TCP
+      port: {{ .Values.ragflow.mcp.port }}
+      targetPort: mcp
+      name: mcp
+  type: {{ .Values.ragflow.mcp.service.type }}
+
+{{- if and (eq .Values.ragflow.mcp.mode "self-host") (not .Values.ragflow.mcp.existingSecret) }}
+---
+apiVersion: v1
+kind: Secret
+metadata:
+  name: {{ include "ragflow.fullname" . }}-mcp
+  labels:
+    {{- include "ragflow.labels" . | nindent 4 }}
+    app.kubernetes.io/component: ragflow
+type: Opaque
+stringData:
+  host-api-key: {{ required "ragflow.mcp.hostApiKey is required when mode=self-host and no existingSecret is provided" .Values.ragflow.mcp.hostApiKey | quote }}
+{{- end }}
 {{- end }}
