@@ -81,12 +81,23 @@ class ApiKeyScopeService(CommonService):
             .where((cls.model.workspace_id == workspace_id) & (cls.model.status == "1"))
         )
 
+    # Drop UPDATEs more recent than this many seconds. Under burst load
+    # (50+ concurrent SDK clients with the same key) this collapses ~99%
+    # of the writes that would otherwise contend on the same row, while
+    # keeping the displayed "last used" within ~1s of reality.
+    _LAST_USED_DEBOUNCE_SECONDS = 1
+
     @classmethod
     @DB.connection_context()
     def touch_last_used(cls, token):
-        from datetime import datetime
-        cls.model.update(last_used_at=datetime.utcnow()).where(
-            cls.model.token == token
+        from datetime import datetime, timedelta
+        now = datetime.utcnow()
+        threshold = now - timedelta(seconds=cls._LAST_USED_DEBOUNCE_SECONDS)
+        # Conditional UPDATE: skip when an even fresher timestamp is already
+        # in the row (NULL counts as stale, so first-ever touch always wins).
+        cls.model.update(last_used_at=now).where(
+            (cls.model.token == token)
+            & ((cls.model.last_used_at.is_null(True)) | (cls.model.last_used_at < threshold))
         ).execute()
 
     @classmethod
