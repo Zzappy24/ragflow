@@ -81,8 +81,8 @@ def get_flattened_metadata(tenant_id):
 
 @manager.route("/datasets", methods=["POST"])  # noqa: F821
 @login_required
-@add_tenant_id_to_kwargs
 @require_permission(Permission.DATASET_CREATE)
+@add_tenant_id_to_kwargs
 async def create(tenant_id: str = None):
     """
     Create a new dataset.
@@ -170,8 +170,8 @@ async def create(tenant_id: str = None):
 
 @manager.route("/datasets", methods=["DELETE"])  # noqa: F821
 @login_required
-@add_tenant_id_to_kwargs
 @require_permission(Permission.DATASET_DELETE)
+@add_tenant_id_to_kwargs
 async def delete(tenant_id):
     """
     Delete datasets.
@@ -230,8 +230,8 @@ async def delete(tenant_id):
 
 @manager.route("/datasets/<dataset_id>", methods=["PUT"])  # noqa: F821
 @login_required
-@add_tenant_id_to_kwargs
 @require_permission(Permission.DATASET_UPDATE)
+@add_tenant_id_to_kwargs
 async def update(tenant_id, dataset_id):
     """
     Update a dataset.
@@ -328,8 +328,8 @@ async def update(tenant_id, dataset_id):
 
 @manager.route("/datasets", methods=["GET"])  # noqa: F821
 @login_required
-@add_tenant_id_to_kwargs
 @require_permission(Permission.DATASET_READ)
+@add_tenant_id_to_kwargs
 def list_datasets(tenant_id):
     """
     List datasets.
@@ -460,8 +460,8 @@ def list_tags(tenant_id, dataset_id):
 
 @manager.route("/datasets/<dataset_id>/tags", methods=["DELETE"])  # noqa: F821
 @login_required
-@add_tenant_id_to_kwargs
 @require_permission(Permission.DATASET_UPDATE)
+@add_tenant_id_to_kwargs
 async def delete_tags(tenant_id, dataset_id):
     req = await request.get_json()
     if not req or "tags" not in req:
@@ -484,8 +484,8 @@ async def delete_tags(tenant_id, dataset_id):
 
 @manager.route("/datasets/<dataset_id>/tags", methods=["PUT"])  # noqa: F821
 @login_required
-@add_tenant_id_to_kwargs
 @require_permission(Permission.DATASET_UPDATE)
+@add_tenant_id_to_kwargs
 async def rename_tag(tenant_id, dataset_id):
     req = await request.get_json()
     if not req or "from_tag" not in req or "to_tag" not in req:
@@ -511,8 +511,8 @@ async def rename_tag(tenant_id, dataset_id):
 
 @manager.route("/datasets/<dataset_id>/search", methods=["POST"])  # noqa: F821
 @login_required
-@add_tenant_id_to_kwargs
 @require_permission(Permission.DATASET_READ)
+@add_tenant_id_to_kwargs
 async def search(tenant_id, dataset_id):
     """Search (retrieval test) within a dataset.
 
@@ -541,8 +541,8 @@ async def search(tenant_id, dataset_id):
 
 @manager.route("/datasets/<dataset_id>/graph/search", methods=["GET"])  # noqa: F821
 @login_required
-@add_tenant_id_to_kwargs
 @require_permission(Permission.DATASET_READ)
+@add_tenant_id_to_kwargs
 async def knowledge_graph(tenant_id, dataset_id):
     try:
         success, result = await dataset_api_service.get_knowledge_graph(dataset_id, tenant_id)
@@ -580,8 +580,8 @@ async def get_knowledge_graph(tenant_id, dataset_id):
 
 @manager.route("/datasets/<dataset_id>/graph", methods=["DELETE"])  # noqa: F821
 @login_required
-@add_tenant_id_to_kwargs
 @require_permission(Permission.DATASET_DELETE)
+@add_tenant_id_to_kwargs
 def delete_knowledge_graph(tenant_id, dataset_id):
     try:
         success, result = dataset_api_service.delete_knowledge_graph(dataset_id, tenant_id)
@@ -596,8 +596,8 @@ def delete_knowledge_graph(tenant_id, dataset_id):
 
 @manager.route("/datasets/<dataset_id>/index", methods=["POST"])  # noqa: F821
 @login_required
-@add_tenant_id_to_kwargs
 @require_permission(Permission.DATASET_UPDATE)
+@add_tenant_id_to_kwargs
 async def run_index(tenant_id, dataset_id):
     index_type = request.args.get("type", "")
     index_type = index_type.lower()
@@ -636,8 +636,8 @@ def trace_index(tenant_id, dataset_id):
 
 @manager.route("/datasets/<dataset_id>/<index_type>", methods=["DELETE"])  # noqa: F821
 @login_required
-@add_tenant_id_to_kwargs
 @require_permission(Permission.DATASET_DELETE)
+@add_tenant_id_to_kwargs
 def delete_index(tenant_id, dataset_id, index_type):
     index_type = index_type.lower()
     if index_type not in dataset_api_service._VALID_INDEX_TYPES:
@@ -657,8 +657,8 @@ def delete_index(tenant_id, dataset_id, index_type):
 
 @manager.route("/datasets/<dataset_id>/embedding", methods=["POST"])  # noqa: F821
 @login_required
-@add_tenant_id_to_kwargs
 @require_permission(Permission.DATASET_UPDATE)
+@add_tenant_id_to_kwargs
 async def run_embedding(tenant_id, dataset_id):
     try:
         success, result = dataset_api_service.run_embedding(dataset_id, tenant_id)
@@ -673,8 +673,8 @@ async def run_embedding(tenant_id, dataset_id):
 
 @manager.route("/datasets/<dataset_id>/ingestions", methods=["GET"])  # noqa: F821
 @login_required
-@add_tenant_id_to_kwargs
 @require_permission(Permission.DATASET_READ)
+@add_tenant_id_to_kwargs
 def list_ingestion_logs(tenant_id, dataset_id):
     try:
         page = int(request.args.get("page", 0))
@@ -700,8 +700,8 @@ def list_ingestion_logs(tenant_id, dataset_id):
 
 @manager.route("/datasets/<dataset_id>/ingestions/<log_id>", methods=["GET"])  # noqa: F821
 @login_required
-@add_tenant_id_to_kwargs
 @require_permission(Permission.DATASET_UPDATE)
+@add_tenant_id_to_kwargs
 def get_ingestion_log(tenant_id, dataset_id, log_id):
     try:
         success, result = dataset_api_service.get_ingestion_log(dataset_id, tenant_id, log_id)
