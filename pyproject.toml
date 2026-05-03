@@ -34,6 +34,7 @@ dependencies = [
     "exceptiongroup>=1.3.0,<2.0.0",
     "feedparser>=6.0.11,<7.0.0",
     "extract-msg>=0.39.0",
+    "fastapi>=0.115.0",
     "ffmpeg-python>=0.2.0",
     "flasgger>=0.9.7.1,<0.10.0",
     "flask-cors==6.0.2",
@@ -80,6 +81,9 @@ dependencies = [
     "pyclipper>=1.4.0,<2.0.0",
     # "pywencai>=0.13.1,<1.0.0",  # Temporarily disabled: conflicts with agentrun-sdk (pydash>=8), needed for agent/tools/wencai.py
     "pycryptodomex==3.20.0",
+    "pydantic-settings>=2.6.0",
+    # Pinned to zhipuai's window — zhipuai==2.0.1 requires pyjwt>=2.8.0,<2.9
+    "pyjwt>=2.8.0,<2.9",
     "pyobvector==0.2.22",
     "pyodbc>=5.2.0,<6.0.0",
     "pypandoc>=1.16",
@@ -114,6 +118,7 @@ dependencies = [
     "tavily-python==0.5.1",
     "tencentcloud-sdk-python==3.0.1478",
     "tika==2.6.0",
+    "uvicorn[standard]>=0.32.0",
     "valkey==6.0.2",
     "volcengine==1.0.194",
     "voyageai==0.2.3",
@@ -169,6 +174,10 @@ dependencies = [
 dev = [
     "pytest>=9.0.2",
     "requests>=2.32.5",
+    # CUSTOM B2B SaaS — kept in dev (not test) so a plain `uv sync` lands them.
+    # The full `test` group additionally pulls tensorflow-cpu which has no
+    # macOS ARM64 wheels, so it cannot be the default.
+    "pytest-asyncio>=1.3.0",
 ]
 test = [
     "hypothesis>=6.132.0",
