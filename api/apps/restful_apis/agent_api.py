@@ -217,8 +217,14 @@ def get_agent_session(agent_id, session_id, tenant_id):
             message="Only owner of canvas authorized for this operation.",
             code=RetCode.OPERATING_ERROR,
         )
-    _, conv = API4ConversationService.get_by_id(session_id)
-    return get_json_result(data=conv.to_dict())
+    # IDOR guard: scope the lookup by dialog_id so a leaked session_id from
+    # another canvas (in this workspace or any other) cannot be loaded
+    # through this route. We return a generic 404 instead of a "wrong
+    # canvas" error so we don't leak the existence of a foreign session.
+    convs = API4ConversationService.query(id=session_id, dialog_id=agent_id)
+    if not convs:
+        return get_data_error_result(message="Session not found!")
+    return get_json_result(data=convs[0].to_dict())
 
 
 @manager.route("/agents/<agent_id>/sessions/<session_id>", methods=["DELETE"])  # noqa: F821
