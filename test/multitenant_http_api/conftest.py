@@ -248,8 +248,110 @@ def HttpApiAuth(token, _ws_credentials) -> RAGFlowHttpApiAuth:
 
 from common import (                                   # noqa: E402
     batch_create_datasets,
+    delete_all_chat_assistants,
     delete_all_datasets,
 )
+
+
+def _hard_wipe_tenant(tenant_id: str) -> dict:
+    """Hard-delete every test artifact owned by `tenant_id`.
+
+    Why this is needed even after the API-level `delete_all_*` calls:
+    - `bulk_delete_chats` (api/apps/restful_apis/chat_api.py) does a SOFT
+      delete (sets `Dialog.status = INVALID`) — the row stays in MySQL.
+    - Conversations attached to those dialogs are not auto-cascaded.
+    - UserCanvas (agents) have no API-level `delete_all_*` helper at all.
+      A handful of session_management tests create canvases that never get
+      reaped. Over weeks of CI this accumulates tens of thousands of rows
+      and degrades query latency on the bridge ("Duplicated chat name"
+      collisions, slow `list_chats` GETs, …).
+
+    DB-level wipe scoped to the workspace tenant_id is the only way to
+    keep the test DB lean. Safe because the tenant_id resolves to one of
+    the `ci-test-w*` workspaces (provisioned by `provision_workers.py`) —
+    never a human user's tenant.
+    """
+    from api.db.db_models import (
+        DB,
+        API4Conversation,
+        Conversation,
+        Dialog,
+        UserCanvas,
+    )
+
+    counts = {
+        "dialogs": 0,
+        "conversations": 0,
+        "api4_conversations": 0,
+        "user_canvas": 0,
+    }
+
+    with DB.connection_context():
+        dialog_ids = [d.id for d in Dialog.select(Dialog.id).where(Dialog.tenant_id == tenant_id)]
+        if dialog_ids:
+            for i in range(0, len(dialog_ids), 1000):
+                batch = dialog_ids[i:i + 1000]
+                counts["conversations"] += Conversation.delete().where(Conversation.dialog_id.in_(batch)).execute()
+                counts["api4_conversations"] += API4Conversation.delete().where(API4Conversation.dialog_id.in_(batch)).execute()
+                counts["dialogs"] += Dialog.delete().where(Dialog.id.in_(batch)).execute()
+
+        counts["user_canvas"] += UserCanvas.delete().where(UserCanvas.user_id == tenant_id).execute()
+
+    return counts
+
+
+@pytest.fixture(scope="session", autouse=True)
+def _session_full_cleanup(request, HttpApiAuth, _ws_credentials):
+    """Hard wipe of the test workspace AFTER the whole pytest session.
+
+    Two-layer cleanup:
+      1. API-level `delete_all_*`: clears datasets (cascades documents +
+         chunks + Infinity tables) and chat_assistants (soft-deletes only).
+      2. DB-level `_hard_wipe_tenant`: hard-deletes Dialog/Conversation/
+         API4Conversation/UserCanvas rows the API leaves behind.
+
+    The API layer alone is insufficient because `bulk_delete_chats` does a
+    soft-delete (status=INVALID) and never reclaims the row — over many
+    runs this leaks 30k+ Dialog rows per CI workspace and trips name-
+    collision tests downstream.
+
+    DESTRUCTIVE — only safe because HttpApiAuth is bound to a dedicated
+    `ci-test-w*` workspace via X-Workspace-Id; it never sees a human
+    user's data.
+    """
+    _, workspace_id = _ws_credentials
+    # Resolve workspace tenant_id once (workspace_id ≠ tenant_id in our model).
+    tenant_id = None
+    try:
+        with _DB.connection_context():
+            ok, ws = _WorkspaceService.get_by_id(workspace_id)
+            if ok and ws is not None:
+                tenant_id = ws.tenant_id
+    except Exception:
+        pass
+
+    def cleanup():
+        # 1) API-level — let the routes handle their cascade where they can.
+        try:
+            delete_all_chat_assistants(HttpApiAuth)
+        except Exception:
+            pass
+        try:
+            delete_all_datasets(HttpApiAuth)
+        except Exception:
+            pass
+
+        # 2) DB-level — reclaim what the API soft-deletes leave behind.
+        if tenant_id:
+            try:
+                counts = _hard_wipe_tenant(tenant_id)
+                if any(counts.values()):
+                    print(f"\n[teardown] hard-wiped tenant={tenant_id[:12]}…: {counts}")
+            except Exception as ex:
+                # Cleanup is best-effort — never fail the test session here.
+                print(f"\n[teardown] hard-wipe failed (non-fatal): {ex}")
+
+    request.addfinalizer(cleanup)
 
 
 @pytest.fixture(scope="function")

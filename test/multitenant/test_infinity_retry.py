@@ -28,35 +28,48 @@ pytestmark = pytest.mark.filterwarnings("ignore::UserWarning")
 REPO = Path(__file__).resolve().parents[2]
 sys.path.insert(0, str(REPO))
 
-# infinity_conn_base.py participates in a circular import via
-# common.settings -> rag.utils.infinity_conn -> InfinityConnectionBase.
-# We only need the module-level helper, so load the file directly with
-# the heavy `infinity` SDK + `pandas` mocked out — same trick as
-# test_rbac_permissions.py uses for rbac.py.
+# infinity_conn_base.py participates in a circular import chain via
+# `common.settings -> rag.utils.es_conn -> rag.nlp.rag_tokenizer -> infinity`,
+# and the heavy `infinity` SDK isn't installed in dev. We only need one
+# module-level helper, so we mock the offending modules JUST FOR THE LOAD
+# and RESTORE sys.modules afterwards — otherwise the MagicMock for
+# `common.file_utils` / `common.settings` poisons the rest of the test
+# session (every later test that touches `get_project_base_directory()`
+# blows up because the mock returns another MagicMock as a path).
 _HEAVY_DEPS = (
     "infinity",
     "infinity.common",
     "infinity.index",
     "infinity.errors",
+    "infinity.rag_tokenizer",
     "pandas",
     "common.file_utils",
     "rag.nlp",
+    "rag.nlp.rag_tokenizer",
     "common.settings",
     "common.doc_store.doc_store_base",
 )
+_saved = {m: sys.modules.get(m) for m in _HEAVY_DEPS}
 for _m in _HEAVY_DEPS:
-    if _m not in sys.modules:
-        sys.modules[_m] = MagicMock()
+    sys.modules[_m] = MagicMock()
 # DocStoreConnection is referenced as a base class — it must be a real type.
 sys.modules["common.doc_store.doc_store_base"].DocStoreConnection = type(
     "DocStoreConnection", (), {}
 )
 
-_PATH = REPO / "common" / "doc_store" / "infinity_conn_base.py"
-_spec = importlib.util.spec_from_file_location("infinity_retry_under_test", _PATH)
-_mod = importlib.util.module_from_spec(_spec)
-_spec.loader.exec_module(_mod)
-_retry_on_meta_contention = _mod._retry_on_meta_contention
+try:
+    _PATH = REPO / "common" / "doc_store" / "infinity_conn_base.py"
+    _spec = importlib.util.spec_from_file_location("infinity_retry_under_test", _PATH)
+    _mod = importlib.util.module_from_spec(_spec)
+    _spec.loader.exec_module(_mod)
+    _retry_on_meta_contention = _mod._retry_on_meta_contention
+finally:
+    # Restore sys.modules so we don't leak MagicMocks into later tests.
+    for _m, _orig in _saved.items():
+        if _orig is None:
+            sys.modules.pop(_m, None)
+        else:
+            sys.modules[_m] = _orig
 
 
 def _busy_exc(code: int = 9003, msg: str = "Resource busy") -> Exception:

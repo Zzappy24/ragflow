@@ -20,6 +20,7 @@ import time
 from quart import Response, jsonify
 
 from api.apps import current_user, login_required
+from api.apps.extensions.rbac import require_permission, Permission
 from api.db.services.dialog_service import DialogService, async_chat
 from api.db.services.doc_metadata_service import DocMetadataService
 from api.db.services.tenant_llm_service import TenantLLMService
@@ -92,6 +93,7 @@ def _build_sse_response(body):
 
 @manager.route("/openai/<chat_id>/chat/completions", methods=["POST"])  # noqa: F821
 @login_required
+@require_permission(Permission.CHAT_USE)
 @validate_request("model", "messages")
 async def openai_chat_completions(chat_id):
     req = await get_request_json()
