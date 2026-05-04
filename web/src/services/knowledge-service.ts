@@ -299,25 +299,6 @@ export const webCrawlDocument = async (
   return response.data;
 };
 
-export const createDocument = async (datasetId: string, name: string) => {
-  const response = await request.post(api.documentCreate(datasetId), {
-    data: { name },
-  });
-  return response.data;
-};
-
-export const webCrawlDocument = async (
-  datasetId: string,
-  formData: FormData,
-) => {
-  const response = await axios.post(api.webCrawl(datasetId), formData, {
-    headers: {
-      [Authorization]: getAuthorization(),
-    },
-  });
-  return response.data;
-};
-
 export const renameDocument = (
   datasetId: string,
   documentId: string,
