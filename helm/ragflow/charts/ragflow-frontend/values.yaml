@@ -1,0 +1,32 @@
+# Frontend — defaults. See umbrella values.yaml for actual overrides.
+
+replicas: 2
+
+image:
+  repository: harbor.cyllene.local/ragflow/ragflow
+  tag: cyllene-1.0.0
+  pullPolicy: IfNotPresent
+
+# Tiny — nginx serves static files, doesn't proxy.
+resources:
+  requests:
+    cpu: 50m
+    memory: 64Mi
+  limits:
+    cpu: 200m
+    memory: 256Mi
+
+service:
+  type: ClusterIP
+  port: 80
+  targetPort: 80
+
+probes:
+  liveness:
+    path: /
+    initialDelaySeconds: 5
+    periodSeconds: 10
+  readiness:
+    path: /
+    initialDelaySeconds: 2
+    periodSeconds: 5

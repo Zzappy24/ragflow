@@ -1,0 +1,70 @@
+# nginx config — serves the vite bundle from /ragflow/web/dist and proxies
+# /api and /v1 to the ragflow-api Service. Single-page-app fallback to
+# index.html on unknown routes (React Router takes over).
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: {{ include "ragflow-frontend.fullname" . }}-nginx
+  labels:
+    {{- include "ragflow-frontend.labels" . | nindent 4 }}
+data:
+  # Filename matters: the upstream RAGFlow image's nginx.conf has a
+  # hardcoded `include /etc/nginx/conf.d/ragflow.conf;` (not a wildcard),
+  # so renaming this to default.conf produces "ragflow.conf not found".
+  ragflow.conf: |
+    upstream ragflow_api {
+      server {{ .Release.Name }}-api.{{ .Release.Namespace }}.svc.cluster.local:80;
+      keepalive 32;
+    }
+
+    server {
+      listen 80;
+      server_name _;
+      root /ragflow/web/dist;
+      index index.html;
+
+      # SPA fallback — let React Router handle unknown paths.
+      location / {
+        try_files $uri $uri/ /index.html;
+        add_header Cache-Control "no-cache, no-store, must-revalidate";
+      }
+
+      # Hashed assets (vite emits content-hashed filenames) cached forever.
+      location ~* \.(js|css|woff2?|ttf|eot|svg|png|jpg|jpeg|gif|ico)$ {
+        expires 1y;
+        add_header Cache-Control "public, immutable";
+        try_files $uri =404;
+      }
+
+      # Forward backend calls to ragflow-api Service. Keep buffering off
+      # for the streaming endpoints (chat completions SSE, agent run).
+      location /api/ {
+        proxy_pass http://ragflow_api;
+        proxy_http_version 1.1;
+        proxy_set_header Host $host;
+        proxy_set_header X-Real-IP $remote_addr;
+        proxy_set_header X-Forwarded-For $proxy_add_x_forwarded_for;
+        proxy_set_header X-Forwarded-Proto $scheme;
+        proxy_set_header Connection "";
+        proxy_read_timeout 600s;
+        proxy_buffering off;
+        chunked_transfer_encoding on;
+      }
+
+      location /v1/ {
+        proxy_pass http://ragflow_api;
+        proxy_http_version 1.1;
+        proxy_set_header Host $host;
+        proxy_set_header X-Real-IP $remote_addr;
+        proxy_set_header X-Forwarded-For $proxy_add_x_forwarded_for;
+        proxy_set_header X-Forwarded-Proto $scheme;
+        proxy_read_timeout 600s;
+        proxy_buffering off;
+      }
+
+      # Health endpoint for kubelet probes.
+      location = /healthz {
+        access_log off;
+        return 200 'ok';
+      }
+    }

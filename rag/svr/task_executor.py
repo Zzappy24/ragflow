@@ -136,6 +136,9 @@ _TOC_EXECUTOR = concurrent.futures.ThreadPoolExecutor(max_workers=2)
 
 # CUSTOM PERF: raised defaults for K8s deployment — pods scale horizontally, no artificial cap
 MAX_CONCURRENT_TASKS = int(os.environ.get('WORKER_MAX_TASKS', "16"))
+# CUSTOM B2B SaaS — K8s heartbeat + recycle live in a sibling module so
+# upstream merges only see this single import line. See _k8s_runtime.py.
+from rag.svr._k8s_runtime import touch_heartbeat, should_recycle  # noqa: E402
 MAX_CONCURRENT_CHUNK_BUILDERS = int(os.environ.get('MAX_CONCURRENT_CHUNK_BUILDERS', "4"))  # CUSTOM PERF: upstream default was 1
 MAX_CONCURRENT_MINIO = int(os.environ.get('MAX_CONCURRENT_MINIO', '10'))
 task_limiter = asyncio.Semaphore(MAX_CONCURRENT_TASKS)
@@ -1618,6 +1621,12 @@ async def report_status():
                 logging.warning(f"Failed to clean other executors: {e}")
             finally:
                 redis_lock.release()
+
+        # CUSTOM B2B SaaS — K8s liveness heartbeat + worker recycle.
+        touch_heartbeat(now_ts)
+        if should_recycle(DONE_TASKS, FAILED_TASKS):
+            stop_event.set()
+
         await asyncio.sleep(30)
 
 

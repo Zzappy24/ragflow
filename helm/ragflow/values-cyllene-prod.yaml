@@ -1,0 +1,57 @@
+# =============================================================================
+#  Cyllene production overrides — alterai-prod cluster (RKE2 + odiso.net)
+# -----------------------------------------------------------------------------
+#  This file holds ONLY the deltas vs values.yaml. Read both together.
+# =============================================================================
+
+global:
+  imageTag: "cyllene-1.0.0"   # Pin per-release. Bump on each chart release.
+  hostname: "ragflow.alterai.cyllene.com"
+
+# Phase 0 sizing — Bodemer launch (≤ 200 simultaneous users).
+# When we add the 2nd customer, bump these in values-cyllene-prod.yaml only.
+ragflow-api:
+  replicas: 4
+  hpa:
+    minReplicas: 4
+    maxReplicas: 12             # raise to 30 in Phase 2 (5000 users)
+
+ragflow-task-executor:
+  replicas: 2
+  keda:
+    minReplicas: 2
+    maxReplicas: 8              # raise to 20 in Phase 2
+
+mariadb:
+  storage: "50Gi"               # ~10× the upstream POC for audit trail headroom
+  replicas: 3                   # Galera HA from day 1 — 1 client × downtime is bad
+
+redis:
+  storage: "10Gi"
+
+minio:
+  servers: 4
+  volumesPerServer: 1
+  size: "200Gi"                 # 800 GiB raw, ~600 GiB usable post EC
+
+infinity:
+  storage: "100Gi"
+
+# vLLM is shared with the rest of the platform (ns `vllm-rag`); these URLs
+# are the agreed contract with the AI infra team. Confirm before flipping
+# values-cyllene-prod live.
+vllm:
+  chatBaseUrl: "http://vllm-chat.vllm-rag.svc.cluster.local:8000/v1"
+  embedBaseUrl: "http://vllm-embed.vllm-rag.svc.cluster.local:8000/v1"
+  rerankBaseUrl: "http://vllm-rerank.vllm-rag.svc.cluster.local:8000/v1"
+  chatModel: "meta-llama/Llama-3.3-70B-Instruct-FP8"
+  embedModel: "BAAI/bge-m3"
+  rerankModel: "BAAI/bge-reranker-v2-m3"
+
+externalSecrets:
+  clusterSecretStore: "vault-cyllene"
+  vaultPathPrefix: "secret/data/ragflow/cyllene-prod"
+
+monitoring:
+  serviceMonitor:
+    namespace: "monitoring"     # the cluster's existing prom-operator ns

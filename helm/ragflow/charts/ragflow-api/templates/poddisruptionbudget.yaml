@@ -1,0 +1,15 @@
+{{- if gt (int .Values.replicas) 1 }}
+apiVersion: policy/v1
+kind: PodDisruptionBudget
+metadata:
+  name: {{ include "ragflow-api.fullname" . }}
+  labels:
+    {{- include "ragflow-api.labels" . | nindent 4 }}
+spec:
+  # Always keep at least 1 pod up during voluntary disruptions (node drain,
+  # cluster upgrade, eviction). Without this a single replica can go to zero.
+  minAvailable: 1
+  selector:
+    matchLabels:
+      {{- include "ragflow-api.selectorLabels" . | nindent 6 }}
+{{- end }}

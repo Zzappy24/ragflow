@@ -1,0 +1,34 @@
+apiVersion: v2
+name: ragflow
+description: |
+  RAGFlow multi-tenant SaaS — umbrella chart for the Cyllene fork.
+  Bundles ragflow-api / ragflow-task-executor / ragflow-frontend sub-charts,
+  plus the Custom Resources consumed by mariadb-operator, redis-operator,
+  minio-operator, and KEDA. Designed for the Cyllene `alterai-prod` cluster
+  (RKE2 + Envoy Gateway + Calico + rook-ceph-block + Vault via ExternalSecrets).
+type: application
+version: 1.0.0
+appVersion: "cyllene-1.0.0"
+
+# Sub-charts live under charts/ and are versioned independently. They're not
+# pulled from a remote repo (`repository:` omitted) — the umbrella copies
+# them on `helm package`. Keeps the multi-tenant code we own in one repo.
+dependencies:
+  - name: ragflow-api
+    version: 1.0.0
+  - name: ragflow-task-executor
+    version: 1.0.0
+  - name: ragflow-frontend
+    version: 1.0.0
+
+maintainers:
+  - name: Cyllene RAG Team
+    email: rag@groupe-cyllene.com
+
+keywords:
+  - rag
+  - multi-tenant
+  - saas
+  - llm
+  - vllm
+  - cyllene

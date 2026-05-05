@@ -1,0 +1,10 @@
+apiVersion: v2
+name: ragflow-api
+description: |
+  Stateless Quart/hypercorn API for the Cyllene RAGFlow fork.
+  Each pod runs N hypercorn workers (configurable via global.hypercornWorkers).
+  Horizontally scaled by HPA (CPU+memory). Multi-tenant: workspace context
+  resolved per-request from the X-Workspace-Id header.
+type: application
+version: 1.0.0
+appVersion: "cyllene-1.0.0"

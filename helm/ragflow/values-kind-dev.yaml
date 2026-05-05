@@ -1,0 +1,126 @@
+# =============================================================================
+#  Local kind-dev overrides — minimal sizing for laptop-class testing.
+# -----------------------------------------------------------------------------
+#  Trade-offs vs values-cyllene-prod.yaml:
+#    - 1 replica everywhere → no HA, no Galera quorum, no Sentinel failover
+#    - kindnet CNI → NetworkPolicies disabled (kindnet does not enforce)
+#    - kind local-path-provisioner → small storage, RWO only, ephemeral
+#    - No Envoy Gateway → HTTPRoute disabled, use NodePort/port-forward
+#    - Vault dev mode → secrets are dev throwaways
+#
+#  Use only with `scripts/k8s-local/up.sh`.
+# =============================================================================
+
+global:
+  # Image is loaded into kind via `kind load docker-image` — no registry.
+  imageRegistry: "localhost"
+  imageRepository: "ragflow"
+  imageTag: "kind-dev"
+  imagePullPolicy: Never              # local image, never pull from anywhere
+  imagePullSecrets: []                # no Harbor locally
+  storageClass: "standard"            # kind's default local-path-provisioner
+  # Skip the HTTPRoute by leaving gatewayName empty — see templates/gateway-httproute.yaml
+  gatewayName: ""
+  hostname: "ragflow.localtest.me"
+  env:
+    DOC_ENGINE: "infinity"
+    # LIGHTEN=1 skips loading on-disk ML models at boot (DeepDoc OCR,
+    # sentence-transformers locales, scholarly, hyppo, graspologic).
+    # The api works fine for K8s integration testing without them; the
+    # task_executor does need them — value is overridden in its sub-chart.
+    LIGHTEN: "1"
+    TZ: "Europe/Paris"
+
+# --- ragflow-api -------------------------------------------------------------
+ragflow-api:
+  replicas: 1
+  hpa:
+    enabled: false                    # 1 replica, no point in HPA
+  # Even with LIGHTEN=1 the import chain (peewee, valkey, scholarly, …) hits
+  # ~600-800 MB resident on first request. Bump limit so the api isn't
+  # OOMKilled mid-startup. In prod (with HPA) this is per-pod budget so
+  # 2Gi is fine.
+  resources:
+    requests: { cpu: 200m, memory: 512Mi }
+    limits:   { cpu: 1500m, memory: 2Gi }
+
+# --- ragflow-task-executor ---------------------------------------------------
+ragflow-task-executor:
+  replicas: 1
+  keda:
+    enabled: false                    # 1 replica, no Redis-stream scaling
+  recycleAfterTasks: 50               # smaller for visible recycle in tests
+  resources:
+    requests: { cpu: 200m, memory: 512Mi }
+    limits:   { cpu: 1500m, memory: 2Gi }
+
+# --- ragflow-frontend --------------------------------------------------------
+ragflow-frontend:
+  replicas: 1
+  service:
+    type: NodePort                    # so `kubectl port-forward` is optional
+    nodePort: 30080
+  resources:
+    requests: { cpu: 50m, memory: 64Mi }
+    limits:   { cpu: 200m, memory: 128Mi }
+
+# --- mariadb -----------------------------------------------------------------
+mariadb:
+  replicas: 1
+  galera: false                       # Galera needs ≥3 nodes
+  storage: "2Gi"
+  resources:
+    requests: { cpu: 100m, memory: 512Mi }
+    limits:   { cpu: 1000m, memory: 1Gi }
+
+# --- redis -------------------------------------------------------------------
+redis:
+  masterReplicas: 1
+  slaveReplicas: 0                    # no slaves, no sentinel
+  sentinelReplicas: 0
+  storage: "1Gi"
+  resources:
+    requests: { cpu: 50m, memory: 128Mi }
+    limits:   { cpu: 500m, memory: 512Mi }
+
+# --- minio -------------------------------------------------------------------
+minio:
+  servers: 1                          # operator allows servers=1 for dev
+  volumesPerServer: 1
+  size: "2Gi"
+  resources:
+    requests: { cpu: 100m, memory: 256Mi }
+    limits:   { cpu: 1000m, memory: 1Gi }
+
+# --- infinity ----------------------------------------------------------------
+infinity:
+  replicas: 1
+  storage: "5Gi"
+  resources:
+    requests: { cpu: 200m, memory: 512Mi }
+    limits:   { cpu: 2000m, memory: 4Gi }
+
+# --- vLLM (no GPU locally — point at a non-existent svc; chat just won't work) -
+vllm:
+  chatBaseUrl: "http://localhost:0/v1"
+  embedBaseUrl: "http://localhost:0/v1"
+  rerankBaseUrl: "http://localhost:0/v1"
+
+# --- external secrets --------------------------------------------------------
+externalSecrets:
+  enabled: true
+  clusterSecretStore: "vault-cyllene"
+  vaultPathPrefix: "secret/data/ragflow/cyllene-prod"
+
+# --- networking --------------------------------------------------------------
+# kindnet does not enforce NetworkPolicies. Disable to avoid clutter in
+# `kubectl get netpol` and to make sure nothing accidentally blocks pods.
+networkPolicy:
+  enabled: false
+
+# --- monitoring --------------------------------------------------------------
+monitoring:
+  serviceMonitor:
+    enabled: false                    # no prometheus-operator locally
+  dashboards:
+    enabled: false

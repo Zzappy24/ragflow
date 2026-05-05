@@ -1,0 +1,83 @@
+# HTTPRoute — Gateway API (Envoy Gateway is the Cyllene cluster ingress).
+#
+# We do NOT create the Gateway here: a cluster-wide Gateway already exists
+# in `envoy-gateway-system` (handled by the Cyllene infra team, with TLS
+# certs auto-issued by cert-manager). We just attach a route via
+# `parentRefs` and matching `hostnames`.
+#
+# If a future install needs its own Gateway, set
+# `global.createOwnGateway: true` and provide a Certificate ref.
+{{- if .Values.global.gatewayName }}
+apiVersion: gateway.networking.k8s.io/v1
+kind: HTTPRoute
+metadata:
+  name: {{ .Release.Name }}-route
+  labels:
+    {{- include "ragflow.labels" . | nindent 4 }}
+spec:
+  parentRefs:
+    - name: {{ .Values.global.gatewayName }}
+      namespace: {{ .Values.global.gatewayNamespace }}
+      sectionName: https        # named listener on the Gateway (TLS terminated)
+  hostnames:
+    - {{ .Values.global.hostname | quote }}
+
+  rules:
+    # Backend API — both /api/v1/* (REST) and /v1/* (legacy SDK paths).
+    # Match in order: more specific paths first.
+    - matches:
+        - path:
+            type: PathPrefix
+            value: /api/
+        - path:
+            type: PathPrefix
+            value: /v1/
+      # Higher per-route timeout for SSE streaming (chat completions).
+      timeouts:
+        request: 600s
+      backendRefs:
+        - name: {{ .Release.Name }}-api
+          port: 80
+          weight: 100
+      # Pass the original Host header so the backend's TLS / cookie scope
+      # logic still works.
+      filters:
+        - type: RequestHeaderModifier
+          requestHeaderModifier:
+            set:
+              - name: X-Forwarded-Proto
+                value: https
+
+    # Catch-all → frontend (React SPA). MUST be the last rule because
+    # PathPrefix `/` matches everything.
+    - matches:
+        - path:
+            type: PathPrefix
+            value: /
+      backendRefs:
+        - name: {{ .Release.Name }}-frontend
+          port: 80
+          weight: 100
+
+---
+# ReferenceGrant — required by Gateway API when an HTTPRoute in namespace A
+# points at a parent Gateway in namespace B (envoy-gateway-system in our
+# case). Without it, Envoy refuses the cross-namespace attachment.
+apiVersion: gateway.networking.k8s.io/v1beta1
+kind: ReferenceGrant
+metadata:
+  name: {{ .Release.Name }}-route-from-gateway
+  namespace: {{ .Release.Namespace }}
+  labels:
+    {{- include "ragflow.labels" . | nindent 4 }}
+spec:
+  from:
+    - group: gateway.networking.k8s.io
+      kind: HTTPRoute
+      namespace: {{ .Values.global.gatewayNamespace }}
+  to:
+    - group: ""
+      kind: Service
+      # Allow the Gateway in another namespace to route to BOTH our
+      # Services (api + frontend) without naming them individually.
+{{- end }}

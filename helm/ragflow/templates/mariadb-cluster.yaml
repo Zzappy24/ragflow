@@ -1,0 +1,72 @@
+{{- if .Values.mariadb.enabled }}
+# MariaDB Operator CR — provisioned by mariadb-operator/mariadb-operator.
+# Galera 3-replica cluster: any node failure tolerated, write-anywhere.
+# Operator handles bootstrap, replication, automated backups, and TLS.
+#
+# Operator install: helm/operators/mariadb-operator (separate ArgoCD app).
+# CRD reference: https://github.com/mariadb-operator/mariadb-operator
+apiVersion: k8s.mariadb.com/v1alpha1
+kind: MariaDB
+metadata:
+  name: {{ .Release.Name }}-mariadb
+  labels:
+    {{- include "ragflow.labels" . | nindent 4 }}
+spec:
+  rootPasswordSecretKeyRef:
+    name: {{ .Values.mariadb.rootPasswordSecretRef }}
+    key: password
+
+  # Application user / database — created on first boot. peewee/RAGFlow
+  # connects with these creds (host/port/db wired via configmap-app.yaml).
+  username: ragflow
+  passwordSecretKeyRef:
+    name: {{ .Values.mariadb.databaseSecretRef }}
+    key: password
+  database: ragflow
+
+  # Galera replication — 3 nodes is the minimum for split-brain protection
+  # (quorum = 2). Bumping to 5 buys nothing for a workload our size.
+  replicas: {{ .Values.mariadb.replicas }}
+  {{- if .Values.mariadb.galera }}
+  galera:
+    enabled: true
+    sst: mariabackup        # state snapshot transfer — faster than rsync on TB-scale
+    replicaThreads: 4
+  {{- end }}
+
+  storage:
+    size: {{ .Values.mariadb.storage }}
+    storageClassName: {{ .Values.global.storageClass | quote }}
+
+  # Server config tuned for RAGFlow's profile: many small connections from
+  # api pods + a handful of long-running ones from task_executor.
+  myCnf: |
+    [mysqld]
+    bind-address = 0.0.0.0
+    default_storage_engine = InnoDB
+    innodb_buffer_pool_size = 1G
+    max_connections = 500
+    transaction-isolation = READ-COMMITTED
+    binlog_format = ROW
+    # peewee uses utf8mb4 — ensure DB defaults match.
+    character-set-server = utf8mb4
+    collation-server = utf8mb4_unicode_ci
+
+  resources:
+    {{- toYaml .Values.mariadb.resources | nindent 4 }}
+
+  {{- if .Values.mariadb.metrics }}
+  # Prometheus exporter sidecar — scraped by the cluster Prometheus.
+  metrics:
+    enabled: true
+    serviceMonitor:
+      enabled: true
+      interval: 30s
+  {{- end }}
+
+  # Connection pooling sidecar — MaxScale would be even better but adds an
+  # operator. The built-in `connection` lets ragflow-api hit a stable
+  # endpoint while Galera nodes come/go.
+  podDisruptionBudget:
+    maxUnavailable: 1
+{{- end }}

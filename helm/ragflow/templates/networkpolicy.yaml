@@ -1,0 +1,228 @@
+{{- if .Values.networkPolicy.enabled }}
+# NetworkPolicy — Calico is the cluster CNI. Pattern is "default deny" +
+# explicit allows. Five distinct policies because K8s NetworkPolicy doesn't
+# have a single "deny-all" object: deny is implicit when a pod is selected
+# by ANY policy that doesn't list its peer.
+#
+# Order of policies below mirrors the data-flow:
+#   1. default-deny (everything in the ns is dropped unless allowed below)
+#   2. dns (every pod needs CoreDNS)
+#   3. gateway → frontend / api (from envoy-gateway-system)
+#   4. api / task-executor → stateful services in this ns
+#   5. api / task-executor → vLLM (separate ns) + Vault + Harbor
+# ============================================================================
+
+# 1. Default deny — selects all pods, lists no allowed peers, so the
+#    implicit "deny what's not listed" rule kicks in for ingress + egress.
+apiVersion: networking.k8s.io/v1
+kind: NetworkPolicy
+metadata:
+  name: {{ .Release.Name }}-default-deny
+  labels:
+    {{- include "ragflow.labels" . | nindent 4 }}
+spec:
+  podSelector: {}
+  policyTypes: [Ingress, Egress]
+
+---
+# 2. DNS — every pod needs to resolve service names. CoreDNS lives in
+#    kube-system on UDP/TCP 53.
+apiVersion: networking.k8s.io/v1
+kind: NetworkPolicy
+metadata:
+  name: {{ .Release.Name }}-allow-dns
+  labels:
+    {{- include "ragflow.labels" . | nindent 4 }}
+spec:
+  podSelector: {}
+  policyTypes: [Egress]
+  egress:
+    - to:
+        - namespaceSelector:
+            matchLabels:
+              kubernetes.io/metadata.name: kube-system
+          podSelector:
+            matchLabels:
+              k8s-app: kube-dns
+      ports:
+        - protocol: UDP
+          port: 53
+        - protocol: TCP
+          port: 53
+
+---
+# 3. Gateway → frontend + api (port 80 each).
+apiVersion: networking.k8s.io/v1
+kind: NetworkPolicy
+metadata:
+  name: {{ .Release.Name }}-allow-gateway-to-frontend
+  labels:
+    {{- include "ragflow.labels" . | nindent 4 }}
+spec:
+  podSelector:
+    matchLabels:
+      app.kubernetes.io/name: ragflow-frontend
+      app.kubernetes.io/instance: {{ .Release.Name }}
+  policyTypes: [Ingress]
+  ingress:
+    - from:
+        {{- toYaml .Values.networkPolicy.apiAllowedFrom | nindent 8 }}
+      ports:
+        - protocol: TCP
+          port: 80
+
+---
+apiVersion: networking.k8s.io/v1
+kind: NetworkPolicy
+metadata:
+  name: {{ .Release.Name }}-allow-gateway-to-api
+  labels:
+    {{- include "ragflow.labels" . | nindent 4 }}
+spec:
+  podSelector:
+    matchLabels:
+      app.kubernetes.io/name: ragflow-api
+      app.kubernetes.io/instance: {{ .Release.Name }}
+  policyTypes: [Ingress]
+  ingress:
+    # Gateway plus the frontend pod itself (nginx proxies /api → api Service).
+    - from:
+        {{- toYaml .Values.networkPolicy.apiAllowedFrom | nindent 8 }}
+        - podSelector:
+            matchLabels:
+              app.kubernetes.io/name: ragflow-frontend
+              app.kubernetes.io/instance: {{ .Release.Name }}
+      ports:
+        - protocol: TCP
+          port: 80
+
+---
+# 4a. api → MariaDB + Redis + MinIO + Infinity (all in this ns).
+apiVersion: networking.k8s.io/v1
+kind: NetworkPolicy
+metadata:
+  name: {{ .Release.Name }}-allow-api-to-stateful
+  labels:
+    {{- include "ragflow.labels" . | nindent 4 }}
+spec:
+  podSelector:
+    matchExpressions:
+      - key: app.kubernetes.io/name
+        operator: In
+        values: [ragflow-api, ragflow-task-executor]
+  policyTypes: [Egress]
+  egress:
+    # MariaDB
+    - to:
+        - podSelector:
+            matchLabels:
+              app.kubernetes.io/name: mariadb
+      ports: [{ protocol: TCP, port: 3306 }]
+    # Redis (master + sentinel)
+    - to:
+        - podSelector:
+            matchLabels:
+              redis_setup_type: cluster        # OT-Container-Kit label
+      ports:
+        - { protocol: TCP, port: 6379 }
+        - { protocol: TCP, port: 26379 }
+    # MinIO
+    - to:
+        - podSelector:
+            matchLabels:
+              v1.min.io/tenant: minio
+      ports: [{ protocol: TCP, port: 9000 }]
+    # Infinity (custom StatefulSet) — three protocols.
+    - to:
+        - podSelector:
+            matchLabels:
+              app.kubernetes.io/component: infinity
+              app.kubernetes.io/instance: {{ .Release.Name }}
+      ports:
+        - { protocol: TCP, port: 23817 }
+        - { protocol: TCP, port: 23820 }
+        - { protocol: TCP, port: 5432 }
+
+---
+# 4b. Stateful services accept traffic from api + task-executor only
+#     (no other pods in this ns / cluster should reach MariaDB directly).
+apiVersion: networking.k8s.io/v1
+kind: NetworkPolicy
+metadata:
+  name: {{ .Release.Name }}-allow-stateful-from-app
+  labels:
+    {{- include "ragflow.labels" . | nindent 4 }}
+spec:
+  podSelector:
+    matchExpressions:
+      - key: app.kubernetes.io/name
+        operator: In
+        values: [mariadb, redis, minio]
+      # Infinity is matched separately because its label scheme differs
+      # (we set component=infinity, not name=infinity).
+  policyTypes: [Ingress]
+  ingress:
+    - from:
+        - podSelector:
+            matchExpressions:
+              - key: app.kubernetes.io/name
+                operator: In
+                values: [ragflow-api, ragflow-task-executor]
+
+---
+apiVersion: networking.k8s.io/v1
+kind: NetworkPolicy
+metadata:
+  name: {{ .Release.Name }}-allow-infinity-from-app
+  labels:
+    {{- include "ragflow.labels" . | nindent 4 }}
+spec:
+  podSelector:
+    matchLabels:
+      app.kubernetes.io/component: infinity
+      app.kubernetes.io/instance: {{ .Release.Name }}
+  policyTypes: [Ingress]
+  ingress:
+    - from:
+        - podSelector:
+            matchExpressions:
+              - key: app.kubernetes.io/name
+                operator: In
+                values: [ragflow-api, ragflow-task-executor]
+
+---
+# 5. Egress to external dependencies (vLLM in another ns, Vault, Harbor).
+#    Calico evaluates these together with the stateful egress above —
+#    the union is what's allowed.
+apiVersion: networking.k8s.io/v1
+kind: NetworkPolicy
+metadata:
+  name: {{ .Release.Name }}-allow-external-egress
+  labels:
+    {{- include "ragflow.labels" . | nindent 4 }}
+spec:
+  podSelector:
+    matchExpressions:
+      - key: app.kubernetes.io/name
+        operator: In
+        values: [ragflow-api, ragflow-task-executor]
+  policyTypes: [Egress]
+  egress:
+    # vLLM — chat / embed / rerank servers. Namespace label depends on
+    # what AI infra team labels their ns; defaulting to a name match.
+    - to:
+        - namespaceSelector:
+            matchLabels:
+              kubernetes.io/metadata.name: vllm-rag
+      ports:
+        - { protocol: TCP, port: 8000 }
+    # Harbor (image pulls — only needed if the image isn't already cached
+    # on the node, kubelet handles this not the pod, but listing it for
+    # completeness if we ever add an in-pod docker pull workflow).
+    - to:
+        - namespaceSelector:
+            matchLabels:
+              kubernetes.io/metadata.name: goharbor
+      ports:
+        - { protocol: TCP, port: 443 }
+{{- end }}

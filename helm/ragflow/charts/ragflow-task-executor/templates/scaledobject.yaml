@@ -1,0 +1,79 @@
+{{- if .Values.keda.enabled }}
+# KEDA ScaledObject — drives the task-executor Deployment's replica count
+# from the Redis stream's pending-entries count.
+#
+# Why redis-streams (not `redis` LLEN): RAGFlow uses XADD/XREADGROUP, the
+# `redis` scaler operates on plain LISTs. The right scaler for our setup is
+# `redis-streams` which reads PEL (Pending Entries List) length per consumer
+# group — that's the true "unstarted work" signal.
+#
+# Threshold = 10: KEDA targets pendingEntriesCount/threshold = pods. So 10
+# pending tasks → 1 pod, 100 → 10 pods, etc. With minReplicas=4 and a 5 min
+# cooldown the cluster won't churn pods under bursty traffic.
+apiVersion: keda.sh/v1alpha1
+kind: ScaledObject
+metadata:
+  name: {{ include "ragflow-task-executor.fullname" . }}
+  labels:
+    {{- include "ragflow-task-executor.labels" . | nindent 4 }}
+spec:
+  scaleTargetRef:
+    name: {{ include "ragflow-task-executor.fullname" . }}
+  pollingInterval: {{ .Values.keda.pollingInterval }}
+  cooldownPeriod: {{ .Values.keda.cooldownPeriod }}
+  minReplicaCount: {{ .Values.keda.minReplicas }}
+  maxReplicaCount: {{ .Values.keda.maxReplicas }}
+  # 5min stabilization window mirrored on the underlying HPA — keep it in
+  # sync with cooldownPeriod above to avoid contradictory signals.
+  advanced:
+    horizontalPodAutoscalerConfig:
+      behavior:
+        scaleDown:
+          stabilizationWindowSeconds: 300
+          policies:
+            - type: Percent
+              value: 50
+              periodSeconds: 60
+        scaleUp:
+          stabilizationWindowSeconds: 0
+          policies:
+            - type: Percent
+              value: 100
+              periodSeconds: 30
+            - type: Pods
+              value: 4
+              periodSeconds: 30
+          selectPolicy: Max
+  # One trigger per Redis stream (priority 1 + priority 0). KEDA's
+  # selectPolicy=Max in advanced.behavior picks the highest desired replica
+  # count across triggers, so the busier queue drives scaling.
+  triggers:
+    {{- range .Values.keda.redisStreams }}
+    - type: redis-streams
+      metadata:
+        # addressFromEnv reads $REDIS_ADDRESS at trigger time — populated
+        # in the ConfigMap by REDIS_HOST + REDIS_PORT joined. Auth is
+        # handled by the TriggerAuthentication below (Vault Secret).
+        addressFromEnv: REDIS_ADDRESS
+        stream: {{ . | quote }}
+        consumerGroup: {{ $.Values.keda.redisConsumerGroup | quote }}
+        pendingEntriesCount: {{ $.Values.keda.pendingEntriesThreshold | quote }}
+      authenticationRef:
+        name: {{ include "ragflow-task-executor.fullname" $ }}-redis-auth
+    {{- end }}
+---
+# TriggerAuthentication — points KEDA at the Redis password Secret created
+# by ExternalSecret (Vault). Without this KEDA tries unauthenticated AUTH
+# and Redis rejects the connection.
+apiVersion: keda.sh/v1alpha1
+kind: TriggerAuthentication
+metadata:
+  name: {{ include "ragflow-task-executor.fullname" . }}-redis-auth
+  labels:
+    {{- include "ragflow-task-executor.labels" . | nindent 4 }}
+spec:
+  secretTargetRef:
+    - parameter: password
+      name: ragflow-redis-auth
+      key: REDIS_PASSWORD
+{{- end }}

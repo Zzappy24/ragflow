@@ -1,0 +1,10 @@
+apiVersion: v2
+name: ragflow-frontend
+description: |
+  Stateless nginx serving the React/vite bundle. The bundle is built into
+  the same image as ragflow-api (the Dockerfile runs `npm run build` and
+  copies dist/ into /ragflow/web/dist), so this chart just runs nginx
+  pointing at that path.
+type: application
+version: 1.0.0
+appVersion: "cyllene-1.0.0"

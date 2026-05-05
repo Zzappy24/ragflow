@@ -233,7 +233,7 @@ git merge origin/main --no-commit   # stop before auto-commit to resolve conflic
 | `internal/handler/kb.go` — `ListKbs`, `DeleteKB` | **Keep ours** — custom workspace-scoped routes |
 | `internal/service/tenant.go` — `GetModels`/`SetModels` | **Exception: use `user.ID`** — `ListTenantDefaultModels` calls `GetInfoByUserID` which needs a real user ID |
 | `internal/service/tenant.go` — model type names | Take upstream renames (`"llm"→"chat"`, `"image2text"→"vision"`, new `"ocr"`) |
-| `rag/svr/task_executor.py` | **Keep ours** — `_embed_insert_pipelined`, `set_progress` throttle, tenant limiter release |
+| `rag/svr/task_executor.py` | **Keep ours** — `_embed_insert_pipelined`, `set_progress` throttle, tenant limiter release. Plus a 5-line K8s injection (search `CUSTOM B2B SaaS — K8s` to find both sites): an `import` line and the `touch_heartbeat` / `should_recycle` calls inside `report_status`. The actual logic lives in `rag/svr/_k8s_runtime.py` (custom file, no upstream conflicts) |
 | `rag/llm/embedding_model.py` | **Keep ours** — `np.vstack(batches)` is O(n); upstream's `np.concatenate` loop is O(n²) |
 | `api/utils/api_utils.py` | **Keep ours** — workspace tenant resolution in `token_required` |
 | `api/apps/system_app.py`, `api/apps/api_app.py` | **Keep ours** — token routes scoped to `active_tenant_id()` |

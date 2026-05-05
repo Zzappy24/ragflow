@@ -1,0 +1,106 @@
+# Non-secret runtime config consumed by ragflow-api and ragflow-task-executor.
+# Anything secret (passwords, tokens, RSA keys) goes through ExternalSecret
+# (templates/externalsecret-app.yaml) and lands in `ragflow-app-secrets`.
+#
+# Hosts use Kubernetes DNS — `<svc>.<ns>.svc.cluster.local` resolves to the
+# operator-managed Service. The operator is responsible for keeping that
+# Service in sync with the actual pods.
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: {{ .Release.Name }}-app-config
+  labels:
+    {{- include "ragflow.labels" . | nindent 4 }}
+data:
+  # --- core ----------------------------------------------------------------
+  DOC_ENGINE: {{ .Values.global.env.DOC_ENGINE | quote }}
+  LIGHTEN: {{ .Values.global.env.LIGHTEN | default "0" | quote }}
+  TZ: {{ .Values.global.env.TZ | default "Europe/Paris" | quote }}
+
+  # --- MariaDB (mariadb-operator) ------------------------------------------
+  # Operator publishes a Service named exactly after the MariaDB CR
+  # (`<MariaDB.metadata.name>`). Galera primary writes go to this Service;
+  # `<name>-internal` is the headless Service for replica discovery.
+  MYSQL_HOST: "{{ .Release.Name }}-mariadb.{{ .Release.Namespace }}.svc.cluster.local"
+  MYSQL_PORT: "3306"
+  MYSQL_DBNAME: "ragflow"
+  MYSQL_USER: "ragflow"
+  # MYSQL_PASSWORD comes from ragflow-app-secrets (Vault)
+
+  # --- Redis (redis-operator OT) -------------------------------------------
+  # OT operator publishes Services named `<RedisReplication.metadata.name>`
+  # (primary writes), `-additional` (replica reads), `-headless` (peer
+  # discovery). We use the writable primary endpoint.
+  REDIS_HOST: "{{ .Release.Name }}-redis.{{ .Release.Namespace }}.svc.cluster.local"
+  REDIS_PORT: "6379"
+  # KEDA's redis-streams scaler reads $REDIS_ADDRESS in host:port form.
+  REDIS_ADDRESS: "{{ .Release.Name }}-redis.{{ .Release.Namespace }}.svc.cluster.local:6379"
+  # REDIS_PASSWORD comes from ragflow-app-secrets (Vault)
+
+  # --- MinIO (minio-operator) ----------------------------------------------
+  MINIO_HOST: "minio.{{ .Release.Namespace }}.svc.cluster.local:9000"
+  MINIO_USE_SSL: "false"
+  # MINIO_USER + MINIO_PASSWORD come from ragflow-app-secrets
+
+  # --- Infinity (custom StatefulSet) ---------------------------------------
+  INFINITY_HOST: "{{ .Release.Name }}-infinity.{{ .Release.Namespace }}.svc.cluster.local"
+  INFINITY_THRIFT_PORT: "23817"
+  INFINITY_HTTP_PORT: "23820"
+  INFINITY_PSQL_PORT: "5432"
+
+  # --- vLLM (external service, not deployed by this chart) -----------------
+  # Pointed at by tenant_llm_service when a workspace selects the cluster
+  # default model.
+  VLLM_CHAT_BASE_URL: {{ .Values.vllm.chatBaseUrl | quote }}
+  VLLM_EMBED_BASE_URL: {{ .Values.vllm.embedBaseUrl | quote }}
+  VLLM_RERANK_BASE_URL: {{ .Values.vllm.rerankBaseUrl | quote }}
+  VLLM_CHAT_MODEL: {{ .Values.vllm.chatModel | quote }}
+  VLLM_EMBED_MODEL: {{ .Values.vllm.embedModel | quote }}
+  VLLM_RERANK_MODEL: {{ .Values.vllm.rerankModel | quote }}
+
+  # --- pool sizes (see CLAUDE.md project_k8s_env_vars memo) ----------------
+  DB_POOL_SIZE: "16"
+  REDIS_POOL_SIZE: "32"
+  EMBEDDING_BATCH_SIZE: "512"
+  DOC_BULK_SIZE: "128"
+  INFINITY_POOL_SIZE: "0"        # 0 = auto-size from WORKER_MAX_TASKS
+
+  # --- service_conf.yaml template ------------------------------------------
+  # RAGFlow's Python config does NOT read MYSQL_HOST/REDIS_HOST/etc. env vars
+  # — it reads conf/service_conf.yaml (hardcoded `localhost` defaults) plus
+  # an optional conf/local.service_conf.yaml overlay. We render that overlay
+  # from this template via envsubst in an initContainer (see deployment.yaml
+  # of api + task-executor sub-charts).
+  service_conf.yaml.template: |
+    ragflow:
+      host: 0.0.0.0
+      http_port: 9380
+    admin:
+      host: 0.0.0.0
+      http_port: 9381
+    mysql:
+      name: ragflow
+      user: ragflow
+      password: ${MYSQL_PASSWORD}
+      host: {{ .Release.Name }}-mariadb.{{ .Release.Namespace }}.svc.cluster.local
+      port: 3306
+      max_connections: 900
+      stale_timeout: 300
+      max_allowed_packet: 1073741824
+    minio:
+      user: ${MINIO_USER}
+      password: ${MINIO_PASSWORD}
+      host: minio.{{ .Release.Namespace }}.svc.cluster.local:9000
+      bucket: ragflow-storage
+      prefix_path: ''
+    redis:
+      # Format expected by rag/utils/redis_conn.py: "host:port" in a single
+      # string. Splitting on `:` gives the parts; setting host without port
+      # makes `.split(":")[1]` IndexError → REDIS stays None silently.
+      host: {{ .Release.Name }}-redis.{{ .Release.Namespace }}.svc.cluster.local:6379
+      password: ${REDIS_PASSWORD}
+      db: 1
+    infinity:
+      uri: {{ .Release.Name }}-infinity.{{ .Release.Namespace }}.svc.cluster.local:23817
+      postgres_port: 5432
+      db_name: default_db

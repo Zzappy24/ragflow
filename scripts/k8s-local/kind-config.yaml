@@ -1,0 +1,32 @@
+kind: Cluster
+apiVersion: kind.x-k8s.io/v1alpha4
+name: ragflow-local
+# Single node — control-plane is also a worker. We don't need HA for
+# local testing and an extra node would just eat ~1 GB more RAM.
+nodes:
+  - role: control-plane
+    # Expose the Envoy Gateway (port 8443) and a debug NodePort range so
+    # we can curl the API + frontend without going through Gateway API.
+    extraPortMappings:
+      - containerPort: 30080      # frontend (NodePort)
+        hostPort: 9080
+        protocol: TCP
+      - containerPort: 30090      # api direct (NodePort, bypasses frontend)
+        hostPort: 9081
+        protocol: TCP
+    kubeadmConfigPatches:
+      # Label the node so podAntiAffinity in our chart resolves cleanly
+      # (it relies on `kubernetes.io/hostname` which is set by default).
+      - |
+        kind: InitConfiguration
+        nodeRegistration:
+          kubeletExtraArgs:
+            node-labels: "ingress-ready=true"
+# Resource requests in pods are honoured but the kubelet on a kind node
+# doesn't enforce limits as strictly as a real kubelet. The Podman VM
+# memory cap (`podman machine set --memory 8192`) is the real bottleneck.
+networking:
+  # Disable the default CNI; we'll let kindnet stay (faster than Calico
+  # for local). NetworkPolicies are disabled in values-kind-dev.yaml so
+  # this doesn't matter functionally.
+  disableDefaultCNI: false
