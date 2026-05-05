@@ -31,11 +31,17 @@ spec:
       securityContext:
         {{- include "ragflow.podSecurityContext" . | nindent 8 }}
 
-      # The Infinity image runtime drops privileges to a non-root user even
-      # though Dockerfile has no USER directive — first write to
-      # /var/infinity/log/infinity.log fails with "Permission denied".
-      # Pre-create every sub-dir Infinity expects + chmod 0777 (kind dev
-      # only, prod uses rook-ceph with proper fsGroup).
+      # `infiniflow/infinity:v0.7.0-dev5` runs as root (`User=""`,
+      # `Entrypoint=/usr/bin/infinity`). On kindnet's local-path-provisioner
+      # the freshly-bound PVC was observed mounting in a state where even
+      # root couldn't open /var/infinity/log/infinity.log on first write —
+      # likely a quirk of the loopback driver. Pre-creating the dir tree
+      # with permissive bits at boot is the cheapest fix.
+      #
+      # On rook-ceph (Cyllene prod) this is a no-op: the volume is empty
+      # and root-writable. We keep the initContainer for portability.
+      # Phase 2: build a non-root Infinity image fork (USER 1001) and
+      # replace `chmod 0777` with `chown 1001:1001` here.
       initContainers:
         - name: prepare-data
           image: busybox:1.36

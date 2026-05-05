@@ -133,21 +133,24 @@ spec:
           resources:
             {{- toYaml .Values.resources | nindent 12 }}
 
-          # tcpSocket on port 9380. We can't use httpGet on /api/v1/system/version
-          # because that endpoint requires auth — kubelet sees 401 as failure
-          # since httpGet only accepts 2xx/3xx. tcpSocket just validates that
-          # hypercorn bound the port, which is the right liveness signal here.
-          # When we ship a public /healthz route in the api, switch back.
+          # /healthz + /readyz are public (no auth) — see api/asgi.py
+          # CUSTOM B2B SaaS comment.
           startupProbe:
-            tcpSocket: { port: http }
+            httpGet:
+              path: {{ .Values.probes.startup.path }}
+              port: http
             periodSeconds: {{ .Values.probes.startup.periodSeconds }}
             failureThreshold: {{ .Values.probes.startup.failureThreshold }}
           livenessProbe:
-            tcpSocket: { port: http }
+            httpGet:
+              path: {{ .Values.probes.liveness.path }}
+              port: http
             periodSeconds: {{ .Values.probes.liveness.periodSeconds }}
             failureThreshold: {{ .Values.probes.liveness.failureThreshold }}
           readinessProbe:
-            tcpSocket: { port: http }
+            httpGet:
+              path: {{ .Values.probes.readiness.path }}
+              port: http
             periodSeconds: {{ .Values.probes.readiness.periodSeconds }}
             failureThreshold: {{ .Values.probes.readiness.failureThreshold }}
 

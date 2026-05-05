@@ -205,4 +205,18 @@ RUN mv /etc/nginx/ragflow.conf.golang /etc/nginx/conf.d/ragflow.conf.golang && \
 COPY --from=builder /ragflow/web/dist /ragflow/web/dist
 
 COPY --from=builder /ragflow/VERSION /ragflow/VERSION
+
+# CUSTOM B2B SaaS — create non-root user (uid 10001) and chown the paths
+# the app + nginx write to. We do NOT issue `USER 10001` here to stay
+# backward-compatible with the upstream entrypoint.sh (which expects root
+# for nginx start in the legacy single-container mode). Selection of the
+# runtime user is delegated to the K8s pod spec via `runAsUser: 10001`,
+# enabled by `security.restricted: true` in the Helm values.
+RUN groupadd -g 10001 ragflow \
+ && useradd -u 10001 -g 10001 -m -s /bin/bash ragflow \
+ && chown -R 10001:10001 /ragflow \
+ && chown -R 10001:10001 /var/log/nginx /var/cache/nginx /var/lib/nginx 2>/dev/null || true \
+ && mkdir -p /var/run/nginx \
+ && chown -R 10001:10001 /var/run/nginx
+
 ENTRYPOINT ["./entrypoint.sh"]
