@@ -206,15 +206,16 @@ COPY --from=builder /ragflow/web/dist /ragflow/web/dist
 
 COPY --from=builder /ragflow/VERSION /ragflow/VERSION
 
-# CUSTOM B2B SaaS — create non-root user (uid 10001) and chown the paths
-# the app + nginx write to. We do NOT issue `USER 10001` here to stay
-# backward-compatible with the upstream entrypoint.sh (which expects root
-# for nginx start in the legacy single-container mode). Selection of the
-# runtime user is delegated to the K8s pod spec via `runAsUser: 10001`,
-# enabled by `security.restricted: true` in the Helm values.
+# CUSTOM B2B SaaS — create non-root user (uid 10001) for future
+# `runAsUser: 10001` adoption (Phase 2 hardening), and chown the paths
+# nginx writes to. We deliberately DO NOT chown /ragflow itself: the K8s
+# pods drop CAP_DAC_OVERRIDE via `capabilities.drop: ["ALL"]`, after
+# which root is denied write access on paths it doesn't own — chown'ing
+# /ragflow to 10001 would break tiktoken's cache write at startup. The
+# venv stays root-owned and the runtime user (root by default in the
+# upstream image) keeps full control of /ragflow.
 RUN groupadd -g 10001 ragflow \
  && useradd -u 10001 -g 10001 -m -s /bin/bash ragflow \
- && chown -R 10001:10001 /ragflow \
  && chown -R 10001:10001 /var/log/nginx /var/cache/nginx /var/lib/nginx 2>/dev/null || true \
  && mkdir -p /var/run/nginx \
  && chown -R 10001:10001 /var/run/nginx
