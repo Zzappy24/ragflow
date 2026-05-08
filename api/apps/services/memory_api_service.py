@@ -16,7 +16,6 @@
 from api.apps import current_user
 from api.db import TenantPermission
 from api.db.services.memory_service import MemoryService
-from api.db.services.user_service import UserTenantService
 from api.db.services.canvas_service import UserCanvasService
 from api.db.services.task_service import TaskService
 from api.db.joint_services.memory_message_service import get_memory_size_cache, judge_system_prompt_is_default, queue_save_to_memory_task, query_message
@@ -45,17 +44,12 @@ def _split_filter_values(values):
     return res
 
 
-def _joined_tenant_ids(user_id: str) -> set[str]:
-    user_tenants = UserTenantService.get_user_tenant_relation_by_user_id(user_id)
-    return {user_id, *[tenant["tenant_id"] for tenant in user_tenants]}
-
-
 def _memory_accessible(memory) -> bool:
-    if memory.tenant_id == current_user.id:
-        return True
-    if memory.permissions != TenantPermission.TEAM.value:
-        return False
-    return memory.tenant_id in _joined_tenant_ids(current_user.id)
+    # CUSTOM B2B SaaS: memories are STRICTLY private per user. We do not honour
+    # `permissions == "team"` — even within the same workspace, a user must not
+    # see another user's memory. Memories store `tenant_id = current_user.id`
+    # at create time (see create_memory), so equality is the only check needed.
+    return memory.tenant_id == current_user.id
 
 
 def _require_memory_access(memory_id: str):
@@ -230,15 +224,13 @@ async def list_memory(filter_params: dict, keywords: str, page: int=1, page_size
     :param page: int
     :param page_size: int
     """
-    filter_dict: dict = {"storage_type": filter_params.get("storage_type"), "accessible_user_id": current_user.id}
-    allowed_tenant_ids = _joined_tenant_ids(current_user.id)
-    tenant_ids = _split_filter_values(filter_params.get("tenant_id") or filter_params.get("owner_ids"))
-    if tenant_ids:
-        filter_dict["tenant_id"] = [tenant_id for tenant_id in tenant_ids if tenant_id in allowed_tenant_ids]
-        if not filter_dict["tenant_id"]:
-            return {"memory_list": [], "total_count": 0}
-    else:
-        filter_dict["tenant_id"] = list(allowed_tenant_ids)
+    # CUSTOM B2B SaaS: memories are private per user — scope to current user only,
+    # ignore caller-supplied tenant_id / owner_ids filters (they cannot widen access).
+    filter_dict: dict = {
+        "storage_type": filter_params.get("storage_type"),
+        "accessible_user_id": current_user.id,
+        "tenant_id": [current_user.id],
+    }
     memory_types = _split_filter_values(filter_params.get("memory_type"))
     filter_dict["memory_type"] = memory_types
 

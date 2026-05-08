@@ -61,6 +61,24 @@ func NewChunkService() *ChunkService {
 	}
 }
 
+// accessibleTenants returns the list of tenants whose KBs are reachable by
+// the caller. In workspace mode (B2B SaaS), the WorkspaceMiddleware injects
+// the active workspace tenant_id as `userID`, and `user_tenants` has no row
+// matching it — we therefore treat `userID` itself as the single accessible
+// tenant. In legacy single-user mode, we fall back to the upstream behaviour
+// of iterating over the user's joined tenants. The returned slice is never
+// empty: callers can drop the "no accessible tenants" early-exit branch.
+func (s *ChunkService) accessibleTenants(userID string) ([]*entity.UserTenant, error) {
+	tenants, err := s.userTenantDAO.GetByUserID(userID)
+	if err != nil {
+		return nil, fmt.Errorf("failed to get user tenants: %w", err)
+	}
+	if len(tenants) == 0 {
+		return []*entity.UserTenant{{TenantID: userID}}, nil
+	}
+	return tenants, nil
+}
+
 // RetrievalTestRequest retrieval test request
 type RetrievalTestRequest struct {
 	KbID                   interface{}            `json:"kb_id" binding:"required"` // string or []string
@@ -148,12 +166,9 @@ func (s *ChunkService) RetrievalTest(req *RetrievalTestRequest, userID string) (
 		return nil, fmt.Errorf("kb_id cannot be empty")
 	}
 
-	tenants, err := s.userTenantDAO.GetByUserID(userID)
+	tenants, err := s.accessibleTenants(userID)
 	if err != nil {
-		return nil, fmt.Errorf("failed to get user tenants: %w", err)
-	}
-	if len(tenants) == 0 {
-		return nil, fmt.Errorf("user has no accessible tenants")
+		return nil, err
 	}
 	common.Debug("Retrieved user tenants from database", zap.String("userID", userID), zap.Int("tenantCount", len(tenants)))
 
@@ -484,12 +499,9 @@ func (s *ChunkService) Get(req *GetChunkRequest, userID string) (*GetChunkRespon
 	ctx := context.Background()
 
 	// Get user's tenants
-	tenants, err := s.userTenantDAO.GetByUserID(userID)
+	tenants, err := s.accessibleTenants(userID)
 	if err != nil {
-		return nil, fmt.Errorf("failed to get user tenants: %w", err)
-	}
-	if len(tenants) == 0 {
-		return nil, fmt.Errorf("user has no accessible tenants")
+		return nil, err
 	}
 
 	// Try each tenant to find the chunk
@@ -591,12 +603,9 @@ func (s *ChunkService) List(req *ListChunksRequest, userID string) (*ListChunksR
 	ctx := context.Background()
 
 	// Get user's tenants
-	tenants, err := s.userTenantDAO.GetByUserID(userID)
+	tenants, err := s.accessibleTenants(userID)
 	if err != nil {
-		return nil, fmt.Errorf("failed to get user tenants: %w", err)
-	}
-	if len(tenants) == 0 {
-		return nil, fmt.Errorf("user has no accessible tenants")
+		return nil, err
 	}
 
 	// Get document to find its tenant
@@ -786,12 +795,9 @@ func (s *ChunkService) UpdateChunk(req *UpdateChunkRequest, userID string) error
 	ctx := context.Background()
 
 	// Get user's tenants
-	tenants, err := s.userTenantDAO.GetByUserID(userID)
+	tenants, err := s.accessibleTenants(userID)
 	if err != nil {
-		return fmt.Errorf("failed to get user tenants: %w", err)
-	}
-	if len(tenants) == 0 {
-		return fmt.Errorf("user has no accessible tenants")
+		return err
 	}
 
 	// Find the tenant that owns this dataset
@@ -934,12 +940,9 @@ func (s *ChunkService) RemoveChunks(req *RemoveChunksRequest, userID string) (in
 	ctx := context.Background()
 
 	// Get user's tenants
-	tenants, err := s.userTenantDAO.GetByUserID(userID)
+	tenants, err := s.accessibleTenants(userID)
 	if err != nil {
-		return 0, fmt.Errorf("failed to get user tenants: %w", err)
-	}
-	if len(tenants) == 0 {
-		return 0, fmt.Errorf("user has no accessible tenants")
+		return 0, err
 	}
 
 	// Verify document exists and belongs to a dataset (do this first to get doc.KbID)
