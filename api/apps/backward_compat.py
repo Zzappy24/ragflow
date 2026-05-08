@@ -40,6 +40,7 @@ import logging
 from quart import Blueprint, request
 
 from api.apps import login_required
+from api.apps.extensions.rbac import require_permission, Permission
 from api.apps.restful_apis import chat_api, file_api, file2document_api, chunk_api, openai_api, document_api
 from api.apps.restful_apis import agent_api
 from api.apps.services import file_api_service
@@ -247,6 +248,7 @@ async def deprecated_file_upload(tenant_id=None):
 
 @manager.route("/file/convert", methods=["POST"])
 @login_required
+@require_permission(Permission.DOCUMENT_CREATE)
 async def deprecated_file_convert():
     """
     Deprecated: Use POST /api/v1/files/link-to-datasets instead.
@@ -405,6 +407,7 @@ async def deprecated_file_upload_info():
 
 @manager.route("/document/get/<doc_id>", methods=["GET"])
 @login_required
+@require_permission(Permission.DOCUMENT_READ)
 async def deprecated_document_get(doc_id):
     """
     Deprecated: Use GET /api/v1/documents/{doc_id}/preview instead.
@@ -422,6 +425,7 @@ async def deprecated_document_get(doc_id):
 
 @manager.route("/document/download/<doc_id>", methods=["GET"])
 @login_required
+@require_permission(Permission.DOCUMENT_READ)
 async def deprecated_document_download(doc_id):
     """
     Deprecated: Use GET /api/v1/documents/{doc_id}/download instead.
@@ -439,6 +443,7 @@ async def deprecated_document_download(doc_id):
 
 @document_download_manager.route("/document/download/<attachment_id>", methods=["GET"])
 @login_required
+@require_permission(Permission.DOCUMENT_READ)
 async def document_download_v1(attachment_id):
     """
     Compatibility alias for document download under /v1.
@@ -459,6 +464,7 @@ async def document_download_v1(attachment_id):
 
 @manager.route("/agents/<agent_id>/completions", methods=["POST"])
 @login_required
+@require_permission(Permission.CHAT_USE)
 @add_tenant_id_to_kwargs
 async def deprecated_agent_completions(agent_id, tenant_id=None):
     """

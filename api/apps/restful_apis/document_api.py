@@ -1880,6 +1880,7 @@ async def batch_update_document_status(tenant_id, dataset_id):
 
 @manager.route("/documents/<doc_id>/preview", methods=["GET"])  # noqa: F821
 @login_required
+@require_permission(Permission.DOCUMENT_READ)
 async def get(doc_id):
     """Return the raw file bytes for a document the requesting user is authorized to read.
 
@@ -1913,6 +1914,7 @@ async def get(doc_id):
 
 @manager.route("/documents/<doc_id>/download", methods=["GET"])  # noqa: F821
 @login_required
+@require_permission(Permission.DOCUMENT_READ)
 @add_tenant_id_to_kwargs
 async def download_attachment(tenant_id=None, doc_id=None, attachment_id=None):
     """Stream a document's underlying file to the requesting user.

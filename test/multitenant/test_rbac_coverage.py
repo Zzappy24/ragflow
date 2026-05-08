@@ -51,6 +51,8 @@ EXEMPT_GET: set[tuple[str, str]] = {
     ("api/apps/restful_apis/system_api.py", "ping"),
     ("api/apps/restful_apis/system_api.py", "healthz"),
     ("api/apps/restful_apis/system_api.py", "get_config"),
+    # Version is in the Go server's apiNoAuth group (public by design) — match here.
+    ("api/apps/restful_apis/system_api.py", "version"),
     ("api/apps/restful_apis/user_api.py", "get_login_channels"),
     # Webhook endpoints — security via signed payload / DSL token, not session auth.
     ("api/apps/restful_apis/agent_api.py", "webhook"),

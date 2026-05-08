@@ -512,6 +512,7 @@ async def rename_tag(tenant_id, dataset_id):
 
 @manager.route("/datasets/search", methods=["POST"])  # noqa: F821
 @login_required
+@require_permission(Permission.DATASET_READ)
 @add_tenant_id_to_kwargs
 async def search_datasets(tenant_id):
     """Search (retrieval test) across multiple datasets.

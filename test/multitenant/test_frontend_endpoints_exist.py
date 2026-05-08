@@ -80,6 +80,18 @@ EXEMPT_FRONTEND_ENDPOINTS: set[str] = {
     "removeDataflow",
     "listDataflow",
     "runDataflow",
+    # /api/v1/skills/* family: served exclusively by the Go server (registered in
+    # internal/router/router.go), not the Python Flask backend that this test
+    # probes on port 9380. Probing them on the Python server is guaranteed to
+    # 404 — the routes do exist on the Go side. Frontend hits the Go server
+    # directly through its own ingress.
+    "skillSpaces",
+    "skillSpace",
+    "skillSpaceByFolder",
+    "skillConfig",
+    "skillSearch",
+    "skillIndex",
+    "skillReindex",
 }
 
 

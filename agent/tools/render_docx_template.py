@@ -184,6 +184,14 @@ def _ensure_dict(content):
             raise ValueError(
                 f"render_docx_template: `content` must decode to a JSON object, got {type(parsed).__name__}"
             )
+        # Guard against fully-malformed input that json_repair silently coerces
+        # into `{}` (e.g. "{not valid json,,,}"). When a non-trivial input shrinks
+        # to an empty dict, surface a JSON error so the agent loop can self-correct
+        # instead of rendering an empty document.
+        if not parsed and text not in ("{}", "{ }"):
+            raise json.JSONDecodeError(
+                "could not parse content as JSON object", text, 0
+            )
 
         def _clean(v):
             if isinstance(v, str):
