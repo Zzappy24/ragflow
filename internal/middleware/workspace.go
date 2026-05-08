@@ -11,9 +11,9 @@ package middleware
 
 import (
 	"net/http"
+	"ragflow/internal/common"
 	"ragflow/internal/dao"
 	"ragflow/internal/entity"
-	"ragflow/internal/logger"
 
 	"github.com/gin-gonic/gin"
 	"go.uber.org/zap"
@@ -88,7 +88,7 @@ func (m *WorkspaceMiddleware) Resolve() gin.HandlerFunc {
 
 		// Superuser bypass.
 		if user.IsSuperuser != nil && *user.IsSuperuser {
-			logger.Info("RBAC superuser bypass (Go)",
+			common.Info("RBAC superuser bypass (Go)",
 				zap.String("user_id", user.ID),
 				zap.String("workspace_id", wsID),
 				zap.String("tenant_id", ws.TenantID),
@@ -101,7 +101,7 @@ func (m *WorkspaceMiddleware) Resolve() gin.HandlerFunc {
 
 		// Org-admin bypass.
 		if m.wsDAO.IsOrgAdmin(ws.OrgID, user.ID) {
-			logger.Info("RBAC org_admin bypass (Go)",
+			common.Info("RBAC org_admin bypass (Go)",
 				zap.String("user_id", user.ID),
 				zap.String("org_id", ws.OrgID),
 				zap.String("workspace_id", wsID),

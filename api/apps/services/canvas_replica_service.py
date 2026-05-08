@@ -182,11 +182,11 @@ class CanvasReplicaService:
 
     @classmethod
     def load_for_run(cls, canvas_id: str, tenant_id: str, runtime_user_id: str):
-        """Load current runtime replica used by /completion.
+        """Load current runtime replica used by /completions.
 
         Compares the replica's DSL fingerprint against the MySQL canonical
         copy. On mismatch the replica is dropped and `None` is returned —
-        the caller (agent_api.completion) then re-bootstraps from MySQL,
+        the caller (agent_api.completions) then re-bootstraps from MySQL,
         guaranteeing that any out-of-band DSL edit (UI save, SQL migration,
         version restore) reaches the runtime without manual cache flush.
         """

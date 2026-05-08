@@ -96,8 +96,8 @@ app.config["SESSION_COOKIE_SECURE"] = os.environ.get("COOKIE_SECURE", "true").lo
 app.config["MAX_CONTENT_LENGTH"] = int(
     os.environ.get("MAX_CONTENT_LENGTH", 128 * 1024 * 1024)
 )
-app.config['SECRET_KEY'] = settings.SECRET_KEY
-app.secret_key = settings.SECRET_KEY
+app.config['SECRET_KEY'] = settings.get_secret_key()
+app.secret_key = settings.get_secret_key()
 commands.register_commands(app)
 
 
@@ -147,7 +147,7 @@ def _load_user():
         return g.user
     g._user_resolved = True
 
-    jwt = Serializer(secret_key=settings.SECRET_KEY)
+    jwt = Serializer(secret_key=settings.get_secret_key())
     authorization = request.headers.get("Authorization")
     g.user = None
     if not authorization:

@@ -185,6 +185,7 @@ def delete_search(search_id):
 
 
 @manager.route("/searches/<search_id>/completion", methods=["POST"])  # noqa: F821
+@manager.route("/searches/<search_id>/completions", methods=["POST"])  # noqa: F821
 @login_required
 @require_permission(Permission.CHAT_USE)
 @validate_request("question")
