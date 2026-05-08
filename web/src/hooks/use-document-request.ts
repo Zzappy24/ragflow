@@ -27,8 +27,7 @@ import kbService, {
   uploadDocument,
   webCrawlDocument,
 } from '@/services/knowledge-service';
-import { restAPIv1, webAPI } from '@/utils/api';
-import { getSearchValue } from '@/utils/common-util';
+import { restAPIv1 } from '@/utils/api';
 import { buildChunkHighlights } from '@/utils/document-util';
 import {
   keepPreviousData,
@@ -230,7 +229,10 @@ export const useGetDocumentFilter = (): {
     ],
     enabled: !!datasetId,
     queryFn: async () => {
-      const { data } = await documentFilter(datasetId!);
+      if (!datasetId) {
+        return;
+      }
+      const { data } = await documentFilter(datasetId);
       if (data.code === 0) {
         return data.data;
       }
@@ -515,14 +517,11 @@ export const useCreateDocument = () => {
 };
 
 export const useGetDocumentUrl = (documentId?: string) => {
-  const auth = getSearchValue('auth');
   const getDocumentUrl = useCallback(
     (id?: string) => {
-      return auth
-        ? `${restAPIv1}/documents/${id || documentId}`
-        : `${webAPI}/document/get/${id || documentId}`;
+      return `${restAPIv1}/documents/${id || documentId}/preview`;
     },
-    [documentId, auth],
+    [documentId],
   );
 
   return getDocumentUrl;

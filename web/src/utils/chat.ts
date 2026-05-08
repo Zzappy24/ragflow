@@ -56,14 +56,25 @@ const BLOCK_MATH_RE = /\\\[([\s\S]*?)(?<![a-zA-Z])\\\]/g;
 const INLINE_MATH_RE = /\\\(([\s\S]*?)(?<![a-zA-Z])\\\)/g;
 
 export const preprocessLaTeX = (content: string) => {
-  const blockProcessedContent = content.replace(
+  const normalizedContent = content
+    .replace(/\\\\\[/g, '\\[')
+    .replace(/\\\\\(/g, '\\(')
+    .replace(/\\\\\]/g, '\\]')
+    .replace(/\\\\\)/g, '\\)')
+    .replace(/&lt;/g, '<')
+    .replace(/&gt;/g, '>')
+    .replace(/&amp;/g, '&');
+
+  const blockProcessedContent = normalizedContent.replace(
     BLOCK_MATH_RE,
     (_, equation) => `$$${equation}$$`,
   );
+
   const inlineProcessedContent = blockProcessedContent.replace(
     INLINE_MATH_RE,
     (_, equation) => `$${equation}$`,
   );
+
   return inlineProcessedContent;
 };
 
@@ -71,10 +82,21 @@ export function replaceThinkToSection(text: string = '') {
   // Handle closed <think>...</think> tags
   let result = text.replace(
     /<think>([\s\S]*?)<\/think>/g,
-    '<section class="think">$1</section>',
+    '<details class="think"><summary>Thinking...</summary>$1</details>',
   );
   // Handle unclosed <think> tags (streaming in progress)
-  result = result.replace(/<think>([\s\S]*)$/, '<section class="think">$1');
+  result = result.replace(
+    /<think>([\s\S]*)$/,
+    '<details class="think" open><summary>Thinking...</summary>$1</details>',
+  );
+  return result;
+}
+
+export function replaceRetrievingToSection(text: string = '') {
+  const pattern = /<retrieving>([\s\S]*?)<\/retrieving>/g;
+
+  const result = text.replace(pattern, '<details class="retrieving"><summary>Retrieving...</summary>$1</details>');
+
   return result;
 }
 
