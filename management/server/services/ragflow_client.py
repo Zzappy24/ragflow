@@ -24,7 +24,8 @@ class RAGFlowClient:
     def health_check(self) -> bool:
         """Check if RAGFlow server is reachable."""
         try:
-            resp = httpx.get(self._url("/v1/health"), timeout=5.0)
+            # Path migrated in upstream RESTful refactor: was /v1/health.
+            resp = httpx.get(self._url("/api/v1/system/healthz"), timeout=5.0)
             return resp.status_code == 200
         except Exception:
             return False
@@ -32,7 +33,8 @@ class RAGFlowClient:
     def list_datasets(self, tenant_id: str, token: str) -> list[dict]:
         """List datasets for a tenant via RAGFlow API."""
         resp = httpx.get(
-            self._url("/v1/datasets"),
+            # Path migrated in upstream RESTful refactor: was /v1/datasets.
+            self._url("/api/v1/datasets"),
             headers={"Authorization": f"Bearer {token}"},
             timeout=self.timeout,
         )
