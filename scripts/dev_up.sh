@@ -67,8 +67,19 @@ spawn_detached /tmp/ragflow_task_executor.log uv run python rag/svr/task_executo
 echo "[dev_up] starting ragflow_server (single process, hot-reload)"
 spawn_detached /tmp/ragflow_server.log uv run python api/ragflow_server.py
 
-echo -n "[dev_up] waiting for ragflow_server :9380… "
-until curl -fsS http://localhost:9380/api/v1/system/version > /dev/null 2>&1; do sleep 2; done
+echo "[dev_up] starting ragflow frontend (Vite :9222)"
+# Kill stale vite for the main web/ folder (not management/web/).
+for pid in $(pgrep -f "vite$" 2>/dev/null); do
+  cmd=$(ps -o command= -p "$pid" 2>/dev/null || true)
+  if echo "$cmd" | grep -q "ragflow/web " || echo "$cmd" | grep -q "ragflow/web$"; then
+    kill "$pid" 2>/dev/null || true
+  fi
+done
+( trap '' INT; cd "$REPO/web" && exec nohup npm run dev > /tmp/ragflow_web.log 2>&1 ) &
+
+echo -n "[dev_up] waiting for ragflow_server :9380 + frontend :9222… "
+until curl -fsS http://localhost:9380/api/v1/system/version > /dev/null 2>&1 \
+   && curl -fsS http://localhost:9222/ > /dev/null 2>&1; do sleep 2; done
 echo "OK"
 
 # ---------------------------------------------------------------------------
@@ -114,14 +125,13 @@ fi
 # ---------------------------------------------------------------------------
 echo ""
 echo "[dev_up] ✓ stack ready"
-echo "  ragflow API   :9380   tail -f /tmp/ragflow_server.log"
-echo "  task_executor         tail -f /tmp/ragflow_task_executor.log"
+echo "  ragflow API     :9380   tail -f /tmp/ragflow_server.log"
+echo "  ragflow UI      :9222   tail -f /tmp/ragflow_web.log         → http://localhost:9222/"
+echo "  task_executor           tail -f /tmp/ragflow_task_executor.log"
 if [ "$FULL" -eq 1 ]; then
-  echo "  admin backend :9381   tail -f /tmp/ragflow_admin.log"
-  echo "  admin UI      :5173   tail -f /tmp/ragflow_admin_web.log"
-  echo "  mcp server    :9382   tail -f /tmp/ragflow_mcp.log"
-  echo ""
-  echo "  admin UI URL: http://localhost:5173/admin"
+  echo "  admin backend   :9381   tail -f /tmp/ragflow_admin.log"
+  echo "  admin UI        :5173   tail -f /tmp/ragflow_admin_web.log  → http://localhost:5173/admin"
+  echo "  mcp server      :9382   tail -f /tmp/ragflow_mcp.log"
 fi
 echo ""
 echo "  stop all:   bash scripts/dev_down.sh"
