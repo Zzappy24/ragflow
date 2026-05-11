@@ -195,7 +195,9 @@ async def launch_workspace(ws_id: str, user_id: str = Depends(get_current_user_i
     try:
         async with httpx.AsyncClient() as client:
             resp = await client.post(
-                f"{settings.RAGFLOW_API_URL}/v1/user/internal/bridge/prepare",
+                # Path migrated in upstream RESTful API refactor: old /v1/user/internal/bridge/prepare
+                # → new /api/v1/internal/bridge/prepare (registered in api/apps/restful_apis/user_api.py).
+                f"{settings.RAGFLOW_API_URL}/api/v1/internal/bridge/prepare",
                 json={"user_id": user_id, "ws_id": ws_id},
                 timeout=10,
             )

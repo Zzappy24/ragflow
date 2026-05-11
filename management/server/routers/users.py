@@ -74,7 +74,9 @@ async def provision_user_route(
     try:
         async with httpx.AsyncClient() as client:
             resp = await client.post(
-                f"{settings.RAGFLOW_API_URL}/v1/user/internal/invite/prepare",
+                # Path migrated in upstream RESTful API refactor: old /v1/user/internal/invite/prepare
+                # → new /api/v1/internal/invite/prepare (registered in api/apps/restful_apis/user_api.py).
+                f"{settings.RAGFLOW_API_URL}/api/v1/internal/invite/prepare",
                 json={"user_id": new_user_id, "ttl": settings.INVITE_TOKEN_EXPIRE_SECONDS},
                 timeout=10,
             )
