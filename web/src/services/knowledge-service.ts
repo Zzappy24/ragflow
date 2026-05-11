@@ -309,10 +309,16 @@ export const webCrawlDocument = async (
   datasetId: string,
   formData: FormData,
 ) => {
+  // Inject X-Workspace-Id — backend route is @require_permission(DOCUMENT_CREATE).
+  const activeWorkspaceId = localStorage.getItem('active_workspace_id');
+  const headers: Record<string, string> = {
+    [Authorization]: getAuthorization(),
+  };
+  if (activeWorkspaceId) {
+    headers['X-Workspace-Id'] = activeWorkspaceId;
+  }
   const response = await axios.post(api.webCrawl(datasetId), formData, {
-    headers: {
-      [Authorization]: getAuthorization(),
-    },
+    headers,
   });
   return response.data;
 };

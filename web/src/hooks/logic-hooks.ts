@@ -242,12 +242,20 @@ export const useSendMessageWithSse = () => {
       initializeSseRef();
       try {
         setDoneValue(body, false);
+        // Inject X-Workspace-Id like the central axios interceptor — without
+        // it the backend's @require_permission(CHAT_USE) cannot resolve the
+        // tenant and returns 403 silently into the SSE stream.
+        const activeWorkspaceId = localStorage.getItem('active_workspace_id');
+        const headers: Record<string, string> = {
+          [Authorization]: getAuthorization(),
+          'Content-Type': 'application/json',
+        };
+        if (activeWorkspaceId) {
+          headers['X-Workspace-Id'] = activeWorkspaceId;
+        }
         const response = await fetch(url, {
           method: 'POST',
-          headers: {
-            [Authorization]: getAuthorization(),
-            'Content-Type': 'application/json',
-          },
+          headers,
           body: JSON.stringify(omit(body, 'chatBoxId')),
           signal: controller?.signal || sseRef.current?.signal,
         });
@@ -343,12 +351,18 @@ export const useSendMessageWithSse = () => {
 export const useSpeechWithSse = (url: string = api.chatsTts) => {
   const read = useCallback(
     async (body: any) => {
+      // Inject X-Workspace-Id (see useSendMessageWithSse for rationale).
+      const activeWorkspaceId = localStorage.getItem('active_workspace_id');
+      const headers: Record<string, string> = {
+        [Authorization]: getAuthorization(),
+        'Content-Type': 'application/json',
+      };
+      if (activeWorkspaceId) {
+        headers['X-Workspace-Id'] = activeWorkspaceId;
+      }
       const response = await fetch(url, {
         method: 'POST',
-        headers: {
-          [Authorization]: getAuthorization(),
-          'Content-Type': 'application/json',
-        },
+        headers,
         body: JSON.stringify(body),
       });
       try {

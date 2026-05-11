@@ -66,17 +66,6 @@ EXEMPT_LINES: set[tuple[str, str]] = {
     ("constants/agent.tsx", "https://github.com"),
     # Static asset served from the SPA shell, not a backend route.
     ("hooks/logic-hooks.ts", "/conf.json"),
-    # SSE streaming for chat completion + speech endpoints. The caller hooks
-    # (useSendMessageWithSse / useSpeechWithSse) receive `url` as a param and
-    # forward it; the central axios path handles the header for non-stream
-    # calls. TODO(zappy): unify so SSE goes through the same header injector.
-    # Currently works because completions resolve tenant from conversation_id.
-    ("hooks/logic-hooks.ts", "await fetch(url, {"),
-    # TODO(zappy): investigate — webCrawl uploads to a tenant-scoped route.
-    # Hasn't surfaced because nobody hits it from a workspace yet.
-    ("services/knowledge-service.ts", "api.webCrawl"),
-    # TODO(zappy): chatsTranscriptions is a backend route — should inject header.
-    ("components/ui/audio-button.tsx", "api.chatsTranscriptions"),
 }
 
 

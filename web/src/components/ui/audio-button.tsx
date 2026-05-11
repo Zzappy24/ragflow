@@ -256,12 +256,20 @@ export const AudioButton = ({
       formData.append('file', audioFile);
       formData.append('stream', 'false');
 
+      // Inject X-Workspace-Id — chat audio transcription is guarded by
+      // @require_permission(CHAT_USE) which needs the tenant resolved from
+      // this header.
+      const activeWorkspaceId = localStorage.getItem('active_workspace_id');
+      const headers: Record<string, string> = {
+        [Authorization]: getAuthorization(),
+        // 'Content-Type': blob.type || 'audio/webm',
+      };
+      if (activeWorkspaceId) {
+        headers['X-Workspace-Id'] = activeWorkspaceId;
+      }
       const response = await fetch(api.chatsTranscriptions, {
         method: 'POST',
-        headers: {
-          [Authorization]: getAuthorization(),
-          // 'Content-Type': blob.type || 'audio/webm',
-        },
+        headers,
         body: formData,
       });
 
