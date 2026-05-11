@@ -69,12 +69,19 @@ echo "OK"
 # 4. (--full only) Admin panel + MCP server
 # ---------------------------------------------------------------------------
 if [ "$FULL" -eq 1 ]; then
-  echo "[dev_up] killing stale admin / mcp processes"
-  pkill -f "management.server.main" 2>/dev/null || true
-  pkill -f "mcp/server/server.py"   2>/dev/null || true
+  echo "[dev_up] killing stale admin / mcp / vite processes"
+  pkill -f "management.server.main"      2>/dev/null || true
+  pkill -f "mcp/server/server.py"        2>/dev/null || true
+  pkill -f "management/web.*vite"        2>/dev/null || true
+  # vite spawns esbuild children; kill by working dir is the reliable way.
+  for pid in $(pgrep -f "vite$" 2>/dev/null); do
+    if ps -o command= -p "$pid" 2>/dev/null | grep -q "management/web"; then
+      kill "$pid" 2>/dev/null || true
+    fi
+  done
   sleep 1
 
-  echo "[dev_up] starting admin panel (:9381)"
+  echo "[dev_up] starting admin backend (:9381)"
   nohup uv run uvicorn management.server.main:app --host 0.0.0.0 --port 9381 \
     > /tmp/ragflow_admin.log 2>&1 &
 
@@ -84,11 +91,15 @@ if [ "$FULL" -eq 1 ]; then
     --base-url=http://127.0.0.1:9380 \
     > /tmp/ragflow_mcp.log 2>&1 &
 
-  echo -n "[dev_up] waiting for admin :9381 + mcp :9382… "
+  echo "[dev_up] starting admin frontend (Vite :5173)"
+  (cd "$REPO/management/web" && nohup npm run dev > /tmp/ragflow_admin_web.log 2>&1 &)
+
+  echo -n "[dev_up] waiting for admin backend :9381 + mcp :9382 + admin frontend :5173… "
   # MCP returns 401 on unauthenticated GET — that's success (auth-required, alive).
   # We just check that the port is bound and the process answers with any HTTP code.
   until curl -fsS http://localhost:9381/api/admin/docs > /dev/null 2>&1 \
-     && [ "$(curl -s -o /dev/null -w '%{http_code}' http://localhost:9382/mcp/)" != "000" ]; do
+     && [ "$(curl -s -o /dev/null -w '%{http_code}' http://localhost:9382/mcp/)" != "000" ] \
+     && curl -fsS http://localhost:5173/ > /dev/null 2>&1; do
     sleep 2
   done
   echo "OK"
@@ -102,8 +113,11 @@ echo "[dev_up] ✓ stack ready"
 echo "  ragflow API   :9380   tail -f /tmp/ragflow_server.log"
 echo "  task_executor         tail -f /tmp/ragflow_task_executor.log"
 if [ "$FULL" -eq 1 ]; then
-  echo "  admin panel   :9381   tail -f /tmp/ragflow_admin.log"
+  echo "  admin backend :9381   tail -f /tmp/ragflow_admin.log"
+  echo "  admin UI      :5173   tail -f /tmp/ragflow_admin_web.log"
   echo "  mcp server    :9382   tail -f /tmp/ragflow_mcp.log"
+  echo ""
+  echo "  admin UI URL: http://localhost:5173/admin"
 fi
 echo ""
 echo "  stop all:   bash scripts/dev_down.sh"

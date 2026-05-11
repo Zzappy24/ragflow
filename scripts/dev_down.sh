@@ -20,16 +20,22 @@ fi
 # ---------------------------------------------------------------------------
 # 1. Python processes (ragflow + task_executor + admin + mcp)
 # ---------------------------------------------------------------------------
-echo "[dev_down] stopping python processes"
+echo "[dev_down] stopping python + vite processes"
 pkill -f "ragflow_server.py"      2>/dev/null || true
 pkill -f "task_executor.py"       2>/dev/null || true
 pkill -f "hypercorn.*api.asgi"    2>/dev/null || true
 pkill -f "management.server.main" 2>/dev/null || true
 pkill -f "mcp/server/server.py"   2>/dev/null || true
+# Vite (admin frontend on :5173) — kill by working dir, not name (vite is generic).
+for pid in $(pgrep -f "vite$" 2>/dev/null); do
+  if ps -o command= -p "$pid" 2>/dev/null | grep -q "management/web"; then
+    kill "$pid" 2>/dev/null || true
+  fi
+done
 sleep 2
 
 # Force-kill anything still listening on the dev ports.
-for port in 9380 9381 9382; do
+for port in 9380 9381 9382 5173; do
   pid=$(lsof -ti :$port 2>/dev/null || true)
   if [ -n "$pid" ]; then
     echo "[dev_down] force-killing leftover on :$port (pid=$pid)"
