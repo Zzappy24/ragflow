@@ -53,13 +53,19 @@ pkill -f "task_executor.py"    2>/dev/null || true
 pkill -f "hypercorn.*api.asgi" 2>/dev/null || true
 sleep 2
 
+# Wrapper: spawn in a subshell that ignores SIGINT, then exec nohup so the
+# child survives Ctrl+C of the wait loop below. dev_down.sh still kills via
+# SIGTERM (default pkill), which is NOT trapped — clean shutdown still works.
+spawn_detached() {
+  local logfile="$1"; shift
+  ( trap '' INT; exec nohup "$@" > "$logfile" 2>&1 ) &
+}
+
 echo "[dev_up] starting task_executor (1 worker)"
-nohup uv run python rag/svr/task_executor.py dev_worker_1 \
-  > /tmp/ragflow_task_executor.log 2>&1 &
+spawn_detached /tmp/ragflow_task_executor.log uv run python rag/svr/task_executor.py dev_worker_1
 
 echo "[dev_up] starting ragflow_server (single process, hot-reload)"
-nohup uv run python api/ragflow_server.py \
-  > /tmp/ragflow_server.log 2>&1 &
+spawn_detached /tmp/ragflow_server.log uv run python api/ragflow_server.py
 
 echo -n "[dev_up] waiting for ragflow_server :9380… "
 until curl -fsS http://localhost:9380/api/v1/system/version > /dev/null 2>&1; do sleep 2; done
@@ -82,17 +88,15 @@ if [ "$FULL" -eq 1 ]; then
   sleep 1
 
   echo "[dev_up] starting admin backend (:9381)"
-  nohup uv run uvicorn management.server.main:app --host 0.0.0.0 --port 9381 \
-    > /tmp/ragflow_admin.log 2>&1 &
+  spawn_detached /tmp/ragflow_admin.log uv run uvicorn management.server.main:app --host 0.0.0.0 --port 9381
 
   echo "[dev_up] starting MCP server (:9382, mode=host)"
-  nohup uv run python mcp/server/server.py \
+  spawn_detached /tmp/ragflow_mcp.log uv run python mcp/server/server.py \
     --mode=host --host=127.0.0.1 --port=9382 \
-    --base-url=http://127.0.0.1:9380 \
-    > /tmp/ragflow_mcp.log 2>&1 &
+    --base-url=http://127.0.0.1:9380
 
   echo "[dev_up] starting admin frontend (Vite :5173)"
-  (cd "$REPO/management/web" && nohup npm run dev > /tmp/ragflow_admin_web.log 2>&1 &)
+  ( trap '' INT; cd "$REPO/management/web" && exec nohup npm run dev > /tmp/ragflow_admin_web.log 2>&1 ) &
 
   echo -n "[dev_up] waiting for admin backend :9381 + mcp :9382 + admin frontend :5173… "
   # MCP returns 401 on unauthenticated GET — that's success (auth-required, alive).
