@@ -85,8 +85,12 @@ if [ "$FULL" -eq 1 ]; then
     > /tmp/ragflow_mcp.log 2>&1 &
 
   echo -n "[dev_up] waiting for admin :9381 + mcp :9382… "
+  # MCP returns 401 on unauthenticated GET — that's success (auth-required, alive).
+  # We just check that the port is bound and the process answers with any HTTP code.
   until curl -fsS http://localhost:9381/api/admin/docs > /dev/null 2>&1 \
-     && curl -fs  http://localhost:9382/mcp/ > /dev/null 2>&1; do sleep 2; done
+     && [ "$(curl -s -o /dev/null -w '%{http_code}' http://localhost:9382/mcp/)" != "000" ]; do
+    sleep 2
+  done
   echo "OK"
 fi
 
