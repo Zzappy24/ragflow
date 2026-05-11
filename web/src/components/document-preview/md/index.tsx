@@ -18,7 +18,18 @@ export const Md: React.FC<MdProps> = ({ url, className }) => {
 
   useEffect(() => {
     setError(null);
-    fetch(url, { headers: { [Authorization]: getAuthorization() } })
+    // Inject X-Workspace-Id like the axios interceptor does for every other
+    // call — the backend `@require_permission(DOCUMENT_READ)` resolves the
+    // tenant from this header, and without it returns
+    // `Permission denied: document.read`.
+    const activeWorkspaceId = localStorage.getItem('active_workspace_id');
+    const headers: Record<string, string> = {
+      [Authorization]: getAuthorization(),
+    };
+    if (activeWorkspaceId) {
+      headers['X-Workspace-Id'] = activeWorkspaceId;
+    }
+    fetch(url, { headers })
       .then((res) => {
         if (!res.ok) throw new Error('Failed to fetch markdown file');
         return res.text();
