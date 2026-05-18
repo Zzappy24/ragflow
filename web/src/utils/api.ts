@@ -12,7 +12,13 @@ export default {
   userInfo: `${restAPIv1}/users/me`,
   tenantInfo: `${restAPIv1}/users/me/models`,
   setTenantInfo: `${restAPIv1}/users/me/models`,
-  loginChannels: `${restAPIv1}/auth/login/channels`,
+  // CUSTOM B2B SaaS: upstream switched `loginChannels` to /auth/login/channels
+  // (served only by their Go server). We don't run the Go server (Python-only
+  // stack), and the Python dynamic route /auth/login/<channel> intercepts
+  // "channels" as if it were an OAuth provider name, raising ValueError.
+  // Point `loginChannels` at the Python literal route. `loginChannel` (no s)
+  // stays on /auth/login/<channel> — that one IS the real Python OAuth route.
+  loginChannels: `${restAPIv1}/login/channels`,
   loginChannel: (channel: string) => `${restAPIv1}/auth/login/${channel}`,
 
   // team

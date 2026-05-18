@@ -519,6 +519,52 @@ async def debug_agent_component(agent_id, component_id, tenant_id):
         return server_error_response(exc)
 
 
+# NOTE: keep this STATIC route registered BEFORE the dynamic `/agents/<agent_id>`
+# below — without it, Quart routes `/agents/tags` into the dynamic catch-all,
+# `accessible("tags", tenant_id)` returns False, and the UI shows
+# "102 canvas not found" on every agents-page render.
+@manager.route("/agents/tags", methods=["GET"])  # noqa: F821
+@login_required
+@require_permission(Permission.AGENT_READ)
+@add_tenant_id_to_kwargs
+def list_agent_tags(tenant_id):
+    """Aggregate tag usage counts across agents visible to the caller.
+
+    CUSTOM B2B SaaS: workspace-strict scoping. Upstream did
+    `get_joined_tenants_by_user_id(tenant_id)` here (the user_id-as-tenant_id
+    anti-pattern); in our fork `tenant_id` is the workspace tenant — pass it
+    as the sole owner so we never widen scope to other workspaces.
+    """
+    canvas_category = request.args.get("canvas_category")
+    counts = UserCanvasService.list_tags([tenant_id], tenant_id, canvas_category)
+    return get_json_result(
+        data=[{"tag": k, "count": v} for k, v in sorted(counts.items(), key=lambda x: (-x[1], x[0]))]
+    )
+
+
+@manager.route("/agents/<canvas_id>/tags", methods=["PUT"])  # noqa: F821
+@login_required
+@require_permission(Permission.AGENT_UPDATE)
+@add_tenant_id_to_kwargs
+async def update_agent_tags(tenant_id, canvas_id):
+    if not UserCanvasService.accessible(canvas_id, tenant_id):
+        return get_json_result(
+            data=False,
+            message="Agent not found or no permission.",
+            code=RetCode.OPERATING_ERROR,
+        )
+    req = await get_request_json()
+    tags = req.get("tags", "")
+    rows_affected = UserCanvasService.update_tags(canvas_id, tags)
+    if rows_affected == 0:
+        return get_json_result(
+            data=False,
+            message="Agent not found or no permission.",
+            code=RetCode.OPERATING_ERROR,
+        )
+    return get_json_result(data=True)
+
+
 @manager.route("/agents/<agent_id>", methods=["GET"])  # noqa: F821
 @login_required
 @require_permission(Permission.AGENT_READ)
