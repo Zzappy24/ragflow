@@ -227,6 +227,8 @@ git merge origin/main --no-commit   # stop before auto-commit to resolve conflic
 
 **Resolve conflicts — file-by-file rules:**
 
+> **DANGER — `--theirs` on RBAC files** (`api/apps/restful_apis/*.py`, `api/apps/sdk/*.py`): even when the visible conflict is small (1-2 hunks), upstream often auto-merged other parts of the same file that silently dropped our `@require_permission` / `@token_required` / IDOR-guard / audit-log code. **Default to `--ours` on these files**, then read the upstream diff (`git diff dev upstream/main -- <file>`) and re-apply the notable upstream changes manually. The 2026-05-15 merge hit this trap twice (agent_api.py + chunk_api.py); caught by `test_session_idor`, `test_rbac_coverage`, `test_webhook_security` — but the test failures are non-obvious without this rule, costing 15-30 min of debug each time.
+
 | File / pattern | Rule |
 |---|---|
 | `internal/handler/*.go` — `user.ID` vs `GetTenantID(c)` | **Always keep `GetTenantID(c)`** (except `Accessible()` checks and `memory.go` comparison) |
@@ -238,6 +240,8 @@ git merge origin/main --no-commit   # stop before auto-commit to resolve conflic
 | `api/utils/api_utils.py` | **Keep ours** — workspace tenant resolution in `token_required` |
 | `api/apps/system_app.py`, `api/apps/api_app.py` | **Keep ours** — token routes scoped to `active_tenant_id()` |
 | `api/apps/document_app.py`, `api/apps/sdk/doc.py` | **Keep ours** — workspace permission checks on routes |
+| `api/apps/restful_apis/agent_api.py` | **Keep ours** — all `@require_permission` decorators + IDOR session-by-canvas check in `get_agent_session` + `WEBHOOK_REJECTED_NO_SECURITY` 403 path + `AuditService.record` on webhook invoke. NEVER `--theirs` even if conflict markers look small: upstream regularly auto-merges other parts of this file that strip our custom decorators silently. Caught by `test_session_idor`, `test_webhook_security`, `test_rbac_coverage`. |
+| `api/apps/restful_apis/chunk_api.py` | **Keep ours** — 6× `@require_permission(...)` decorators + workspace-strict `KnowledgebaseService.query(tenant_id=, id=)` (vs upstream's `accessible()` which is now safe too, but the rename also dropped our RBAC). Same `--theirs` trap as `agent_api.py`. Caught by `test_rbac_coverage`. |
 | `common/doc_store/infinity_conn_pool.py` | **Keep ours** — pool auto-sizing from `WORKER_MAX_TASKS` |
 | `common/settings.py` | **Keep ours** — `DOC_BULK_SIZE=128`, `EMBEDDING_BATCH_SIZE=512` |
 | `rag/utils/redis_conn.py` | **Keep ours** — Redis connection pool |
