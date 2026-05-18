@@ -34,11 +34,11 @@ type KnowledgebaseHandler struct {
 	kbService       *service.KnowledgebaseService
 	userService     *service.UserService
 	documentService *service.DocumentService
-	datasetsService *service.DatasetsService
+	datasetsService *service.DatasetService
 }
 
 // NewKnowledgebaseHandler creates a new knowledge base handler
-func NewKnowledgebaseHandler(kbService *service.KnowledgebaseService, userService *service.UserService, documentService *service.DocumentService, datasetsService *service.DatasetsService) *KnowledgebaseHandler {
+func NewKnowledgebaseHandler(kbService *service.KnowledgebaseService, userService *service.UserService, documentService *service.DocumentService, datasetsService *service.DatasetService) *KnowledgebaseHandler {
 	return &KnowledgebaseHandler{
 		kbService:       kbService,
 		userService:     userService,
