@@ -6,7 +6,7 @@
  *
  *   1. Reads `bridge_code` from the URL (and strips it from history immediately
  *      so it can't leak via Referer or browser history).
- *   2. POSTs it to `/v1/user/bridge`. The backend performs a Redis GETDEL on
+ *   2. POSTs it to `/api/v1/bridge`. The backend performs a Redis GETDEL on
  *      the opaque code, re-checks workspace membership, and logs the user in
  *      (returning Authorization in headers + the active workspace_id in the body).
  *   3. Persists the new auth + active workspace to localStorage so the rest of
@@ -39,9 +39,9 @@ export async function consumeBridgeToken(): Promise<void> {
     // then reject the response because ``construct_response`` sets
     // ``Access-Control-Allow-Origin: *``, which is forbidden with credentials.
     // The bridge endpoint is always same-origin (we land on :9222 and POST to
-    // :9222/v1/user/bridge through Vite's proxy), so no cookies need crossing
+    // :9222/api/v1/bridge through Vite's proxy), so no cookies need crossing
     // origins — same-origin is both correct and browser-safe.
-    const res = await fetch('/v1/user/bridge', {
+    const res = await fetch('/api/v1/bridge', {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify({ code }),

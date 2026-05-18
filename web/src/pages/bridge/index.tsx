@@ -2,7 +2,7 @@
  * Bridge login page — consumed when the admin panel redirects to
  * /?bridge_code=<opaque>
  *
- * Reads the token from the URL, exchanges it with RAGFlow's /v1/user/bridge
+ * Reads the token from the URL, exchanges it with RAGFlow's /api/v1/bridge
  * endpoint, stores auth in localStorage, and redirects to /.
  */
 import { Authorization, Token, UserInfo } from '@/constants/authorization';
@@ -29,7 +29,7 @@ export default function BridgePage() {
 
     (async () => {
       try {
-        const res = await fetch('/v1/user/bridge', {
+        const res = await fetch('/api/v1/bridge', {
           method: 'POST',
           headers: { 'Content-Type': 'application/json' },
           body: JSON.stringify({ code }),
