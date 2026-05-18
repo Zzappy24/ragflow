@@ -263,6 +263,22 @@ PATH=/opt/homebrew/bin:$PATH git commit   # homebrew PATH needed for pre-commit 
 git checkout dev && git merge merge/upstream-$(date +%Y-%m-%d) --no-ff
 ```
 
+**DANGER — never `git stash` while a merge is in progress.** `git stash` resets to HEAD, which silently drops `.git/MERGE_HEAD`. `git stash pop` restores the working tree but NOT MERGE_HEAD, so the next `git commit` creates a normal commit with **one parent instead of two** — git no longer knows that upstream was merged. Symptoms: `git log upstream/main ^dev` keeps reporting all "merged" commits as missing, and the next merge re-conflicts on the same 200+ files.
+
+If it happens (caught early — before pushing to others):
+```bash
+# Rebuild the merge commit with the correct two parents (tree stays identical):
+NEW_SHA=$(git log -1 --format=%B <bad_merge_sha> \
+  | git commit-tree $(git rev-parse <bad_merge_sha>^{tree}) \
+      -p <pre-merge-dev-tip> -p <upstream/main-tip-at-merge-time>)
+git update-ref refs/heads/merge/upstream-$(date +%Y-%m-%d) "$NEW_SHA"
+git checkout dev && git reset --hard <pre-merge-dev-tip>
+git merge merge/upstream-$(date +%Y-%m-%d) --no-ff -m "<original merge message>"
+git push --force-with-lease  # only if you'd already pushed the broken history
+```
+
+Safe alternative if you need to inspect the dev pre-merge state mid-merge: use `git worktree add ../ragflow-dev dev` instead of stashing — leaves MERGE_HEAD untouched on the original checkout.
+
 **Run the full test suite before merging to dev** (distilled from 2026-05-15 merge — combining test dirs in a single pytest invocation corrupts Python module resolution, so launch each separately):
 
 ```bash
