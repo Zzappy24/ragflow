@@ -16,6 +16,8 @@
 import json
 import logging
 import time
+from functools import reduce
+from operator import or_
 from uuid import uuid4
 from agent.canvas import Canvas
 from api.db import CanvasCategory, TenantPermission
@@ -23,7 +25,7 @@ from api.db.db_models import DB, CanvasTemplate, User, UserCanvas, API4Conversat
 from api.db.services.api_service import API4ConversationService
 from api.db.services.common_service import CommonService
 from api.db.services.user_canvas_version import UserCanvasVersionService
-from common.misc_utils import get_uuid
+from common.misc_utils import get_uuid, thread_pool_exec
 from api.utils.api_utils import get_data_openai
 import tiktoken
 from peewee import fn
@@ -151,6 +153,7 @@ class UserCanvasService(CommonService):
         canvas_category=None,
         agent_id=None,
         title=None,
+        tags=None,
     ):
         fields = [
             cls.model.id,
@@ -163,6 +166,7 @@ class UserCanvasService(CommonService):
             User.avatar.alias('tenant_avatar'),
             cls.model.update_time,
             cls.model.canvas_category,
+            cls.model.tags,
         ]
         if keywords:
             agents = cls.model.select(*fields).join(User, on=(cls.model.user_id == User.id)).where(
@@ -179,6 +183,13 @@ class UserCanvasService(CommonService):
             agents = agents.where(cls.model.title == title)
         if canvas_category:
             agents = agents.where(cls.model.canvas_category == canvas_category)
+        if tags:
+            tag_list = [t.strip() for t in tags if t and t.strip()] if isinstance(tags, (list, tuple)) else [t.strip() for t in str(tags).split(",") if t.strip()]
+            if tag_list:
+                # Wrap value with commas so 'ml' doesn't match 'ml-ops'.
+                wrapped = fn.CONCAT(",", cls.model.tags, ",")
+                clauses = [wrapped.contains(f",{t},") for t in tag_list]
+                agents = agents.where(reduce(or_, clauses))
         if desc:
             agents = agents.order_by(cls.model.getter_by(orderby).desc())
         else:
@@ -204,6 +215,69 @@ class UserCanvasService(CommonService):
                 agent['release_time'] = release_time_map.get(agent['id'])
 
         return agents_list, count
+
+    @classmethod
+    @DB.connection_context()
+    def list_tags(cls, joined_tenant_ids, user_id, canvas_category=None):
+        """Return {tag: agent_count} aggregated across agents visible to the user."""
+        query = cls.model.select(cls.model.tags).where(
+            ((cls.model.user_id.in_(joined_tenant_ids)) & (cls.model.permission == TenantPermission.TEAM.value)) | (cls.model.user_id == user_id)
+        )
+        if canvas_category:
+            query = query.where(cls.model.canvas_category == canvas_category)
+
+        counts: dict[str, int] = {}
+        for row in query.dicts():
+            for t in (row.get("tags") or "").split(","):
+                t = t.strip()
+                if t:
+                    counts[t] = counts.get(t, 0) + 1
+        logging.info(
+            "UserCanvasService.list_tags user=%s canvas_category=%s tags_count=%d",
+            user_id,
+            canvas_category,
+            len(counts),
+        )
+        return counts
+
+    # Tag storage is a single comma-separated CharField(max_length=512);
+    # commas inside a tag would corrupt the encoding, so strip them on write.
+    TAGS_FIELD_MAX = 512
+    TAG_MAX_LEN = 64
+
+    @classmethod
+    @DB.connection_context()
+    def update_tags(cls, canvas_id, tags):
+        """Persist a normalized comma-separated tag string for the given canvas."""
+        if isinstance(tags, (list, tuple)):
+            cleaned = [str(t).replace(",", " ").strip() for t in tags if t and str(t).strip()]
+        else:
+            cleaned = [t.strip() for t in str(tags or "").split(",") if t.strip()]
+        # Dedupe (case-insensitive, preserve order), cap individual tag length,
+        # then truncate the joined value so it always fits the column.
+        seen = set()
+        normalized = []
+        used = 0
+        for t in cleaned:
+            t = t[: cls.TAG_MAX_LEN]
+            key = t.lower()
+            if key in seen:
+                continue
+            extra = len(t) + (1 if normalized else 0)
+            if used + extra > cls.TAGS_FIELD_MAX:
+                break
+            seen.add(key)
+            normalized.append(t)
+            used += extra
+        value = ",".join(normalized)
+        rows_affected = cls.model.update(tags=value).where(cls.model.id == canvas_id).execute()
+        logging.info(
+            "UserCanvasService.update_tags canvas_id=%s tags_count=%d rows=%d",
+            canvas_id,
+            len(normalized),
+            rows_affected,
+        )
+        return rows_affected
 
     @classmethod
     @DB.connection_context()
@@ -251,7 +325,7 @@ async def completion(tenant_id, agent_id, session_id=None, **kwargs):
     release_mode = str(kwargs.get("release", "")).strip().lower()
 
     if session_id:
-        e, conv = API4ConversationService.get_by_id(session_id)
+        e, conv = await thread_pool_exec(API4ConversationService.get_by_id, session_id)
         if not e:
             raise LookupError("Session not found!")
         if not conv.message:
@@ -260,15 +334,15 @@ async def completion(tenant_id, agent_id, session_id=None, **kwargs):
             conv.dsl = json.dumps(conv.dsl, ensure_ascii=False)
         canvas = Canvas(conv.dsl, tenant_id, agent_id, canvas_id=agent_id, custom_header=custom_header)
     else:
-        cvs, dsl = UserCanvasService.get_agent_dsl_with_release(agent_id, release_mode=release_mode == "true", tenant_id=tenant_id)
+        cvs, dsl = await thread_pool_exec(UserCanvasService.get_agent_dsl_with_release, agent_id, release_mode=release_mode == "true", tenant_id=tenant_id)
 
         session_id = get_uuid()
         canvas = Canvas(dsl, tenant_id, agent_id, canvas_id=cvs.id, custom_header=custom_header)
         canvas.reset()
         # Get the version title based on release_mode
-        version_title = UserCanvasVersionService.get_latest_version_title(cvs.id, release_mode=release_mode == "true")
+        version_title = await thread_pool_exec(UserCanvasVersionService.get_latest_version_title, cvs.id, release_mode=release_mode == "true")
         conv = {"id": session_id, "dialog_id": cvs.id, "user_id": user_id, "message": [], "source": "agent", "dsl": dsl, "reference": [], "version_title": version_title}
-        API4ConversationService.save(**conv)
+        await thread_pool_exec(API4ConversationService.save, **conv)
         conv = API4Conversation(**conv)
 
     message_id = str(uuid4())
@@ -294,7 +368,7 @@ async def completion(tenant_id, agent_id, session_id=None, **kwargs):
     conv.errors = canvas.error
     conv.dsl = str(canvas)
     conv = conv.to_dict()
-    API4ConversationService.append_message(conv["id"], conv)
+    await thread_pool_exec(API4ConversationService.append_message, conv["id"], conv)
 
 
 async def completion_openai(tenant_id, agent_id, question, session_id=None, stream=True, **kwargs):

@@ -92,6 +92,20 @@ EXEMPT_FRONTEND_ENDPOINTS: set[str] = {
     "skillSearch",
     "skillIndex",
     "skillReindex",
+    # /api/v1/datasets/<id>/embedding/check: upstream added the service-layer
+    # `check_embedding()` in api/apps/services/dataset_api_service.py but did
+    # NOT register a Flask route handler for it. Frontend declared the URL
+    # but backend has no endpoint. Either upstream forgot to wire the route
+    # or it's planned for a future release.
+    # TODO: wire `check_embedding` to a `@manager.route("/datasets/<id>/embedding/check", methods=["POST"])`
+    # handler in dataset_api.py if/when product confirms the feature is shipping.
+    "checkEmbedding",
+    # /api/v1/agents/<id>/tags PUT: frontend declared but no Python or Go
+    # handler exists for this verb on the per-agent path. The list endpoint
+    # (`/agents/tags`) works (see listAgentTags), only the per-agent update
+    # is missing. Likely an upstream incomplete feature.
+    # TODO: implement the handler or remove the frontend call if unused.
+    "updateAgentTags",
 }
 
 

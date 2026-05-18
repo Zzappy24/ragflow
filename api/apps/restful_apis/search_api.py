@@ -15,6 +15,7 @@
 #
 
 import json
+import logging
 
 from quart import Response, request
 from api.db.services.dialog_service import async_ask
@@ -80,15 +81,32 @@ def list_searches():
     owner_ids = request.args.getlist("owner_ids")
 
     try:
-        if not owner_ids:
-            tenants = []
-            search_apps, total = SearchService.get_by_tenant_ids(tenants, active_tenant_id(), page_number, items_per_page, orderby, desc, keywords)
+        tenants = TenantService.get_joined_tenants_by_user_id(current_user.id)
+        authorized_owner_ids = {member["tenant_id"] for member in tenants}
+        authorized_owner_ids.add(current_user.id)
+        authorized_owner_ids.add(active_tenant_id())
+
+        if owner_ids:
+            requested_owner_ids = set(owner_ids)
+            unauthorized_owner_ids = requested_owner_ids - authorized_owner_ids
+            if unauthorized_owner_ids:
+                logging.warning(
+                    "Rejected list_searches request: user=%s attempted unauthorized owner_ids=%s",
+                    current_user.id,
+                    sorted(unauthorized_owner_ids),
+                )
+                return get_json_result(
+                    data=False,
+                    message="Only authorized owner_ids can be queried.",
+                    code=RetCode.OPERATING_ERROR,
+                )
+            effective_owner_ids = list(requested_owner_ids)
         else:
-            search_apps, total = SearchService.get_by_tenant_ids(owner_ids, active_tenant_id(), 0, 0, orderby, desc, keywords)
-            search_apps = [s for s in search_apps if s["tenant_id"] in owner_ids]
-            total = len(search_apps)
-            if page_number and items_per_page:
-                search_apps = search_apps[(page_number - 1) * items_per_page: page_number * items_per_page]
+            effective_owner_ids = [active_tenant_id()]
+
+        search_apps, total = SearchService.get_by_tenant_ids(
+            effective_owner_ids, active_tenant_id(), page_number, items_per_page, orderby, desc, keywords
+        )
         return get_json_result(data={"search_apps": search_apps, "total": total})
     except Exception as e:
         return server_error_response(e)

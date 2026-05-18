@@ -71,6 +71,11 @@ EXEMPT_GET: set[tuple[str, str]] = {
     # top of the handler instead of using @token_required. The auth gate is real
     # (line 437-444 of api/apps/sdk/doc.py), just wired by hand.
     ("api/apps/sdk/doc.py", "download_doc"),
+    # Dify-compatible retrieval API — uses @apikey_required (Dify-style Bearer
+    # token from their external KB integration); not our @token_required pattern.
+    ("api/apps/sdk/dify_retrieval.py", "retrieval"),
+    # Dify health check — public probe used by Dify to verify connectivity.
+    ("api/apps/sdk/dify_retrieval.py", "retrieval_health_check"),
 }
 
 # Routes intentionally exempt from @require_permission.

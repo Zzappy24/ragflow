@@ -16,6 +16,7 @@
 import logging
 import json
 import os
+import re
 from common.constants import PAGERANK_FLD
 from common import settings
 from api.db.db_models import File
@@ -306,8 +307,6 @@ async def update_dataset(tenant_id: str, dataset_id: str, req: dict):
     if "embd_id" in req:
         if not req["embd_id"]:
             req["embd_id"] = kb.embd_id
-        if kb.chunk_num != 0 and req["embd_id"] != kb.embd_id:
-            return False, f"When chunk_num ({kb.chunk_num}) > 0, embedding_model must remain {kb.embd_id}"
         ok, err = verify_embedding_availability(req["embd_id"], tenant_id)
         if not ok:
             return False, err
@@ -378,26 +377,23 @@ def list_datasets(tenant_id: str, args: dict):
         kbs = KnowledgebaseService.get_kb_by_name(name, tenant_id)
         if not kbs:
             return False, f"User '{tenant_id}' lacks permission for dataset '{name}'"
-    # Workspace isolation: ``tenant_id`` here is already the *active workspace
-    # tenant* (resolved from X-Workspace-Id by add_tenant_id_to_kwargs). We
-    # filter strictly on it — datasets never leak across workspaces. The
-    # legacy ``joined_tenant_ids`` + ``permission='team'`` mechanism is
-    # incompatible with the B2B model: it was designed for solo users with a
-    # single personal tenant, and silently shared datasets between every
-    # tenant a user happened to be a member of. See module docstring of
-    # provisioning.py for the personal-tenant-shell rationale.
-    kbs, total = KnowledgebaseService.get_list(
-        [tenant_id],
-        tenant_id,
-        page,
-        page_size,
-        orderby,
-        desc,
-        kb_id,
-        name,
-        keywords,
-        parser_id
-    )
+    if ext_fields.get("owner_ids", []):
+        tenant_ids = ext_fields["owner_ids"]
+    else:
+        # CUSTOM B2B SaaS: workspace-strict scoping. Upstream did
+        # `get_joined_tenants_by_user_id(tenant_id)` which assumes `tenant_id`
+        # is a user_id — wrong in our fork where our auth resolves to the
+        # workspace tenant_id. Workspaces have no user-tenant join rows, so
+        # the lookup returned empty and the route silently returned 0 KBs
+        # (broke MCP, browser dataset list, etc.). We default to a strict
+        # single-tenant scope and only fall back to legacy joined-tenants
+        # for callers that pass a user_id (CLI/SDK without X-Workspace-Id).
+        tenants = TenantService.get_joined_tenants_by_user_id(tenant_id)
+        if tenants:
+            tenant_ids = list({tenant_id, *(m["tenant_id"] for m in tenants)})
+        else:
+            tenant_ids = [tenant_id]
+    kbs, total = KnowledgebaseService.get_list(tenant_ids, tenant_id, page, page_size, orderby, desc, kb_id, name, keywords, parser_id)
     users = UserService.get_by_ids([m["tenant_id"] for m in kbs])
     user_map = {m.id: m.to_dict() for m in users}
     response_data_list = []
@@ -416,8 +412,7 @@ async def get_knowledge_graph(dataset_id: str, tenant_id: str):
     :param tenant_id: tenant ID
     :return: (success, result) or (success, error_message)
     """
-    # CUSTOM B2B SaaS: direct workspace scope — accessible() uses multi-workspace JOIN
-    if not KnowledgebaseService.query(tenant_id=tenant_id, id=dataset_id):
+    if not KnowledgebaseService.accessible(dataset_id, tenant_id):
         return False, "No authorization."
     _, kb = KnowledgebaseService.get_by_id(dataset_id)
 
@@ -458,8 +453,7 @@ def delete_knowledge_graph(dataset_id: str, tenant_id: str):
     :param tenant_id: tenant ID
     :return: (success, result) or (success, error_message)
     """
-    # CUSTOM B2B SaaS: direct workspace scope — accessible() uses multi-workspace JOIN
-    if not KnowledgebaseService.query(tenant_id=tenant_id, id=dataset_id):
+    if not KnowledgebaseService.accessible(dataset_id, tenant_id):
         return False, "No authorization."
     _, kb = KnowledgebaseService.get_by_id(dataset_id)
     from rag.nlp import search
@@ -469,6 +463,10 @@ def delete_knowledge_graph(dataset_id: str, tenant_id: str):
     # Wiping the graph invalidates any phase-completion markers used to
     # short-circuit resolution / community detection on resume.
     clear_phase_markers(dataset_id)
+    KnowledgebaseService.update_by_id(
+        kb.id,
+        {"graphrag_task_id": "", "graphrag_task_finish_at": None},
+    )
 
     return True, True
 
@@ -487,8 +485,7 @@ def run_index(dataset_id: str, tenant_id: str, index_type: str):
 
     if not dataset_id:
         return False, 'Lack of "Dataset ID"'
-    # CUSTOM B2B SaaS: direct workspace scope — accessible() uses multi-workspace JOIN
-    if not KnowledgebaseService.query(tenant_id=tenant_id, id=dataset_id):
+    if not KnowledgebaseService.accessible(dataset_id, tenant_id):
         return False, "No authorization."
 
     ok, kb = KnowledgebaseService.get_by_id(dataset_id)
@@ -547,8 +544,8 @@ def trace_index(dataset_id: str, tenant_id: str, index_type: str):
 
     if not dataset_id:
         return False, 'Lack of "Dataset ID"'
-    # CUSTOM B2B SaaS: direct workspace scope — accessible() uses multi-workspace JOIN
-    if not KnowledgebaseService.query(tenant_id=tenant_id, id=dataset_id):
+
+    if not KnowledgebaseService.accessible(dataset_id, tenant_id):
         return False, "No authorization."
 
     ok, kb = KnowledgebaseService.get_by_id(dataset_id)
@@ -577,8 +574,8 @@ def list_tags(dataset_id: str, tenant_id: str):
     """
     if not dataset_id:
         return False, 'Lack of "Dataset ID"'
-    # CUSTOM B2B SaaS: direct workspace scope — accessible() uses multi-workspace JOIN
-    if not KnowledgebaseService.query(tenant_id=tenant_id, id=dataset_id):
+
+    if not KnowledgebaseService.accessible(dataset_id, tenant_id):
         return False, "No authorization."
 
     tenants = UserTenantService.get_tenants_by_user_id(tenant_id)
@@ -630,9 +627,8 @@ def get_flattened_metadata(dataset_ids: list[str], tenant_id: str):
     if not dataset_ids:
         return False, 'Lack of "dataset_ids"'
 
-    # CUSTOM B2B SaaS: direct workspace scope — accessible() uses multi-workspace JOIN
     for dataset_id in dataset_ids:
-        if not KnowledgebaseService.query(tenant_id=tenant_id, id=dataset_id):
+        if not KnowledgebaseService.accessible(dataset_id, tenant_id):
             return False, f"No authorization for dataset '{dataset_id}'"
 
     from api.db.services.doc_metadata_service import DocMetadataService
@@ -1025,7 +1021,12 @@ async def search(dataset_id: str, tenant_id: str, req: dict):
 
     rerank_mdl = None
     if req.get("tenant_rerank_id"):
-        rerank_model_config = get_model_config_by_id(req["tenant_rerank_id"])
+        allowed_rerank_tenant_ids = {tenant_id, kb.tenant_id}
+        rerank_model_config = get_model_config_by_id(
+            req["tenant_rerank_id"],
+            allowed_tenant_ids=allowed_rerank_tenant_ids,
+            requester_tenant_id=tenant_id,
+        )
         rerank_mdl = LLMBundle(kb.tenant_id, rerank_model_config)
     elif req.get("rerank_id"):
         rerank_model_config = get_model_config_by_type_and_name(kb.tenant_id, LLMType.RERANK.value, req["rerank_id"])
@@ -1069,6 +1070,209 @@ async def search(dataset_id: str, tenant_id: str, req: dict):
     ranks["labels"] = labels
 
     return True, ranks
+
+
+def check_embedding(dataset_id: str, tenant_id: str, req: dict):
+    """
+    Check embedding model compatibility by sampling random chunks,
+    re-embedding them with the new model, and computing cosine similarity.
+
+    :param dataset_id: dataset ID
+    :param tenant_id: tenant ID
+    :param req: request body with embd_id
+    :return: (success, result) or (success, error_message)
+    """
+    import random
+
+    import numpy as np
+    from common.constants import RetCode
+    from common.doc_store.doc_store_base import OrderByExpr
+    from rag.nlp import search
+
+    from api.db.joint_services.tenant_model_service import (
+        get_model_config_by_type_and_name,
+    )
+    from api.db.services.llm_service import LLMBundle
+    from common.constants import LLMType
+
+    def _guess_vec_field(src: dict):
+        for k in src or {}:
+            if k.endswith("_vec"):
+                return k
+        return None
+
+    def _as_float_vec(v):
+        if v is None:
+            return []
+        if isinstance(v, str):
+            return [float(x) for x in v.split("\t") if x != ""]
+        if isinstance(v, (list, tuple, np.ndarray)):
+            return [float(x) for x in v]
+        return []
+
+    def _to_1d(x):
+        a = np.asarray(x, dtype=np.float32)
+        return a.reshape(-1)
+
+    def _cos_sim(a, b, eps=1e-12):
+        a = _to_1d(a)
+        b = _to_1d(b)
+        na = np.linalg.norm(a)
+        nb = np.linalg.norm(b)
+        if na < eps or nb < eps:
+            return 0.0
+        return float(np.dot(a, b) / (na * nb))
+
+    def sample_random_chunks_with_vectors(
+        docStoreConn,
+        tenant_id: str,
+        kb_id: str,
+        n: int = 5,
+        base_fields=("docnm_kwd", "doc_id", "content_with_weight", "page_num_int", "position_int", "top_int"),
+    ):
+        index_nm = search.index_name(tenant_id)
+
+        res0 = docStoreConn.search(
+            select_fields=[], highlight_fields=[],
+            condition={"kb_id": kb_id, "available_int": 1},
+            match_expressions=[], order_by=OrderByExpr(),
+            offset=0, limit=1,
+            index_names=index_nm, knowledgebase_ids=[kb_id],
+        )
+        total = docStoreConn.get_total(res0)
+        if total <= 0:
+            return []
+
+        n = min(n, total)
+        offsets = sorted(random.sample(range(min(total, 1000)), n))
+        out = []
+
+        for off in offsets:
+            res1 = docStoreConn.search(
+                select_fields=list(base_fields),
+                highlight_fields=[],
+                condition={"kb_id": kb_id, "available_int": 1},
+                match_expressions=[], order_by=OrderByExpr(),
+                offset=off, limit=1,
+                index_names=index_nm, knowledgebase_ids=[kb_id],
+            )
+            ids = docStoreConn.get_doc_ids(res1)
+            if not ids:
+                continue
+
+            cid = ids[0]
+            full_doc = docStoreConn.get(cid, index_nm, [kb_id]) or {}
+            vec_field = _guess_vec_field(full_doc)
+            vec = _as_float_vec(full_doc.get(vec_field))
+
+            out.append({
+                "chunk_id": cid,
+                "kb_id": kb_id,
+                "doc_id": full_doc.get("doc_id"),
+                "doc_name": full_doc.get("docnm_kwd"),
+                "vector_field": vec_field,
+                "vector_dim": len(vec),
+                "vector": vec,
+                "page_num_int": full_doc.get("page_num_int"),
+                "position_int": full_doc.get("position_int"),
+                "top_int": full_doc.get("top_int"),
+                "content_with_weight": full_doc.get("content_with_weight") or "",
+                "question_kwd": full_doc.get("question_kwd") or [],
+            })
+        return out
+
+    def _clean(s: str):
+        return re.sub(r"</?(table|td|caption|tr|th)( [^<>]{0,12})?>", " ", s or "").strip()
+
+    if not dataset_id:
+        return False, 'Lack of "Dataset ID"'
+
+    if not KnowledgebaseService.accessible(dataset_id, tenant_id):
+        return False, "No authorization."
+
+    ok, kb = KnowledgebaseService.get_by_id(dataset_id)
+    if not ok:
+        return False, "Invalid Dataset ID"
+
+    embd_id = req.get("embd_id", "")
+    if not embd_id:
+        return False, "`embd_id` is required."
+
+    logging.info("check_embedding: dataset=%s tenant=%s embd_id=%s", dataset_id, tenant_id, embd_id)
+
+    ok, err = verify_embedding_availability(embd_id, tenant_id)
+    if not ok:
+        return False, err
+
+    embd_model_config = get_model_config_by_type_and_name(kb.tenant_id, LLMType.EMBEDDING, embd_id)
+    emb_mdl = LLMBundle(kb.tenant_id, embd_model_config)
+
+    n = int(req.get("check_num", 5))
+    samples = sample_random_chunks_with_vectors(settings.docStoreConn, tenant_id=kb.tenant_id, kb_id=dataset_id, n=n)
+    logging.info("check_embedding: dataset=%s sampled=%d chunks", dataset_id, len(samples))
+
+    results, eff_sims = [], []
+    mode = "content_only"
+    for ck in samples:
+        title = ck.get("doc_name") or "Title"
+
+        txt_in = "\n".join(ck.get("question_kwd") or []) or ck.get("content_with_weight") or ""
+        txt_in = _clean(txt_in)
+        if not txt_in:
+            results.append({"chunk_id": ck["chunk_id"], "reason": "no_text"})
+            continue
+
+        if not ck.get("vector"):
+            results.append({"chunk_id": ck["chunk_id"], "reason": "no_stored_vector"})
+            continue
+
+        try:
+            v, _ = emb_mdl.encode([title, txt_in])
+            assert len(v[1]) == len(ck["vector"]), (
+                f"The dimension ({len(v[1])}) of given embedding model is different from the original ({len(ck['vector'])})"
+            )
+            sim_content = _cos_sim(v[1], ck["vector"])
+            title_w = 0.1
+            qv_mix = title_w * v[0] + (1 - title_w) * v[1]
+            sim_mix = _cos_sim(qv_mix, ck["vector"])
+            sim = sim_content
+            mode = "content_only"
+            if sim_mix > sim:
+                sim = sim_mix
+                mode = "title+content"
+        except Exception as e:
+            return False, f"Embedding failure. {e}"
+
+        eff_sims.append(sim)
+        results.append({
+            "chunk_id": ck["chunk_id"],
+            "doc_id": ck["doc_id"],
+            "doc_name": ck["doc_name"],
+            "vector_field": ck["vector_field"],
+            "vector_dim": ck["vector_dim"],
+            "cos_sim": round(sim, 6),
+        })
+
+    summary = {
+        "kb_id": dataset_id,
+        "model": embd_id,
+        "sampled": len(samples),
+        "valid": len(eff_sims),
+        "avg_cos_sim": round(float(np.mean(eff_sims)) if eff_sims else 0.0, 6),
+        "min_cos_sim": round(float(np.min(eff_sims)) if eff_sims else 0.0, 6),
+        "max_cos_sim": round(float(np.max(eff_sims)) if eff_sims else 0.0, 6),
+        "match_mode": mode,
+    }
+
+    data = {"summary": summary, "results": results}
+    if not eff_sims:
+        logging.warning("check_embedding: dataset=%s no comparable chunks", dataset_id)
+        return False, "No embedded chunks are available to compare."
+    if summary["avg_cos_sim"] >= 0.9:
+        logging.info("check_embedding: dataset=%s compatible avg_cos_sim=%s valid=%d", dataset_id, summary["avg_cos_sim"], len(eff_sims))
+        return True, data
+    logging.warning("check_embedding: dataset=%s not_effective avg_cos_sim=%s valid=%d", dataset_id, summary["avg_cos_sim"], len(eff_sims))
+    return "not_effective", {"code": RetCode.NOT_EFFECTIVE, "message": "Embedding model switch failed: the average similarity between old and new vectors is below 0.9, indicating incompatible vector spaces.", "data": data}
 
 
 async def search_datasets(tenant_id: str, req: dict):
@@ -1184,7 +1388,12 @@ async def search_datasets(tenant_id: str, req: dict):
 
     rerank_mdl = None
     if req.get("tenant_rerank_id"):
-        rerank_model_config = get_model_config_by_id(req["tenant_rerank_id"])
+        allowed_rerank_tenant_ids = {tenant_id, *[dataset.tenant_id for dataset in kbs]}
+        rerank_model_config = get_model_config_by_id(
+            req["tenant_rerank_id"],
+            allowed_tenant_ids=allowed_rerank_tenant_ids,
+            requester_tenant_id=tenant_id,
+        )
         rerank_mdl = LLMBundle(kb.tenant_id, rerank_model_config)
     elif req.get("rerank_id"):
         rerank_model_config = get_model_config_by_type_and_name(kb.tenant_id, LLMType.RERANK.value, req["rerank_id"])

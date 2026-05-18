@@ -77,7 +77,7 @@ env:
 ragflow:
   image:
     repository: infiniflow/ragflow
-    tag: v0.25.1
+    tag: v0.25.4
     pullPolicy: IfNotPresent
     pullSecrets: []
   # Optional service configuration overrides
@@ -120,38 +120,11 @@ ragflow:
     service:
       enabled: true
       type: ClusterIP
-  mcp:
-    # Run the RAGFlow MCP server alongside the main server.
-    # Forwards tool calls (ragflow_retrieval, list_datasets, run_agent, ...)
-    # over Streamable-HTTP (/mcp) and legacy SSE (/sse).
-    enabled: false
-    # "host"      — multi-tenant. Each client request must include an api_key
-    #               header bound to the workspace it should access. Recommended
-    #               for B2B SaaS deployments.
-    # "self-host" — single-tenant. The MCP server itself authenticates with the
-    #               RAGFlow REST API using `hostApiKey`. All MCP clients then
-    #               see that single tenant.
-    mode: host
-    port: 9382
-    # The MCP server resolves dataset IDs etc. by calling the RAGFlow REST
-    # API. With both processes in the same pod, localhost is the right URL.
-    baseUrl: http://127.0.0.1:9380
-    # Required only in `self-host` mode. Acquire via the RAGFlow UI →
-    # Profile → API keys, then either inline the value here (NOT recommended
-    # for production) or reference an existing Secret via `existingSecret`.
-    hostApiKey: ""
-    existingSecret: ""        # Secret containing key `host-api-key`
-    transport:
-      sse: true               # /sse (legacy SSE)
-      streamableHttp: true    # /mcp (recommended)
-      jsonResponse: true      # JSON responses on the streamable-HTTP transport
-    service:
-      type: ClusterIP
 
 infinity:
   image:
     repository: infiniflow/infinity
-    tag: v0.7.0-dev6
+    tag: v0.7.0-dev7
     pullPolicy: IfNotPresent
     pullSecrets: []
   storage:

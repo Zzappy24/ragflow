@@ -1,6 +1,6 @@
 [project]
 name = "ragflow"
-version = "0.25.1"
+version = "0.25.4"
 description = "[RAGFlow](https://ragflow.io/) is an open-source RAG (Retrieval-Augmented Generation) engine based on deep document understanding. It offers a streamlined RAG workflow for businesses of any scale, combining LLM (Large Language Models) to provide truthful question-answering capabilities, backed by well-founded citations from various complex formatted data."
 authors = [{ name = "Zhichang Yu", email = "yuzhichang@gmail.com" }]
 license-files = ["LICENSE"]
@@ -16,6 +16,7 @@ dependencies = [
     "azure-storage-file-datalake==12.16.0",
     "beartype>=0.20.0,<1.0.0",
     "bio==1.7.1",
+    "boto3>=1.28.0",
     "boxsdk>=10.1.0",
     "captcha>=0.7.1",
     "chardet>=5.2.0,<6.0.0",
@@ -34,7 +35,6 @@ dependencies = [
     "exceptiongroup>=1.3.0,<2.0.0",
     "feedparser>=6.0.11,<7.0.0",
     "extract-msg>=0.39.0",
-    "fastapi>=0.115.0",
     "ffmpeg-python>=0.2.0",
     "flasgger>=0.9.7.1,<0.10.0",
     "flask-cors==6.0.2",
@@ -50,7 +50,7 @@ dependencies = [
     "groq==0.9.0",
     "grpcio-status==1.67.1",
     "html-text==0.6.2",
-    "infinity-sdk==0.7.0-dev6",
+    "infinity-sdk==0.7.0-dev7",
     "infinity-emb>=0.0.66,<0.0.67",
     "jira==3.10.5",
     "json-repair==0.35.0",
@@ -81,20 +81,12 @@ dependencies = [
     "pyclipper>=1.4.0,<2.0.0",
     # "pywencai>=0.13.1,<1.0.0",  # Temporarily disabled: conflicts with agentrun-sdk (pydash>=8), needed for agent/tools/wencai.py
     "pycryptodomex==3.20.0",
-    "pydantic-settings>=2.6.0",
-    # Pinned to zhipuai's window — zhipuai==2.0.1 requires pyjwt>=2.8.0,<2.9
-    "pyjwt>=2.8.0,<2.9",
     "pyobvector==0.2.22",
     "pyodbc>=5.2.0,<6.0.0",
     "pypandoc>=1.16",
     "pypdf>=6.10.2",
     "python-calamine>=0.4.0",
     "python-docx>=1.1.2,<2.0.0",
-    # docxtpl: Jinja templating on top of python-docx — used by
-    # agent/tools/render_docx_template.py to fill corporate templates
-    # while preserving branding/styles. Custom B2B SaaS dependency.
-    "docxtpl>=0.20.0,<1.0.0",
-    "python-magic>=0.4.27",
     "python-pptx>=1.0.2,<2.0.0",
     # "pywencai>=0.13.1,<1.0.0",  # Temporarily disabled: conflicts with agentrun-sdk (pydash>=8), needed for agent/tools/wencai.py
     "qianfan==0.4.6",
@@ -109,6 +101,8 @@ dependencies = [
     "ruamel-yaml>=0.18.6,<0.19.0",
     "scholarly==1.7.11",
     "selenium-wire==5.1.0",
+    "spacy==3.8.14",
+    "en-core-web-sm @ https://github.com/explosion/spacy-models/releases/download/en_core_web_sm-3.8.0/en_core_web_sm-3.8.0-py3-none-any.whl",
     "slack-sdk==3.37.0",
     "socksio==1.0.0",
     "agentrun-sdk>=0.0.16,<1.0.0",
@@ -118,7 +112,6 @@ dependencies = [
     "tavily-python==0.5.1",
     "tencentcloud-sdk-python==3.0.1478",
     "tika==2.6.0",
-    "uvicorn[standard]>=0.32.0",
     "valkey==6.0.2",
     "volcengine==1.0.194",
     "voyageai==0.2.3",
@@ -167,18 +160,9 @@ dependencies = [
     "python-gitlab>=7.0.0",
     "alibabacloud-dingtalk>=2.0.0",
     "quart-schema==0.23.0",
-    "httpx>=0.28.1",
 ]
 
 [dependency-groups]
-dev = [
-    "pytest>=9.0.2",
-    "requests>=2.32.5",
-    # CUSTOM B2B SaaS — kept in dev (not test) so a plain `uv sync` lands them.
-    # The full `test` group additionally pulls tensorflow-cpu which has no
-    # macOS ARM64 wheels, so it cannot be the default.
-    "pytest-asyncio>=1.3.0",
-]
 test = [
     "hypothesis>=6.132.0",
     "openpyxl>=3.1.5",
@@ -233,7 +217,7 @@ pythonpath = [
     "."
 ]
 
-testpaths = ["test/multitenant"]
+testpaths = ["test"]
 python_files = ["test_*.py"]
 python_classes = ["Test*"]
 python_functions = ["test_*"]

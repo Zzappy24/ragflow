@@ -80,6 +80,87 @@ ALL_SCOPES = [
 ]
 
 
+# ---------------------------------------------------------------------------
+# Seed a minimal agent canvas in the test workspace so test_list_agents
+# /test_run_agent_blocking / test_continue_agent_session don't skip with
+# "No agent canvas available in the test workspace" on a fresh dev DB.
+#
+# Canvas tenant scoping convention (upstream): `UserCanvas.user_id` is the
+# tenant filter — see CanvasService.get_list ("user_id == tenant_id"). So
+# we set `user_id = workspace.tenant_id` for the canvas to be reachable
+# through a workspace API token.
+# ---------------------------------------------------------------------------
+@pytest.fixture(scope="session", autouse=True)
+def _seed_test_canvas(workspace_id):
+    sys.path.insert(0, str(Path(__file__).resolve().parents[2]))
+    from api.db.db_models import DB, UserCanvas, Workspace
+    from api.db.services.workspace_service import WsMemberService
+    from api.db.services.user_service import UserService
+
+    canvas_id = uuid.uuid4().hex
+    created = False
+    with DB.connection_context():
+        ws = Workspace.get_or_none(Workspace.id == workspace_id)
+        if not ws:
+            yield None
+            return
+        # Reuse a real workspace member as the human creator (audit field).
+        member = next(
+            (
+                m for m in WsMemberService.model.select().where(
+                    WsMemberService.model.workspace_id == workspace_id
+                )
+                if UserService.query(id=m.user_id)
+            ),
+            None,
+        )
+        if not member:
+            yield None
+            return
+
+        # Don't pile up canvases across re-runs: skip seeding when one
+        # already exists for this workspace tenant.
+        existing = UserCanvas.select().where(
+            (UserCanvas.user_id == ws.tenant_id)
+            & (UserCanvas.canvas_category == "agent_canvas")
+        ).first()
+        if existing:
+            yield existing.id
+            return
+
+        # Minimal valid agent DSL (the agent engine accepts an empty graph,
+        # but list_agents only ever reads metadata fields).
+        UserCanvas.create(
+            id=canvas_id,
+            user_id=ws.tenant_id,
+            title="mcp-pytest-canvas",
+            description="seeded by test_mcp_tools._seed_test_canvas",
+            permission="me",
+            release=False,
+            canvas_category="agent_canvas",
+            canvas_type="agent",
+            tags="",
+            dsl={
+                "components": {},
+                "history": [],
+                "messages": [],
+                "reference": [],
+                "path": [],
+                "answer": [],
+            },
+        )
+        created = True
+
+    yield canvas_id
+
+    if created:
+        with DB.connection_context():
+            try:
+                UserCanvas.delete().where(UserCanvas.id == canvas_id).execute()
+            except Exception:
+                pass
+
+
 @pytest.fixture(scope="session")
 def mcp_api_key(_credentials, workspace_id):
     """

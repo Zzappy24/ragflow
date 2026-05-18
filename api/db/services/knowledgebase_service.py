@@ -481,19 +481,29 @@ class KnowledgebaseService(CommonService):
     @classmethod
     @DB.connection_context()
     def accessible(cls, kb_id, user_id):
-        # Check if a dataset is accessible by a user
-        # Args:
-        #     kb_id: Knowledge base ID
-        #     user_id: User ID
-        # Returns:
-        #     Boolean indicating accessibility
-        docs = cls.model.select(
-            cls.model.id).join(UserTenant, on=(UserTenant.tenant_id == Knowledgebase.tenant_id)
-                               ).where(cls.model.id == kb_id, UserTenant.user_id == user_id).paginate(0, 1)
-        docs = docs.dicts()
-        if not docs:
+        # Check if a dataset is accessible by a user (or workspace tenant).
+        #
+        # The `user_id` argument is named for upstream compatibility but in our
+        # B2B SaaS fork it can be either:
+        #   - a real user_id (legacy CLI/SDK callers), OR
+        #   - the active workspace tenant_id (X-Workspace-Id middleware path).
+        #
+        # Both cases work below: when callers pass `active_tenant_id()` and
+        # the KB belongs to that workspace, `kb.tenant_id == user_id` matches
+        # and we return True. The joined-tenants fallback only fires for real
+        # user_ids (workspace tenants have no user_tenant rows so the lookup
+        # returns empty → False → workspace-strict by construction).
+        e, kb = cls.get_by_id(kb_id)
+        if not e:
             return False
-        return True
+        if kb.status != StatusEnum.VALID.value:
+            return False
+        if kb.tenant_id == user_id:
+            return True
+        if kb.permission != TenantPermission.TEAM.value:
+            return False
+        joined_tenants = TenantService.get_joined_tenants_by_user_id(user_id)
+        return any(tenant["tenant_id"] == kb.tenant_id for tenant in joined_tenants)
 
     @classmethod
     @DB.connection_context()
