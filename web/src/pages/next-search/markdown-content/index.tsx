@@ -84,8 +84,17 @@ const MarkdownContent = ({
   }, [reference, setDocumentIds]);
 
   const handleDocumentButtonClick = useCallback(
-    (documentId: string, chunk: IReferenceChunk) => () => {
-      clickDocumentButton?.(documentId, chunk);
+    (
+      documentId: string,
+      chunk: IReferenceChunk,
+      isPdf: boolean = false,
+      documentUrl?: string,
+    ) => {
+      void isPdf;
+      void documentUrl;
+      return () => {
+        clickDocumentButton?.(documentId, chunk);
+      };
     },
     [clickDocumentButton],
   );
@@ -236,10 +245,7 @@ const MarkdownContent = ({
         remarkPlugins={[remarkGfm, remarkMath]}
         components={
           {
-            // eslint-disable-next-line @typescript-eslint/no-unused-vars
-            p: ({ children, node, ...props }: any) => (
-              <p {...props}>{children}</p>
-            ),
+            p: ({ children, ...props }: any) => <p {...props}>{children}</p>,
             'custom-typography': ({ children }: { children: string }) =>
               renderReference(children),
             code(props: any) {

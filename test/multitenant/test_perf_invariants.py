@@ -212,10 +212,15 @@ class TestTenantIsolationInHandlers:
     """
 
     def test_document_app_uses_active_tenant(self):
-        src = read("api/apps/document_app.py")
-        assert "active_tenant_id()" in src, (
-            "active_tenant_id() not found in document_app.py. "
-            "Data scoping may be broken — verify handlers use active_tenant_id(), not current_user.id."
+        # Upstream deleted api/apps/document_app.py — routes were migrated to
+        # api/apps/restful_apis/document_api.py. The handlers there rely on
+        # @add_tenant_id_to_kwargs (which calls maybe_active_tenant_id()
+        # internally) rather than calling active_tenant_id() directly.
+        src = read("api/apps/restful_apis/document_api.py")
+        assert "add_tenant_id_to_kwargs" in src, (
+            "add_tenant_id_to_kwargs not found in document_api.py. "
+            "Workspace tenant resolution may be broken — handlers must use "
+            "add_tenant_id_to_kwargs (or active_tenant_id() inline), not current_user.id."
         )
 
     def test_dataset_api_uses_active_tenant(self):
@@ -267,4 +272,114 @@ class TestTaskServiceLock:
         assert "get_task:" in src, (
             "Per-tenant lock key 'get_task:{tenant_id}' not found in task_service.py. "
             "Upstream may have removed our per-tenant DB lock, causing task contention."
+        )
+
+
+# ---------------------------------------------------------------------------
+# Upstream "user_id-as-tenant_id" anti-pattern scan
+# ---------------------------------------------------------------------------
+
+class TestUpstreamJoinedTenantsMisuse:
+    """
+    Static scan: ban the upstream pattern where a service-layer function
+    receives `tenant_id` from our auth layer (workspace tenant_id) and
+    then feeds it to `get_joined_tenants_by_user_id(tenant_id)` as if it
+    were a user_id.
+
+    Bug shape (caught the hard way during the 2026-05-14 merge):
+
+        def list_datasets(tenant_id, args):
+            ...
+            tenants = TenantService.get_joined_tenants_by_user_id(tenant_id)
+            tenant_ids = [m["tenant_id"] for m in tenants]
+            kbs = KnowledgebaseService.get_list(tenant_ids, ...)
+            # → returns [] because workspace tenants have no user-tenant
+            # join rows. Silent — API answers 200 with empty data.
+
+    The `get_joined_tenants_by_user_id` helper is fundamentally a USER
+    lookup, so it must only be called with a user_id. In our fork the
+    `tenant_id` injected by `@add_tenant_id_to_kwargs` /
+    `@token_required` / `active_tenant_id()` is the **workspace
+    tenant_id**, not a user_id. Always.
+
+    If a service legitimately needs to widen the scope to all of a user's
+    joined tenants, it must receive a `user_id` parameter explicitly,
+    not piggy-back on `tenant_id`.
+
+    Allowed callers can be added to ALLOWED_CALLERS below with a one-line
+    justification — the test failure message explains what to do.
+    """
+
+    # (file_path_relative_to_repo, function_name) — both must match.
+    # Add an entry here only after verifying that the caller really receives
+    # a user_id, not a workspace tenant_id, at this call site.
+    ALLOWED_CALLERS: set[tuple[str, str]] = {
+        # dataset_api_service.list_datasets keeps a legacy joined-tenants
+        # lookup in its fallback branch (`if tenants: …` after the workspace-
+        # strict default), so legacy CLI/SDK callers that pass user_id (not a
+        # workspace tenant_id) still see all their joined tenants. Safe here
+        # because the `if tenants:` guard is exactly the "tenant_id is really
+        # a user_id" case — a workspace tenant_id always returns empty here.
+        ("api/apps/services/dataset_api_service.py", "list_datasets"),
+    }
+
+    def test_no_service_uses_joined_tenants_with_tenant_id(self):
+        import ast
+        import re
+
+        service_root = REPO_ROOT / "api/apps/services"
+        offenders: list[str] = []
+        # Pattern: get_joined_tenants_by_user_id(tenant_id)  (any whitespace).
+        # We catch the literal arg-name `tenant_id` because every service in
+        # our fork receives it as a workspace tenant. If a service introduces
+        # a real `user_id` parameter and calls with that, it's fine.
+        pat = re.compile(r"get_joined_tenants_by_user_id\s*\(\s*tenant_id\s*[,)]")
+
+        for path in service_root.rglob("*.py"):
+            try:
+                src = path.read_text(encoding="utf-8")
+            except Exception:
+                continue
+            if not pat.search(src):
+                continue
+            tree = ast.parse(src, str(path))
+            for node in ast.walk(tree):
+                if not isinstance(node, ast.Call):
+                    continue
+                # Match `<...>.get_joined_tenants_by_user_id(tenant_id, ...)`.
+                func = node.func
+                if isinstance(func, ast.Attribute) and func.attr == "get_joined_tenants_by_user_id":
+                    if (
+                        node.args
+                        and isinstance(node.args[0], ast.Name)
+                        and node.args[0].id == "tenant_id"
+                    ):
+                        # find enclosing function name for the error message
+                        enclosing = "<module>"
+                        for n in ast.walk(tree):
+                            if isinstance(n, (ast.FunctionDef, ast.AsyncFunctionDef)):
+                                if n.lineno <= node.lineno and (
+                                    n.end_lineno is None or n.end_lineno >= node.lineno
+                                ):
+                                    enclosing = n.name
+                        rel = path.relative_to(REPO_ROOT).as_posix()
+                        if (rel, enclosing) in self.ALLOWED_CALLERS:
+                            continue
+                        offenders.append(f"  {rel}:{node.lineno}  in {enclosing}()")
+
+        assert not offenders, (
+            "Anti-pattern detected: get_joined_tenants_by_user_id(tenant_id) "
+            "called in service layer.\n\n"
+            "In our fork the `tenant_id` injected by the auth layer is the "
+            "**workspace tenant_id**, not a user_id, so this call returns an "
+            "empty membership set and the service silently returns 0 rows.\n\n"
+            "Fix one of:\n"
+            "  (a) replace with workspace-strict scoping: `tenant_ids = [tenant_id]` "
+            "(see dataset_api_service.list_datasets for the canonical fix);\n"
+            "  (b) keep upstream's joined-tenants logic only when a real user_id "
+            "is in scope (rename the param), and only when `tenant_id == user.id`;\n"
+            "  (c) if the call IS correct in context (you have a real user_id "
+            "named tenant_id for legacy reasons), add the (path, func) tuple to "
+            "TestUpstreamJoinedTenantsMisuse.ALLOWED_CALLERS with a justification.\n\n"
+            "Offenders:\n" + "\n".join(offenders)
         )

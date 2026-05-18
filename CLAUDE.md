@@ -254,10 +254,50 @@ git merge origin/main --no-commit   # stop before auto-commit to resolve conflic
 **After resolving:**
 ```bash
 go build ./internal/...          # must be zero errors before committing
+# Smoke import: catches silent import losses from auto-merge (e.g. an
+# `import concurrent.futures` we relied on can disappear if upstream
+# reorders the imports around it).
+PYTHONPATH=. uv run python -c "import rag.svr.task_executor, api.asgi, api.apps"
 git add -A
 PATH=/opt/homebrew/bin:$PATH git commit   # homebrew PATH needed for pre-commit hook (npx)
 git checkout dev && git merge merge/upstream-$(date +%Y-%m-%d) --no-ff
 ```
+
+**Run the full test suite before merging to dev** (distilled from 2026-05-15 merge — combining test dirs in a single pytest invocation corrupts Python module resolution, so launch each separately):
+
+```bash
+# 1. Wipe Infinity volume if upstream bumped the version (nightly format breaks)
+#    Symptom: container Up Restarting, logs show "Segmentation fault" during WAL Replay.
+docker stop docker-infinity-1 && docker rm docker-infinity-1 \
+  && docker volume rm docker_infinity_data \
+  && bash scripts/dev_up.sh --full
+
+# 2. Canonical pytest env (RSA + ADMIN_JWT_SECRET MUST come from .env.local,
+#    not dev_up.sh — dev_up exports a placeholder which .env.local overwrites
+#    at server boot, so the placeholder rejects management-panel tokens).
+REAL_JWT=$(grep "^ADMIN_JWT_SECRET=" .env.local | cut -d= -f2-)
+export RAGFLOW_TEST_LOCAL_AUTH=1 RSA_PASSPHRASE=Welcome
+export ADMIN_JWT_SECRET="$REAL_JWT"
+export VIEWER_EMAIL=viewer.internal@cyllene.com EDITOR_EMAIL=editor.internal@cyllene.com
+export HOST_ADDRESS=http://127.0.0.1:9380 ZHIPU_AI_API_KEY=dummy PYTHONPATH=.
+# 3. Run each dir SEPARATELY — combining triggers Python module shadowing
+#    (notably `infinity` SDK gets shadowed → 30+ collection errors).
+uv run python -m pytest test/multitenant \
+  && uv run python -m pytest test/unit_test \
+       --ignore=test/unit_test/agent/sandbox/test_local_provider.py \
+  && uv run python -m pytest test/multitenant_http_api
+```
+
+Expected baseline (2026-05-15): 2132 passed / 206 skipped / 9 failed. The 9
+fails are EPUB tests that pass in isolation — a pre-existing test isolation
+issue where Python loses the `infinity` package when certain imports precede.
+The 164 skips in multitenant_http_api are upstream `@pytest.mark.skipif(DOC_ENGINE == "infinity")` markers on known Infinity bugs they have decided to skip (issues/6104, issues/5851, issues/6509, #8208, …). We inherit those — not a coverage hole on our side.
+
+**Excluded test directories** (and why):
+- `test/playwright` — browser E2E, separate runner (Playwright)
+- `test/benchmark` — perf benchmarks, not correctness
+- `test/testcases` — upstream QA suite with a conflict between `test_http_api/common.py` and `test_sdk_api/common.py` that breaks collection (`ImportError: cannot import name 'delete_all_chats'`). Fixable by either renaming or `__init__.py`-ing each `common.py`; out of scope for the merge itself.
+- `test/unit_test/agent/sandbox/test_local_provider.py` — Tablestore native C extension wrong arch on macOS arm64 (`slice is not valid mach-o file`); collection error, not a real failure.
 
 **Watch for these upstream regressions (reject silently):**
 - Removing our `_embed_insert_pipelined` or reverting to sequential embed→insert
@@ -265,9 +305,11 @@ git checkout dev && git merge merge/upstream-$(date +%Y-%m-%d) --no-ff
 - Changing `GetTenantID(c)` back to `user.ID` in any handler
 - Hardcoding pool sizes (Infinity `"4"`, Redis no pool)
 - `np.concatenate` in a loop in `embedding_model.py` (O(n²))
+- Bumping Infinity image (`docker/docker-compose-base.yml` + `pyproject.toml`) — nightly format breaks the local WAL silently. Our Helm chart pins `dev5` explicitly; **do not** propagate upstream bumps to `helm/ragflow/values.yaml` without a migration plan.
 
 **Watch for these upstream breaking changes (require full audit):**
 - Any change to `user_id == tenant_id` invariant in `api/db/init_data.py`
 - New top-level route group added outside `authorized` in `router.go` (won't get workspace middleware)
 - Rename of `GetInfoByUserID` in `internal/dao/tenant.go` (breaks `ListTenantDefaultModels`)
 - Any new Langfuse-related route or service that uses `user_id` instead of `active_tenant_id()` — would leak workspace traces into a wrong project. See [docs/roadmap-multitenant-saas.md](docs/roadmap-multitenant-saas.md) Tier 3 prerequisites.
+- **Service-layer `get_joined_tenants_by_user_id(tenant_id)` anti-pattern** — upstream refactors regularly introduce a service function that takes `tenant_id` (which in our fork is the **workspace tenant_id**, not a user_id) and feeds it to `TenantService.get_joined_tenants_by_user_id(...)`. The lookup returns empty for workspace tenants → service silently returns 0 rows. Caught twice in the 2026-05-15 merge: `dataset_api_service.list_datasets` (broke MCP + browser dataset list) and `knowledgebase_service.accessible` (broke a unit test for team-dataset access). The `test/multitenant/test_perf_invariants.py::TestUpstreamJoinedTenantsMisuse` AST test flags new occurrences automatically — if it fails after a merge, the fix is either (a) workspace-strict scoping `tenant_ids = [tenant_id]` (see `dataset_api_service.list_datasets`) or (b) adopt the upstream impl as-is when the parameter is actually named `user_id` and both meanings work (see `knowledgebase_service.accessible`).
