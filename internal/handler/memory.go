@@ -194,7 +194,7 @@ func (h *MemoryHandler) CreateMemory(c *gin.Context) {
 	// Return success response
 	c.JSON(http.StatusOK, gin.H{
 		"code":    common.CodeSuccess,
-		"message":  "success",
+		"message": "success",
 		"data":    result,
 	})
 }
@@ -293,7 +293,7 @@ func (h *MemoryHandler) UpdateMemory(c *gin.Context) {
 	// Return success response
 	c.JSON(http.StatusOK, gin.H{
 		"code":    common.CodeSuccess,
-		"message":  "success",
+		"message": "success",
 		"data":    result,
 	})
 }
@@ -347,7 +347,7 @@ func (h *MemoryHandler) DeleteMemory(c *gin.Context) {
 	// Return success response
 	c.JSON(http.StatusOK, gin.H{
 		"code":    common.CodeSuccess,
-		"message":  "success",
+		"message": "success",
 		"data":    nil,
 	})
 }
@@ -444,7 +444,7 @@ func (h *MemoryHandler) ListMemories(c *gin.Context) {
 	// Return success response
 	c.JSON(http.StatusOK, gin.H{
 		"code":    common.CodeSuccess,
-		"message":  "success",
+		"message": "success",
 		"data":    result,
 	})
 }
@@ -498,7 +498,7 @@ func (h *MemoryHandler) GetMemoryConfig(c *gin.Context) {
 	// Return success response
 	c.JSON(http.StatusOK, gin.H{
 		"code":    common.CodeSuccess,
-		"message":  "success",
+		"message": "success",
 		"data":    result,
 	})
 }
