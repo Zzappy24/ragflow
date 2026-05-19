@@ -39,22 +39,54 @@ from api.apps.extensions.rbac import require_permission, Permission
 # --- END CYLLENE CUSTOM CODE ---
 from box_sdk_gen import BoxOAuth, OAuthConfig, GetAuthorizeUrlOptions
 
+
+LOGGER = logging.getLogger(__name__)
+
+
+def _connector_auth_error(connector_id: str, user_id: str):
+    """Return the connector authorization failure response and log the denial.
+
+    Cross-workspace IDOR guard introduced in upstream PR #14747. We keep
+    @require_permission on the route AND this inline accessible() check so
+    even a DATASOURCE_CONFIGURE-granted user cannot touch a connector that
+    belongs to another workspace.
+    """
+    LOGGER.warning("connector access denied: connector_id=%s user_id=%s", connector_id, user_id)
+    return get_json_result(data=False, message="No authorization.", code=RetCode.AUTHENTICATION_ERROR)
+
 @manager.route("/connectors/<connector_id>", methods=["PATCH"])  # noqa: F821
 @login_required
 @require_permission(Permission.DATASOURCE_CONFIGURE)
 async def update_connector(connector_id):
     req = await get_request_json()
+    if isinstance(req, dict) and isinstance(req.get("data"), dict):
+        req = req["data"]
+
     e, conn = ConnectorService.get_by_id(connector_id)
     if not e:
         return get_data_error_result(message="Can't find this Connector!")
 
+    should_sleep = False
     if req:
-        conn = {fld: req[fld] for fld in ["prune_freq", "refresh_freq", "config", "timeout_secs"] if fld in req}
-        conn["id"] = connector_id
-        ConnectorService.update_by_id(connector_id, conn)
+        update_fields = {fld: req[fld] for fld in ["prune_freq", "refresh_freq", "config", "timeout_secs"] if fld in req}
+        if update_fields:
+            update_fields["id"] = connector_id
+            ConnectorService.update_by_id(connector_id, update_fields)
+            should_sleep = True
 
-    await asyncio.sleep(1)
+        if req.get("reschedule"):
+            ConnectorService.cancel_tasks(connector_id)
+            ConnectorService.schedule_tasks(connector_id)
+        elif req.get("status") in [TaskStatus.CANCEL, "CANCEL"]:
+            ConnectorService.cancel_tasks(connector_id)
+        elif req.get("status") in [TaskStatus.SCHEDULE, "SCHEDULE"]:
+            ConnectorService.schedule_tasks(connector_id)
+
+    if should_sleep:
+        await asyncio.sleep(1)
     e, conn = ConnectorService.get_by_id(connector_id)
+    if not e:
+        return get_data_error_result(message="Can't find this Connector!")
 
     return get_json_result(data=conn.to_dict())
 
@@ -74,9 +106,9 @@ async def create_connector():
             "input_type": InputType.POLL,
             "config": req["config"],
             "refresh_freq": int(req.get("refresh_freq", 5)),
-            "prune_freq": int(req.get("prune_freq", 720)),
+            "prune_freq": int(req.get("prune_freq", 5)),
             "timeout_secs": int(req.get("timeout_secs", 60 * 29)),
-            "status": TaskStatus.SCHEDULE,
+            "status": TaskStatus.UNSTART,
         }
         ConnectorService.save(**conn)
 
@@ -140,7 +172,11 @@ async def rebuild(connector_id):
 @login_required
 @require_permission(Permission.DATASOURCE_CONFIGURE)  # --- CYLLENE CUSTOM CODE ---
 def rm_connector(connector_id):
-    ConnectorService.resume(connector_id, TaskStatus.CANCEL)
+    """Delete an accessible connector after canceling its sync tasks."""
+    if not ConnectorService.accessible(connector_id, current_user.id):
+        return _connector_auth_error(connector_id, current_user.id)
+
+    ConnectorService.cancel_tasks(connector_id)
     ConnectorService.delete_by_id(connector_id)
     return get_json_result(data=True)
 
