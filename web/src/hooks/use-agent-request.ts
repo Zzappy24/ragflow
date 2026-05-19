@@ -2,7 +2,7 @@ import { FileUploadProps } from '@/components/file-upload';
 import { useHandleFilterSubmit } from '@/components/list-filter-bar/use-handle-filter-submit';
 import message from '@/components/ui/message';
 import { AgentCategory, AgentGlobals } from '@/constants/agent';
-import { useFetchTenantInfo } from '@/hooks/use-user-setting-request';
+import { useFetchUserInfo } from '@/hooks/use-user-setting-request';
 import {
   IAgentLogResponse,
   IAgentLogsRequest,
@@ -704,13 +704,19 @@ export const useFetchAgentLog = (searchParams: IAgentLogsRequest) => {
 
 export const useFetchSessionsByCanvasId = () => {
   const { id: canvasId } = useParams();
-  const { data: tenantInfo } = useFetchTenantInfo();
+  // CUSTOM B2B SaaS — agent conversations are per-user. The session owner
+  // (`exp_user_id`) is the authenticated user, NOT the workspace tenant.
+  // Keying off tenantInfo.tenant_id used to break here: that value is the
+  // personal tenant for users with a model config and the workspace tenant
+  // otherwise, so it never reliably matched what create_agent_session
+  // stored. userInfo.id is stable and matches the backend's create key.
+  const { data: userInfo } = useFetchUserInfo();
 
   const { data, isFetching: loading } = useQuery<IAgentLogsResponse>({
-    queryKey: [AgentApiAction.FetchSessionsByCanvasId, canvasId],
+    queryKey: [AgentApiAction.FetchSessionsByCanvasId, canvasId, userInfo?.id],
     initialData: { total: 0, sessions: [] } as IAgentLogsResponse,
     gcTime: 0,
-    enabled: !!canvasId && !isEmpty(tenantInfo),
+    enabled: !!canvasId && !!userInfo?.id,
     queryFn: async () => {
       if (!canvasId) {
         return { total: 0, sessions: [] };
@@ -719,7 +725,7 @@ export const useFetchSessionsByCanvasId = () => {
       const { data } = await fetchAgentLogsByCanvasId(canvasId, {
         page: 1,
         page_size: 100000,
-        exp_user_id: tenantInfo.tenant_id,
+        exp_user_id: userInfo.id,
       });
 
       return { total: data?.total ?? 0, sessions: data?.data ?? [] };

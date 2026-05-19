@@ -382,7 +382,16 @@ def list_agent_sessions(agent_id, tenant_id):
 @_require_canvas_access_async
 async def create_agent_session(agent_id, tenant_id):
     req = await get_request_json()
-    user_id = req.get("user_id") or request.args.get("user_id", tenant_id)
+    # CUSTOM B2B SaaS — agent conversations are per-user.
+    # `user_id` doubles as `exp_user_id` (the session owner). When the caller
+    # is an SDK integration it passes an explicit end-user id; the native UI
+    # passes nothing, in which case the owner is the authenticated user.
+    # Previously this defaulted to `tenant_id` (the workspace tenant), so a
+    # session created by user A was keyed to the workspace and either leaked
+    # to every member or — once the listing query keyed off the personal
+    # tenant — vanished on reload. Defaulting to current_user.id keeps the
+    # create key and the list key (see list_agent_sessions) consistent.
+    user_id = req.get("user_id") or request.args.get("user_id") or current_user.id
     release_mode = bool(req.get("release", request.args.get("release", False)))
 
     try:
@@ -1173,6 +1182,11 @@ async def agent_chat_completion(tenant_id, agent_id=None):
         inputs = req.get("inputs", {})
         runtime_user_id = req.get("user_id") or tenant_id
         user_id = str(runtime_user_id)
+        # CUSTOM B2B SaaS — conversation owner is per-user, NOT per-workspace.
+        # Kept separate from runtime_user_id (which keys the Redis canvas
+        # replica `{canvas_id}:{tenant_id}:{runtime_user_id}` and must stay
+        # = tenant_id). exp_user_id in the workflow_conv dicts uses this.
+        session_owner_id = str(req.get("user_id") or current_user.id)
         custom_header = req.get("custom_header", "")
 
         _, cvs = await thread_pool_exec(UserCanvasService.get_by_id, agent_id)
@@ -1247,6 +1261,11 @@ async def agent_chat_completion(tenant_id, agent_id=None):
         inputs = req.get("inputs", {})
         runtime_user_id = req.get("user_id") or tenant_id
         user_id = str(runtime_user_id)
+        # CUSTOM B2B SaaS — conversation owner is per-user, NOT per-workspace.
+        # Kept separate from runtime_user_id (which keys the Redis canvas
+        # replica `{canvas_id}:{tenant_id}:{runtime_user_id}` and must stay
+        # = tenant_id). exp_user_id in the workflow_conv dicts uses this.
+        session_owner_id = str(req.get("user_id") or current_user.id)
         custom_header = req.get("custom_header", "")
         session_id = get_uuid()
 
@@ -1285,7 +1304,7 @@ async def agent_chat_completion(tenant_id, agent_id=None):
                 "id": session_id,
                 "dialog_id": cvs.id,
                 "user_id": user_id,
-                "exp_user_id": user_id,
+                "exp_user_id": session_owner_id,
                 "name": req.get("name", ""),
                 "message": [
                     {
@@ -1335,7 +1354,7 @@ async def agent_chat_completion(tenant_id, agent_id=None):
             "id": session_id,
             "dialog_id": cvs.id,
             "user_id": user_id,
-            "exp_user_id": user_id,
+            "exp_user_id": session_owner_id,
             "name": req.get("name", ""),
             "message": [
                 {

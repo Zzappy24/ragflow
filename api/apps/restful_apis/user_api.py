@@ -897,6 +897,42 @@ async def tenant_info():
     """
     try:
         tenants = TenantService.get_info_by(current_user.id)
+        if tenants and tenants[0].get("llm_id") and tenants[0].get("embd_id"):
+            return get_json_result(data=tenants[0])
+
+        # CUSTOM B2B SaaS — workspace-default model fallback.
+        # `get_info_by` only returns a row when the user OWNS a tenant.
+        # A plain workspace member (viewer/editor) owns nothing, so the row
+        # is empty and the frontend would push them to /user-setting/model
+        # — a route gated by @require_permission(LLM_CONFIGURE) they can't
+        # reach (403), leaving them stuck with no usable model. The RAG path
+        # already falls back to the workspace defaults via
+        # tenant_model_service; this makes the HTTP surface consistent so
+        # the UI sees a configured model and never shows the warning.
+        from api.utils.tenant_context import maybe_active_tenant_id
+
+        ws_tid = maybe_active_tenant_id()
+        if ws_tid:
+            ok, ws = TenantService.get_by_id(ws_tid)
+            if ok and ws.llm_id and ws.embd_id:
+                ws_role = ""
+                if tenants:
+                    ws_role = tenants[0].get("role", "")
+                return get_json_result(
+                    data={
+                        "tenant_id": ws.id,
+                        "name": ws.name,
+                        "llm_id": ws.llm_id,
+                        "embd_id": ws.embd_id,
+                        "rerank_id": ws.rerank_id,
+                        "asr_id": ws.asr_id,
+                        "img2txt_id": ws.img2txt_id,
+                        "tts_id": ws.tts_id,
+                        "parser_ids": ws.parser_ids,
+                        "role": ws_role,
+                    }
+                )
+
         if not tenants:
             return get_data_error_result(message="Tenant not found!")
         return get_json_result(data=tenants[0])
