@@ -4,7 +4,7 @@
  * Landing target of the admin-panel "invite" email. Reads the ``invite_token``
  * query param (minted by ``POST /api/admin/users`` in the management server)
  * and POSTs it along with the user's chosen password to
- * ``/v1/user/set_initial_password`` on RAGFlow.
+ * ``/api/v1/set_initial_password`` on RAGFlow.
  *
  * On success:
  *   - Backend returns an ``Authorization`` header + user JSON body
@@ -47,7 +47,7 @@ export default function SetPasswordPage() {
     setError(null);
     setLoading(true);
     try {
-      const res = await fetch('/v1/user/set_initial_password', {
+      const res = await fetch('/api/v1/set_initial_password', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         credentials: 'include',

@@ -156,11 +156,58 @@ def _parse_api_ts() -> list[tuple[str, str]]:
 # `management/server`), so its /api/v1/admin/* routes are out of scope here.
 SKIP_PATH_PREFIXES: tuple[str, ...] = (
     "/api/v1/admin/",  # admin panel backend (separate uvicorn process)
+    # /api/v1/skills/* — Go-only routes (no Python equivalent — see
+    # internal/router/router.go). Already exempted in EXEMPT_FRONTEND_ENDPOINTS
+    # for api.ts entries (skillSpaces, skillSearch, etc.); the direct fetches
+    # in web/src/pages/skills/hooks.ts call the same Go-served paths.
+    "/api/v1/skills/",
 )
 
 
+def _parse_direct_fetches() -> list[tuple[str, str]]:
+    """
+    Scan web/src/ for inline ``fetch('/...')`` calls and return (label, url)
+    for every URL literal passed as the first argument. Catches drift that
+    bypasses ``api.ts`` — typical when a one-off URL is embedded right in a
+    handler (bridge handoff, set-initial-password, etc.). 2026-05-15:
+    ``bridge-handoff.ts`` kept calling ``/v1/user/bridge`` for days because
+    it was hard-coded here instead of in api.ts; same week
+    ``set-password/index.tsx`` had the same issue for
+    ``/v1/user/set_initial_password``. Neither was covered by the existing
+    api.ts scanner.
+
+    Variable construction (``fetch(api.foo)``, ``fetch(`${base}/x`)``) is
+    not matched on purpose — those route through api.ts and are covered by
+    ``_parse_api_ts()`` above.
+    """
+    web_root = os.path.normpath(
+        os.path.join(os.path.dirname(__file__), "..", "..", "web", "src")
+    )
+    pat = re.compile(r"""(?<![A-Za-z_$])fetch\s*\(\s*(['"])(/[^'"]+)\1""")
+    results: list[tuple[str, str]] = []
+    for dirpath, _dirs, files in os.walk(web_root):
+        if any(seg in dirpath for seg in ("node_modules", "/dist", "/.")):
+            continue
+        for name in files:
+            if not name.endswith((".ts", ".tsx", ".js", ".jsx")):
+                continue
+            path = os.path.join(dirpath, name)
+            try:
+                with open(path, encoding="utf-8") as f:
+                    src = f.read()
+            except Exception:
+                continue
+            for m in pat.finditer(src):
+                url = m.group(2).split("?", 1)[0]  # query string is irrelevant
+                line = src[: m.start()].count("\n") + 1
+                rel = os.path.relpath(path, web_root).replace("\\", "/")
+                label = f"fetch_{rel}:{line}"
+                results.append((label, url))
+    return results
+
+
 # Build the endpoint list once at module level so parametrize can use it.
-_ALL_ENDPOINTS: list[tuple[str, str]] = _parse_api_ts()
+_ALL_ENDPOINTS: list[tuple[str, str]] = _parse_api_ts() + _parse_direct_fetches()
 
 # Filter out exemptions and routes that target a different backend
 ENDPOINTS: list[tuple[str, str]] = [
