@@ -3,6 +3,31 @@ project(rag_tokenizer)
 
 set(CMAKE_CXX_STANDARD 23)
 
+# Cross-platform dependency discovery — Linux finds libs in default paths,
+# macOS needs the Homebrew prefix explicitly. Tested on Ubuntu 22.04 (apt
+# packages libpcre2-dev + libsimde-dev under /usr) and macOS arm64
+# (brew install pcre2 simde under /opt/homebrew).
+if(APPLE)
+    execute_process(
+        COMMAND brew --prefix
+        OUTPUT_VARIABLE HOMEBREW_PREFIX
+        OUTPUT_STRIP_TRAILING_WHITESPACE
+        RESULT_VARIABLE BREW_RC
+    )
+    if(BREW_RC EQUAL 0 AND HOMEBREW_PREFIX)
+        message(STATUS "macOS detected; Homebrew prefix: ${HOMEBREW_PREFIX}")
+        include_directories(SYSTEM "${HOMEBREW_PREFIX}/include")
+        link_directories("${HOMEBREW_PREFIX}/lib")
+    endif()
+endif()
+
+# Resolve libpcre2-8 portably — upstream used the literal token `${PCRE2_LIB}`
+# which only works on systems whose default linker search path already
+# contains it. find_library picks it up from either /usr/local/lib (Linux)
+# or /opt/homebrew/lib (macOS).
+find_library(PCRE2_LIB NAMES pcre2-8 REQUIRED)
+message(STATUS "PCRE2 library: ${PCRE2_LIB}")
+
 # Option to enable AddressSanitizer
 option(ENABLE_ASAN "Enable AddressSanitizer" OFF)
 
@@ -88,7 +113,7 @@ add_executable(rag_tokenizer
         ${darts_src}
         ${re2_src})
 
-target_link_libraries(rag_tokenizer stdc++ m libpcre2-8.a)
+target_link_libraries(rag_tokenizer stdc++ m ${PCRE2_LIB})
 target_include_directories(rag_tokenizer PUBLIC "${CMAKE_SOURCE_DIR}")
 set_target_properties(rag_tokenizer PROPERTIES
         CXX_STANDARD 20
@@ -118,7 +143,7 @@ add_library(rag_tokenizer_c_api STATIC
         ${re2_src}
 )
 
-target_link_libraries(rag_tokenizer_c_api stdc++ libm.a libpcre2-8.a)
+target_link_libraries(rag_tokenizer_c_api stdc++ libm.a ${PCRE2_LIB})
 target_include_directories(rag_tokenizer_c_api PUBLIC "${CMAKE_SOURCE_DIR}")
 set_target_properties(rag_tokenizer_c_api PROPERTIES
         CXX_STANDARD 20
@@ -130,7 +155,7 @@ add_executable(rag_analyzer_c_test
         rag_analyzer_c_test.cpp
 )
 
-target_link_libraries(rag_analyzer_c_test rag_tokenizer_c_api stdc++ libm.a libpcre2-8.a)
+target_link_libraries(rag_analyzer_c_test rag_tokenizer_c_api stdc++ libm.a ${PCRE2_LIB})
 target_include_directories(rag_analyzer_c_test PUBLIC "${CMAKE_SOURCE_DIR}")
 set_target_properties(rag_analyzer_c_test PROPERTIES
         CXX_STANDARD 20
