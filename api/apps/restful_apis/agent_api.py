@@ -33,7 +33,7 @@ from agent.canvas import Canvas
 from agent.component import LLM
 from agent.dsl_migration import normalize_chunker_dsl
 from api.apps import current_user, login_required
-from api.apps.extensions.rbac import require_permission, Permission
+from api.apps.extensions.rbac import require_permission, has_permission, Permission
 from api.apps.services.canvas_replica_service import CanvasReplicaService
 from api.db import CanvasCategory
 from api.db.db_models import Task
@@ -351,6 +351,17 @@ def list_agent_sessions(agent_id, tenant_id):
     exp_user_id = request.args.get("exp_user_id")
     desc = request.args.get("desc") not in {"False", "false"}
 
+    # CUSTOM B2B SaaS — agent conversations are private per user.
+    # The `user_id` / `exp_user_id` query params are client-supplied; without
+    # this guard any workspace member could list another member's sessions by
+    # passing their id (cross-member IDOR). Only AUDIT_READ holders (ws_admin,
+    # org_admin, superuser) may query on behalf of someone else. Everyone else
+    # is hard-pinned to their own id, regardless of what they sent.
+    # Mirrors the same guard in chat_api.list_sessions.
+    if not has_permission(current_user.id, tenant_id, Permission.AUDIT_READ):
+        user_id = current_user.id
+        exp_user_id = current_user.id
+
     if exp_user_id:
         sessions = API4ConversationService.get_names(agent_id, exp_user_id)
         return _agent_session_list_result(sessions, len(sessions))
@@ -391,7 +402,16 @@ async def create_agent_session(agent_id, tenant_id):
     # to every member or — once the listing query keyed off the personal
     # tenant — vanished on reload. Defaulting to current_user.id keeps the
     # create key and the list key (see list_agent_sessions) consistent.
+    #
+    # Identity guard: a non-admin caller may NOT create a session owned by
+    # someone else (would pollute that member's session list). Only
+    # AUDIT_READ holders may set an explicit owner; everyone else is pinned
+    # to their own id. Same admin-or-self rule as list_agent_sessions.
     user_id = req.get("user_id") or request.args.get("user_id") or current_user.id
+    if user_id != current_user.id and not has_permission(
+        current_user.id, tenant_id, Permission.AUDIT_READ
+    ):
+        user_id = current_user.id
     release_mode = bool(req.get("release", request.args.get("release", False)))
 
     try:
