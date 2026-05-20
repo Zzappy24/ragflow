@@ -1,0 +1,11 @@
+apiVersion: v2
+name: ragflow-task-executor
+description: |
+  Background task workers for the Cyllene RAGFlow fork.
+  Each pod runs ONE `rag/svr/task_executor.py` process; scaling is K8s-native
+  (more pods, not more workers per pod). Driven by KEDA on Redis stream
+  pending count, NOT CPU — workers are I/O-bound on Ollama/Infinity, CPU
+  stays low even under heavy backlog so a CPU-based HPA would never react.
+type: application
+version: 1.0.0
+appVersion: "cyllene-1.0.0"

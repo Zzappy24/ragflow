@@ -1,0 +1,88 @@
+{{- if .Values.minio.enabled }}
+# MinIO Tenant CR — provisioned by minio/operator. Tenant = one logical
+# MinIO cluster scoped to a namespace, with its own root creds, encryption
+# config, and console.
+#
+# 4 servers × 1 drive (volumesPerServer=1) is **EC4+0** = no parity, max
+# performance. Phase 2 plan: bump volumesPerServer to 4 → EC4+2 (read until
+# 2 drives per server fail) once storage budget allows the 4× increase.
+#
+# Operator install: helm/operators/minio-operator (separate ArgoCD app).
+# CRD reference: https://min.io/docs/minio/kubernetes/upstream/reference/operator-crd.html
+apiVersion: minio.min.io/v2
+kind: Tenant
+metadata:
+  name: minio
+  labels:
+    {{- include "ragflow.labels" . | nindent 4 }}
+  annotations:
+    # Operator drives `kubectl rollout` on the StatefulSet automatically;
+    # no manual annotation needed unless we want to tune scheduler hints.
+    prometheus.io/path: /minio/v2/metrics/cluster
+    prometheus.io/port: "9000"
+    prometheus.io/scrape: "true"
+spec:
+  # Root credentials sourced from Vault — the operator's bootstrap reads
+  # the Secret on tenant create and never reads it again. We never modify
+  # this Secret post-creation (would be a no-op anyway).
+  configuration:
+    name: {{ .Values.minio.rootCredentialsSecretRef }}
+
+  # One pool = one homogeneous group of servers. We use 1 pool of 4
+  # servers; expanding capacity later means adding a second pool.
+  pools:
+    - name: pool-0
+      servers: {{ .Values.minio.servers }}
+      volumesPerServer: {{ .Values.minio.volumesPerServer }}
+      volumeClaimTemplate:
+        metadata:
+          name: data
+        spec:
+          accessModes: ["ReadWriteOnce"]
+          storageClassName: {{ .Values.global.storageClass | quote }}
+          resources:
+            requests:
+              storage: {{ .Values.minio.size }}
+      resources:
+        {{- toYaml .Values.minio.resources | nindent 8 }}
+
+      # Spread servers across nodes — losing a node mustn't kill > 25% of
+      # the pool, otherwise EC can't reconstruct on the fly.
+      affinity:
+        podAntiAffinity:
+          preferredDuringSchedulingIgnoredDuringExecution:
+            - weight: 100
+              podAffinityTerm:
+                topologyKey: kubernetes.io/hostname
+                labelSelector:
+                  matchLabels:
+                    v1.min.io/tenant: minio
+                    v1.min.io/pool: pool-0
+
+  # Phase 0: TLS terminates at Envoy Gateway — internal MinIO traffic is
+  # plaintext on the cluster network (Calico encrypts pod-to-pod via
+  # WireGuard at the cluster level). Re-enable autoCert in Phase 1 if
+  # the threat model expands.
+  requestAutoCert: false
+
+  # Disable the public console exposure — admins access MinIO via
+  # `kubectl port-forward` or through the s3manager UI in its own ns.
+  exposeServices:
+    minio: true       # ClusterIP for ragflow-api/task-executor
+    console: false    # console kept private
+
+  prometheusOperator: true
+  metrics:
+    enabled: true
+    port: 9000
+    protocol: HTTP
+
+  # Bucket created automatically at tenant boot — RAGFlow expects
+  # `ragflow-storage` (set via env in configmap-app.yaml).
+  buckets:
+    - name: ragflow-storage
+      objectLock: false
+
+  users:
+    - name: {{ .Values.minio.rootCredentialsSecretRef }}
+{{- end }}

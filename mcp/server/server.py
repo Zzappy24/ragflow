@@ -1,0 +1,1619 @@
+#
+#  Copyright 2025 The InfiniFlow Authors. All Rights Reserved.
+#
+#  Licensed under the Apache License, Version 2.0 (the "License");
+#  you may not use this file except in compliance with the License.
+#  You may obtain a copy of the License at
+#
+#      http://www.apache.org/licenses/LICENSE-2.0
+#
+#  Unless required by applicable law or agreed to in writing, software
+#  distributed under the License is distributed on an "AS IS" BASIS,
+#  WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+#  See the License for the specific language governing permissions and
+#  limitations under the License.
+#
+
+import json
+import logging
+import random
+import time
+from collections import OrderedDict
+from collections.abc import AsyncIterator
+from contextlib import asynccontextmanager
+from functools import wraps
+from typing import Any
+
+import click
+import httpx
+import mcp.types as types
+from mcp.server.lowlevel import Server
+from starlette.applications import Starlette
+from starlette.middleware import Middleware
+from starlette.responses import JSONResponse, Response
+from starlette.routing import Mount, Route
+from enum import StrEnum
+
+
+class LaunchMode(StrEnum):
+    SELF_HOST = "self-host"
+    HOST = "host"
+
+
+class Transport(StrEnum):
+    SSE = "sse"
+    STEAMABLE_HTTP = "streamable-http"
+
+
+BASE_URL = "http://127.0.0.1:9380"
+HOST = "127.0.0.1"
+PORT = "9382"
+HOST_API_KEY = ""
+MODE = ""
+TRANSPORT_SSE_ENABLED = True
+TRANSPORT_STREAMABLE_HTTP_ENABLED = True
+JSON_RESPONSE = True
+
+
+class RAGFlowConnector:
+    _MAX_DATASET_CACHE = 32
+    _CACHE_TTL = 300
+    _DATASET_PAGE_SIZE = 1000
+
+    _dataset_metadata_cache: OrderedDict[str, tuple[dict, float | int]] = OrderedDict()  # "dataset_id" -> (metadata, expiry_ts)
+    _document_metadata_cache: OrderedDict[str, tuple[list[tuple[str, dict]], float | int]] = OrderedDict()  # "dataset_id" -> ([(document_id, doc_metadata)], expiry_ts)
+
+    def __init__(self, base_url: str, version="v1"):
+        self.base_url = base_url
+        self.version = version
+        self.api_url = f"{self.base_url}/api/{self.version}"
+        self._async_client = None
+
+    async def _get_client(self):
+        if self._async_client is None:
+            self._async_client = httpx.AsyncClient(timeout=httpx.Timeout(60.0))
+        return self._async_client
+
+    async def close(self):
+        if self._async_client is not None:
+            await self._async_client.aclose()
+            self._async_client = None
+
+    async def _post(self, path, json=None, stream=False, files=None, api_key: str = ""):
+        if not api_key:
+            return None
+        client = await self._get_client()
+        res = await client.post(url=self.api_url + path, json=json, headers={"Authorization": f"Bearer {api_key}"})
+        return res
+
+    async def _get(self, path, params=None, api_key: str = ""):
+        if not api_key:
+            return None
+        client = await self._get_client()
+        res = await client.get(url=self.api_url + path, params=params, headers={"Authorization": f"Bearer {api_key}"})
+        return res
+
+    def _is_cache_valid(self, ts):
+        return time.time() < ts
+
+    def _get_expiry_timestamp(self):
+        offset = random.randint(-30, 30)
+        return time.time() + self._CACHE_TTL + offset
+
+    def _get_cached_dataset_metadata(self, dataset_id):
+        entry = self._dataset_metadata_cache.get(dataset_id)
+        if entry:
+            data, ts = entry
+            if self._is_cache_valid(ts):
+                self._dataset_metadata_cache.move_to_end(dataset_id)
+                return data
+        return None
+
+    def _set_cached_dataset_metadata(self, dataset_id, metadata):
+        self._dataset_metadata_cache[dataset_id] = (metadata, self._get_expiry_timestamp())
+        self._dataset_metadata_cache.move_to_end(dataset_id)
+        if len(self._dataset_metadata_cache) > self._MAX_DATASET_CACHE:
+            self._dataset_metadata_cache.popitem(last=False)
+
+    def _get_cached_document_metadata_by_dataset(self, dataset_id):
+        entry = self._document_metadata_cache.get(dataset_id)
+        if entry:
+            data_list, ts = entry
+            if self._is_cache_valid(ts):
+                self._document_metadata_cache.move_to_end(dataset_id)
+                return {doc_id: doc_meta for doc_id, doc_meta in data_list}
+        return None
+
+    def _set_cached_document_metadata_by_dataset(self, dataset_id, doc_id_meta_list):
+        self._document_metadata_cache[dataset_id] = (doc_id_meta_list, self._get_expiry_timestamp())
+        self._document_metadata_cache.move_to_end(dataset_id)
+
+    async def _fetch_datasets_page(
+        self,
+        *,
+        api_key: str,
+        page: int,
+        page_size: int,
+        orderby: str = "create_time",
+        desc: bool = True,
+        id: str | None = None,
+        name: str | None = None,
+    ):
+        """Fetch one structured page of accessible datasets from the backend API."""
+        params = {"page": page, "page_size": page_size, "orderby": orderby, "desc": desc}
+        if id:
+            params["id"] = id
+        if name:
+            params["name"] = name
+
+        res = await self._get("/datasets", params, api_key=api_key)
+        if not res or res.status_code != 200:
+            error_message = None
+            if res is not None:
+                try:
+                    error_message = res.json().get("message")
+                except Exception:
+                    error_message = None
+            raise Exception([types.TextContent(type="text", text=error_message or "Cannot process this operation.")])
+
+        res_json = res.json()
+        if res_json.get("code") != 0:
+            raise Exception([types.TextContent(type="text", text=res_json.get("message", "Cannot process this operation."))])
+
+        return res_json
+
+    async def list_datasets(self, *, api_key: str, page: int = 1, page_size: int = 1000, orderby: str = "create_time", desc: bool = True, id: str | None = None, name: str | None = None):
+        """Return accessible datasets as newline-delimited JSON for MCP tool descriptions."""
+        res_json = await self._fetch_datasets_page(api_key=api_key, page=page, page_size=page_size, orderby=orderby, desc=desc, id=id, name=name)
+        result_list = []
+        for data in res_json["data"]:
+            d = {"description": data["description"], "id": data["id"]}
+            result_list.append(json.dumps(d, ensure_ascii=False))
+        return "\n".join(result_list)
+
+    async def resolve_dataset_ids(self, *, api_key: str):
+        """Resolve all accessible dataset IDs for MCP retrieval fallback."""
+        logging.info("Resolving accessible dataset IDs for MCP retrieval")
+        dataset_ids = []
+        page = 1
+
+        while True:
+            logging.debug("resolve_dataset_ids fetching /datasets page=%s page_size=%s", page, self._DATASET_PAGE_SIZE)
+            try:
+                res_json = await self._fetch_datasets_page(api_key=api_key, page=page, page_size=self._DATASET_PAGE_SIZE)
+            except Exception as exc:
+                logging.warning("resolve_dataset_ids failed to fetch /datasets page=%s error=%s", page, exc)
+                raise
+
+            datasets = res_json.get("data", [])
+            logging.debug("resolve_dataset_ids received %s datasets from page=%s", len(datasets), page)
+            dataset_ids.extend(data["id"] for data in datasets if data.get("id"))
+            total = res_json.get("total", len(dataset_ids))
+            if not datasets or len(dataset_ids) >= total:
+                break
+            page += 1
+
+        resolved = list(dict.fromkeys(dataset_ids))
+        logging.info("resolve_dataset_ids resolved %s accessible dataset IDs", len(resolved))
+        return resolved
+
+    async def retrieval(
+        self,
+        *,
+        api_key: str,
+        dataset_ids,
+        document_ids=None,
+        question="",
+        page=1,
+        page_size=30,
+        similarity_threshold=0.2,
+        vector_similarity_weight=0.3,
+        top_k=1024,
+        rerank_id: str | None = None,
+        keyword: bool = False,
+        force_refresh: bool = False,
+    ):
+        if document_ids is None:
+            document_ids = []
+
+        if not dataset_ids:
+            logging.info("MCP retrieval omitted dataset_ids; resolving accessible datasets")
+            dataset_ids = await self.resolve_dataset_ids(api_key=api_key)
+            if not dataset_ids:
+                logging.info("MCP retrieval found no accessible datasets for current user")
+                raise Exception([types.TextContent(type="text", text="No accessible datasets found.")])
+
+        data_json = {
+            "page": page,
+            "page_size": page_size,
+            "similarity_threshold": similarity_threshold,
+            "vector_similarity_weight": vector_similarity_weight,
+            "top_k": top_k,
+            "rerank_id": rerank_id,
+            "keyword": keyword,
+            "question": question,
+            "dataset_ids": dataset_ids,
+            "document_ids": document_ids,
+        }
+        # Send a POST request to the backend service (using requests library as an example, actual implementation may vary)
+        res = await self._post("/retrieval", json=data_json, api_key=api_key)
+        if not res or res.status_code != 200:
+            raise Exception([types.TextContent(type="text", text="Cannot process this operation.")])
+
+        res = res.json()
+        if res.get("code") == 0:
+            data = res["data"]
+            chunks = []
+
+            # Cache document metadata and dataset information
+            document_cache, dataset_cache = await self._get_document_metadata_cache(dataset_ids, api_key=api_key, force_refresh=force_refresh)
+
+            # Process chunks with enhanced field mapping including per-chunk metadata
+            for chunk_data in data.get("chunks", []):
+                enhanced_chunk = self._map_chunk_fields(chunk_data, dataset_cache, document_cache)
+                chunks.append(enhanced_chunk)
+
+            # Build structured response (no longer need response-level document_metadata)
+            response = {
+                "chunks": chunks,
+                "pagination": {
+                    "page": data.get("page", page),
+                    "page_size": data.get("page_size", page_size),
+                    "total_chunks": data.get("total", len(chunks)),
+                    "total_pages": (data.get("total", len(chunks)) + page_size - 1) // page_size,
+                },
+                "query_info": {
+                    "question": question,
+                    "similarity_threshold": similarity_threshold,
+                    "vector_weight": vector_similarity_weight,
+                    "keyword_search": keyword,
+                    "dataset_count": len(dataset_ids),
+                },
+            }
+
+            return [types.TextContent(type="text", text=json.dumps(response, ensure_ascii=False))]
+
+        raise Exception([types.TextContent(type="text", text=res.get("message"))])
+
+    async def _get_document_metadata_cache(self, dataset_ids, *, api_key: str, force_refresh=False):
+        """Cache document metadata for all documents in the specified datasets"""
+        document_cache = {}
+        dataset_cache = {}
+
+        try:
+            for dataset_id in dataset_ids:
+                dataset_meta = None if force_refresh else self._get_cached_dataset_metadata(dataset_id)
+                if not dataset_meta:
+                    # First get dataset info for name
+                    dataset_res = await self._get("/datasets", {"id": dataset_id, "page_size": 1}, api_key=api_key)
+                    if dataset_res and dataset_res.status_code == 200:
+                        dataset_data = dataset_res.json()
+                        if dataset_data.get("code") == 0 and dataset_data.get("data"):
+                            dataset_info = dataset_data["data"][0]
+                            dataset_meta = {"name": dataset_info.get("name", "Unknown"), "description": dataset_info.get("description", "")}
+                            self._set_cached_dataset_metadata(dataset_id, dataset_meta)
+                if dataset_meta:
+                    dataset_cache[dataset_id] = dataset_meta
+
+                docs = None if force_refresh else self._get_cached_document_metadata_by_dataset(dataset_id)
+                if docs is None:
+                    page = 1
+                    page_size = 30
+                    doc_id_meta_list = []
+                    docs = {}
+                    while page:
+                        docs_res = await self._get(f"/datasets/{dataset_id}/documents?page={page}", api_key=api_key)
+                        if not docs_res:
+                            break
+                        docs_data = docs_res.json()
+                        if docs_data.get("code") == 0 and docs_data.get("data", {}).get("docs"):
+                            for doc in docs_data["data"]["docs"]:
+                                doc_id = doc.get("id")
+                                if not doc_id:
+                                    continue
+                                doc_meta = {
+                                    "document_id": doc_id,
+                                    "name": doc.get("name", ""),
+                                    "location": doc.get("location", ""),
+                                    "type": doc.get("type", ""),
+                                    "size": doc.get("size"),
+                                    "chunk_count": doc.get("chunk_count"),
+                                    "create_date": doc.get("create_date", ""),
+                                    "update_date": doc.get("update_date", ""),
+                                    "token_count": doc.get("token_count"),
+                                    "thumbnail": doc.get("thumbnail", ""),
+                                    "dataset_id": doc.get("dataset_id", dataset_id),
+                                    "meta_fields": doc.get("meta_fields", {}),
+                                }
+                                doc_id_meta_list.append((doc_id, doc_meta))
+                                docs[doc_id] = doc_meta
+
+                            page += 1
+                            if docs_data.get("data", {}).get("total", 0) - page * page_size <= 0:
+                                page = None
+
+                        self._set_cached_document_metadata_by_dataset(dataset_id, doc_id_meta_list)
+                if docs:
+                    document_cache.update(docs)
+
+        except Exception as e:
+            # Gracefully handle metadata cache failures
+            logging.error(f"Problem building the document metadata cache: {str(e)}")
+            pass
+
+        return document_cache, dataset_cache
+
+    def _map_chunk_fields(self, chunk_data, dataset_cache, document_cache):
+        """Preserve all original API fields and add per-chunk document metadata"""
+        # Start with ALL raw data from API (preserve everything like original version)
+        mapped = dict(chunk_data)
+
+        # Add dataset name enhancement
+        dataset_id = chunk_data.get("dataset_id") or chunk_data.get("kb_id")
+        if dataset_id and dataset_id in dataset_cache:
+            mapped["dataset_name"] = dataset_cache[dataset_id]["name"]
+        else:
+            mapped["dataset_name"] = "Unknown"
+
+        # Add document name convenience field
+        mapped["document_name"] = chunk_data.get("document_keyword", "")
+
+        # Add per-chunk document metadata
+        document_id = chunk_data.get("document_id")
+        if document_id and document_id in document_cache:
+            mapped["document_metadata"] = document_cache[document_id]
+
+        return mapped
+
+    # ------------------------------------------------------------------
+    # CUSTOM B2B SaaS — V1 exploration tools (Cyllene roadmap V1)
+    # See docs/roadmap-multitenant-saas.md MCP V1.
+    # ------------------------------------------------------------------
+
+    async def list_datasets_structured(
+        self,
+        *,
+        api_key: str,
+        page: int = 1,
+        page_size: int = 100,
+        name: str | None = None,
+    ):
+        """Structured list of accessible datasets — for the standalone
+        `list_datasets` MCP tool (different from `list_datasets` which
+        returns newline-JSON for tool descriptions)."""
+        res_json = await self._fetch_datasets_page(
+            api_key=api_key, page=page, page_size=page_size, name=name
+        )
+        items = []
+        for d in res_json.get("data", []):
+            items.append({
+                "id": d.get("id"),
+                "name": d.get("name"),
+                "description": d.get("description") or "",
+                "document_count": d.get("document_count"),
+                "chunk_count": d.get("chunk_count"),
+                "language": d.get("language"),
+                "embedding_model": d.get("embedding_model"),
+                "create_date": d.get("create_date"),
+                "update_date": d.get("update_date"),
+            })
+        return {
+            "datasets": items,
+            "pagination": {
+                "page": page,
+                "page_size": page_size,
+                "total": res_json.get("total", len(items)),
+            },
+        }
+
+    async def list_documents(
+        self,
+        *,
+        api_key: str,
+        dataset_id: str,
+        page: int = 1,
+        page_size: int = 30,
+        keywords: str | None = None,
+    ):
+        """List documents in a specific dataset, paginated."""
+        params = {"page": page, "page_size": page_size}
+        if keywords:
+            params["keywords"] = keywords
+        # Build query string manually to keep it simple
+        from urllib.parse import urlencode
+        query = urlencode(params)
+        res = await self._get(f"/datasets/{dataset_id}/documents?{query}", api_key=api_key)
+        if not res or res.status_code != 200:
+            raise Exception([types.TextContent(type="text", text="Cannot list documents.")])
+        body = res.json()
+        if body.get("code") != 0:
+            raise Exception([types.TextContent(type="text", text=body.get("message", "Cannot list documents."))])
+        data = body.get("data", {})
+        docs_raw = data.get("docs", [])
+        docs = []
+        for d in docs_raw:
+            docs.append({
+                "id": d.get("id"),
+                "name": d.get("name"),
+                "type": d.get("type"),
+                "size": d.get("size"),
+                "chunk_count": d.get("chunk_count"),
+                "token_count": d.get("token_count"),
+                "create_date": d.get("create_date"),
+                "update_date": d.get("update_date"),
+                "run": d.get("run"),  # parsing status
+                "progress": d.get("progress"),
+                "meta_fields": d.get("meta_fields") or {},
+            })
+        return {
+            "dataset_id": dataset_id,
+            "documents": docs,
+            "pagination": {
+                "page": page,
+                "page_size": page_size,
+                "total": data.get("total", len(docs)),
+            },
+        }
+
+    # ------------------------------------------------------------------
+    # CUSTOM B2B SaaS — V2 write tools (Cyllene roadmap V2)
+    # ------------------------------------------------------------------
+
+    async def create_dataset(
+        self,
+        *,
+        api_key: str,
+        name: str,
+        description: str | None = None,
+        embedding_model: str | None = None,
+        chunk_method: str | None = None,
+        permission: str = "me",
+    ):
+        """Create a new dataset (knowledge base) in the workspace."""
+        body = {"name": name, "permission": permission}
+        if description:
+            body["description"] = description
+        if embedding_model:
+            body["embedding_model"] = embedding_model
+        if chunk_method:
+            body["chunk_method"] = chunk_method
+
+        res = await self._post("/datasets", json=body, api_key=api_key)
+        if not res or res.status_code != 200:
+            text = res.text[:200] if res else "no response"
+            raise Exception([types.TextContent(type="text", text=f"create_dataset failed: {text}")])
+        ret = res.json()
+        if ret.get("code") != 0:
+            raise Exception([types.TextContent(type="text", text=ret.get("message", "create_dataset failed"))])
+        return {"dataset": ret.get("data", {})}
+
+    async def index_document(
+        self,
+        *,
+        api_key: str,
+        dataset_id: str,
+        content: str,
+        filename: str,
+        auto_parse: bool = True,
+    ):
+        """Upload a document to a dataset and (optionally) trigger parsing.
+
+        Encodes the content as a UTF-8 file in a multipart form. Filename
+        extension drives RAGFlow's parser selection (.md, .txt, .pdf, etc.)
+        — pass a sensible name so the right parser is invoked."""
+        client = await self._get_client()
+        files = {
+            "file": (filename, content.encode("utf-8") if isinstance(content, str) else content),
+        }
+        upload_res = await client.post(
+            f"{self.api_url}/datasets/{dataset_id}/documents",
+            files=files,
+            headers={"Authorization": f"Bearer {api_key}"},
+        )
+        if upload_res.status_code != 200:
+            raise Exception([types.TextContent(type="text", text=f"upload failed: HTTP {upload_res.status_code} — {upload_res.text[:200]}")])
+        body = upload_res.json()
+        if body.get("code") != 0:
+            raise Exception([types.TextContent(type="text", text=body.get("message", "upload failed"))])
+
+        uploaded = body.get("data", [])
+        if not uploaded:
+            raise Exception([types.TextContent(type="text", text="upload returned no documents")])
+        doc = uploaded[0]
+        doc_id = doc.get("id")
+
+        result = {
+            "document": {
+                "id": doc_id,
+                "name": doc.get("name"),
+                "size": doc.get("size"),
+                "type": doc.get("type"),
+                "dataset_id": dataset_id,
+            },
+            "parse_triggered": False,
+        }
+
+        if auto_parse and doc_id:
+            parse_res = await self._post(
+                f"/datasets/{dataset_id}/documents/parse",
+                json={"document_ids": [doc_id]},
+                api_key=api_key,
+            )
+            if parse_res and parse_res.status_code == 200:
+                pbody = parse_res.json()
+                result["parse_triggered"] = pbody.get("code") == 0
+                if pbody.get("code") != 0:
+                    result["parse_error"] = pbody.get("message")
+            else:
+                result["parse_error"] = "parse endpoint did not return 200"
+
+        return result
+
+    async def delete_documents(
+        self,
+        *,
+        api_key: str,
+        dataset_id: str,
+        document_ids: list[str],
+    ):
+        """Delete one or more documents from a dataset.
+
+        WARNING: deletes the file row. The chunks indexed in Infinity/ES are
+        also dropped server-side. RGPD-compliant in this respect."""
+        if not document_ids:
+            raise Exception([types.TextContent(type="text", text="delete_documents requires non-empty document_ids")])
+
+        client = await self._get_client()
+        res = await client.request(
+            "DELETE",
+            f"{self.api_url}/datasets/{dataset_id}/documents",
+            json={"ids": document_ids},
+            headers={"Authorization": f"Bearer {api_key}"},
+        )
+        if res.status_code != 200:
+            raise Exception([types.TextContent(type="text", text=f"delete_documents failed: HTTP {res.status_code} — {res.text[:200]}")])
+        body = res.json()
+        if body.get("code") != 0:
+            raise Exception([types.TextContent(type="text", text=body.get("message", "delete failed"))])
+        return {
+            "dataset_id": dataset_id,
+            "deleted_ids": document_ids,
+            "status": "ok",
+        }
+
+    async def list_agents(
+        self,
+        *,
+        api_key: str,
+        keywords: str | None = None,
+        canvas_category: str | None = None,
+        page: int = 1,
+        page_size: int = 30,
+    ):
+        """List agent canvases accessible to the authenticated user in the
+        current workspace. Returns id, title, description, category, and
+        timestamps. Use the returned id as canvas_id when calling run_agent."""
+        params = {"page": page, "page_size": page_size, "orderby": "update_time", "desc": "true"}
+        if keywords:
+            params["keywords"] = keywords
+        if canvas_category:
+            params["canvas_category"] = canvas_category
+        from urllib.parse import urlencode
+        res = await self._get(f"/agents?{urlencode(params)}", api_key=api_key)
+        if not res or res.status_code != 200:
+            raise Exception([types.TextContent(type="text", text="Cannot list agents.")])
+        body = res.json()
+        if body.get("code") != 0:
+            raise Exception([types.TextContent(type="text", text=body.get("message", "Cannot list agents."))])
+        data = body.get("data", {})
+        canvases = data.get("canvas", [])
+        agents = []
+        for c in canvases:
+            agents.append({
+                "id": c.get("id"),
+                "title": c.get("title"),
+                "description": c.get("description") or "",
+                "canvas_category": c.get("canvas_category"),
+                "user_id": c.get("user_id"),
+                "create_date": c.get("create_date"),
+                "update_date": c.get("update_date"),
+            })
+        return {
+            "agents": agents,
+            "pagination": {
+                "page": page,
+                "page_size": page_size,
+                "total": data.get("total", len(agents)),
+            },
+        }
+
+    async def run_agent(
+        self,
+        *,
+        api_key: str,
+        agent_id: str,
+        query: str,
+        inputs: dict | None = None,
+        session_id: str | None = None,
+        max_seconds: int = 300,
+    ):
+        """Invoke an agent canvas synchronously: post to /agents/chat/completion,
+        read the SSE stream until workflow_finished, return the final text
+        content and any artefacts (downloads, tool_calls) emitted along the way.
+
+        Blocking by design — MCP V1. Streaming variant comes in V2 once we
+        validate the cancellation/progress UX with real client SDKs."""
+        body = {
+            "agent_id": agent_id,
+            "query": query,
+            "inputs": inputs or {},
+        }
+        if session_id:
+            body["session_id"] = session_id
+
+        client = await self._get_client()
+        # CUSTOM B2B SaaS — runs without a session_id need the canvas's runtime
+        # replica to exist in Redis. The replica is bootstrapped lazily by
+        # GET /agents/<id>; fire that first so /chat/completion doesn't 404.
+        if not session_id:
+            try:
+                bootstrap_res = await client.get(
+                    f"{self.api_url}/agents/{agent_id}",
+                    headers={"Authorization": f"Bearer {api_key}"},
+                    timeout=httpx.Timeout(30.0),
+                )
+                if bootstrap_res.status_code != 200:
+                    text = bootstrap_res.text[:200]
+                    raise Exception([types.TextContent(type="text", text=f"run_agent bootstrap failed: HTTP {bootstrap_res.status_code} — {text}")])
+            except httpx.RequestError as exc:
+                raise Exception([types.TextContent(type="text", text=f"run_agent bootstrap network error: {exc}")])
+
+        # Don't reuse self._post — we need streaming and a longer timeout.
+        try:
+            async with client.stream(
+                "POST",
+                f"{self.api_url}/agents/chat/completion",
+                json=body,
+                headers={"Authorization": f"Bearer {api_key}"},
+                timeout=httpx.Timeout(max_seconds, connect=10.0),
+            ) as response:
+                if response.status_code != 200:
+                    text = await response.aread()
+                    raise Exception([types.TextContent(type="text", text=f"run_agent failed: HTTP {response.status_code} — {text[:300].decode(errors='ignore')}")])
+
+                final_content = ""
+                last_message = ""
+                tool_calls: list[dict] = []
+                downloads: list[str] = []
+                events_seen: list[str] = []
+                run_session_id = session_id
+
+                async for line in response.aiter_lines():
+                    line = (line or "").strip()
+                    if not line or not line.startswith("data:"):
+                        continue
+                    payload = line[5:].strip()
+                    if not payload:
+                        continue
+                    try:
+                        evt = json.loads(payload)
+                    except Exception:
+                        continue
+
+                    ev_name = evt.get("event")
+                    events_seen.append(ev_name)
+                    data = evt.get("data") or {}
+
+                    if ev_name == "message":
+                        chunk = data.get("content") or ""
+                        if chunk:
+                            last_message = chunk
+                            final_content += chunk
+                    elif ev_name == "node_finished":
+                        # Capture component output if it's the terminal Message node
+                        outputs = data.get("outputs") or {}
+                        downloads.extend(outputs.get("downloads") or [])
+                        if data.get("component_type") == "Message":
+                            content = outputs.get("content")
+                            if content:
+                                final_content = content if isinstance(content, str) else json.dumps(content, ensure_ascii=False)
+                    elif ev_name == "workflow_finished":
+                        outputs = data.get("outputs") or {}
+                        if outputs.get("content"):
+                            content = outputs["content"]
+                            final_content = content if isinstance(content, str) else json.dumps(content, ensure_ascii=False)
+                        downloads.extend(outputs.get("downloads") or [])
+                        break
+
+                    # Track tool calls if present in the event payload
+                    if "tool_calls" in data:
+                        tcs = data.get("tool_calls") or []
+                        if isinstance(tcs, list):
+                            tool_calls.extend(tcs)
+
+                    if ev_name == "session_started":
+                        run_session_id = data.get("session_id") or run_session_id
+
+                # Final answer fallback if workflow_finished was missed
+                if not final_content and last_message:
+                    final_content = last_message
+
+                return {
+                    "agent_id": agent_id,
+                    "session_id": run_session_id,
+                    "content": final_content,
+                    "downloads": list(dict.fromkeys(downloads)),
+                    "tool_calls": tool_calls,
+                    "events_seen": events_seen[:20],  # debug aid, capped
+                }
+        except httpx.TimeoutException:
+            raise Exception([types.TextContent(type="text", text=f"run_agent timed out after {max_seconds}s")])
+
+    async def get_document_chunks(
+        self,
+        *,
+        api_key: str,
+        document_id: str,
+        max_chunks: int = 100,
+    ):
+        """Return all chunks of a specific document by triggering a
+        retrieval scoped to that document_id. Uses the document's own
+        name as the question — sufficient to match every chunk in the
+        document at near-zero similarity threshold (because every chunk
+        shares the doc's context). The /retrieval endpoint refuses an
+        empty question, so we can't ask for chunks without a query token."""
+        accessible = await self.resolve_dataset_ids(api_key=api_key)
+        if not accessible:
+            raise Exception([types.TextContent(type="text", text="No accessible datasets.")])
+
+        # Resolve the document's name + dataset for the query token.
+        doc_name = None
+        dataset_id_for_doc = None
+        for ds_id in accessible:
+            try:
+                page = 1
+                while True:
+                    res = await self._get(
+                        f"/datasets/{ds_id}/documents?page={page}&page_size=100",
+                        api_key=api_key,
+                    )
+                    if not res or res.status_code != 200:
+                        break
+                    body = res.json()
+                    if body.get("code") != 0:
+                        break
+                    docs = body.get("data", {}).get("docs", [])
+                    for d in docs:
+                        if d.get("id") == document_id:
+                            doc_name = d.get("name")
+                            dataset_id_for_doc = ds_id
+                            break
+                    if doc_name or len(docs) < 100:
+                        break
+                    page += 1
+                if doc_name:
+                    break
+            except Exception:
+                continue
+
+        if not doc_name:
+            raise Exception([types.TextContent(type="text", text=f"Document {document_id} not found in any accessible dataset.")])
+
+        # Use the doc name as the query token — every chunk of that doc
+        # shares its title context so all match at threshold 0.
+        data_json = {
+            "page": 1,
+            "page_size": max_chunks,
+            "similarity_threshold": 0.0,
+            "vector_similarity_weight": 0.0,  # pure keyword match — more reliable here
+            "top_k": max_chunks,
+            "keyword": True,
+            "question": doc_name,
+            "dataset_ids": [dataset_id_for_doc],
+            "document_ids": [document_id],
+        }
+        res = await self._post("/retrieval", json=data_json, api_key=api_key)
+        if not res or res.status_code != 200:
+            raise Exception([types.TextContent(type="text", text="Cannot fetch document chunks.")])
+        body = res.json()
+        if body.get("code") != 0:
+            raise Exception([types.TextContent(type="text", text=body.get("message", "Cannot fetch document chunks."))])
+
+        data = body.get("data", {})
+        chunks_raw = data.get("chunks", [])
+        chunks = []
+        for c in chunks_raw:
+            chunks.append({
+                "id": c.get("id") or c.get("chunk_id"),
+                "content": c.get("content_with_weight") or c.get("content"),
+                "document_id": c.get("document_id"),
+                "document_name": c.get("document_keyword"),
+                "dataset_id": c.get("dataset_id") or c.get("kb_id"),
+                "positions": c.get("positions"),
+                "similarity": c.get("similarity"),
+            })
+        return {
+            "document_id": document_id,
+            "document_name": doc_name,
+            "dataset_id": dataset_id_for_doc,
+            "chunks": chunks,
+            "total_returned": len(chunks),
+        }
+
+
+class RAGFlowCtx:
+    def __init__(self, connector: RAGFlowConnector):
+        self.conn = connector
+
+
+@asynccontextmanager
+async def sse_lifespan(server: Server) -> AsyncIterator[dict]:
+    ctx = RAGFlowCtx(RAGFlowConnector(base_url=BASE_URL))
+
+    logging.info("Legacy SSE application started with StreamableHTTP session manager!")
+    try:
+        yield {"ragflow_ctx": ctx}
+    finally:
+        await ctx.conn.close()
+        logging.info("Legacy SSE application shutting down...")
+
+
+app = Server("ragflow-mcp-server", lifespan=sse_lifespan)
+AUTH_TOKEN_STATE_KEY = "ragflow_auth_token"
+
+
+def _to_text(value: Any) -> str:
+    if isinstance(value, bytes):
+        return value.decode(errors="ignore")
+    return str(value)
+
+
+def _extract_token_from_headers(headers: Any) -> str | None:
+    if not headers or not hasattr(headers, "get"):
+        return None
+
+    auth_keys = ("authorization", "Authorization", b"authorization", b"Authorization")
+    for key in auth_keys:
+        auth = headers.get(key)
+        if not auth:
+            continue
+        auth_text = _to_text(auth).strip()
+        if auth_text.lower().startswith("bearer "):
+            token = auth_text[7:].strip()
+            if token:
+                return token
+
+    api_key_keys = ("api_key", "x-api-key", "Api-Key", "X-API-Key", b"api_key", b"x-api-key", b"Api-Key", b"X-API-Key")
+    for key in api_key_keys:
+        token = headers.get(key)
+        if token:
+            token_text = _to_text(token).strip()
+            if token_text:
+                return token_text
+
+    return None
+
+
+def _extract_token_from_request(request: Any) -> str | None:
+    if request is None:
+        return None
+
+    state = getattr(request, "state", None)
+    if state is not None:
+        token = getattr(state, AUTH_TOKEN_STATE_KEY, None)
+        if token:
+            return token
+
+    token = _extract_token_from_headers(getattr(request, "headers", None))
+    if token and state is not None:
+        setattr(state, AUTH_TOKEN_STATE_KEY, token)
+
+    return token
+
+
+def with_api_key(required: bool = True):
+    def decorator(func):
+        @wraps(func)
+        async def wrapper(*args, **kwargs):
+            ctx = app.request_context
+            ragflow_ctx = ctx.lifespan_context.get("ragflow_ctx")
+            if not ragflow_ctx:
+                raise ValueError("Get RAGFlow Context failed")
+
+            connector = ragflow_ctx.conn
+            api_key = HOST_API_KEY
+
+            if MODE == LaunchMode.HOST:
+                api_key = _extract_token_from_request(getattr(ctx, "request", None)) or ""
+                if required and not api_key:
+                    raise ValueError("RAGFlow API key or Bearer token is required.")
+
+            return await func(*args, connector=connector, api_key=api_key, **kwargs)
+
+        return wrapper
+
+    return decorator
+
+
+@app.list_tools()
+@with_api_key(required=True)
+async def list_tools(*, connector: RAGFlowConnector, api_key: str) -> list[types.Tool]:
+    dataset_description = await connector.list_datasets(api_key=api_key)
+
+    return [
+        types.Tool(
+            name="ragflow_retrieval",
+            description="Retrieve relevant chunks from the RAGFlow retrieve interface based on the question. You can optionally specify dataset_ids to search only specific datasets, or omit dataset_ids entirely to search across ALL available datasets. You can also optionally specify document_ids to search within specific documents. When dataset_ids is not provided or is empty, the system will automatically search across all available datasets. Below is the list of all available datasets, including their descriptions and IDs:"
+            + dataset_description,
+            inputSchema={
+                "type": "object",
+                "properties": {
+                    "dataset_ids": {"type": "array", "items": {"type": "string"}, "description": "Optional array of dataset IDs to search. If not provided or empty, all datasets will be searched."},
+                    "document_ids": {"type": "array", "items": {"type": "string"}, "description": "Optional array of document IDs to search within."},
+                    "question": {"type": "string", "description": "The question or query to search for."},
+                    "page": {
+                        "type": "integer",
+                        "description": "Page number for pagination",
+                        "default": 1,
+                        "minimum": 1,
+                    },
+                    "page_size": {
+                        "type": "integer",
+                        "description": "Number of results to return per page (default: 10, max recommended: 50 to avoid token limits)",
+                        "default": 10,
+                        "minimum": 1,
+                        "maximum": 100,
+                    },
+                    "similarity_threshold": {
+                        "type": "number",
+                        "description": "Minimum similarity threshold for results",
+                        "default": 0.2,
+                        "minimum": 0.0,
+                        "maximum": 1.0,
+                    },
+                    "vector_similarity_weight": {
+                        "type": "number",
+                        "description": "Weight for vector similarity vs term similarity",
+                        "default": 0.3,
+                        "minimum": 0.0,
+                        "maximum": 1.0,
+                    },
+                    "keyword": {
+                        "type": "boolean",
+                        "description": "Enable keyword-based search",
+                        "default": False,
+                    },
+                    "top_k": {
+                        "type": "integer",
+                        "description": "Maximum results to consider before ranking",
+                        "default": 1024,
+                        "minimum": 1,
+                        "maximum": 1024,
+                    },
+                    "rerank_id": {
+                        "type": "string",
+                        "description": "Optional reranking model identifier",
+                    },
+                    "force_refresh": {
+                        "type": "boolean",
+                        "description": "Set to true only if fresh dataset and document metadata is explicitly required. Otherwise, cached metadata is used (default: false).",
+                        "default": False,
+                    },
+                },
+                "required": ["question"],
+            },
+        ),
+        # CUSTOM B2B SaaS — V1 exploration tools (Cyllene roadmap V1)
+        types.Tool(
+            name="list_datasets",
+            description=(
+                "List datasets (knowledge bases) accessible to the authenticated "
+                "user in the current workspace. Returns id, name, description, "
+                "document/chunk counts, language, embedding model, and timestamps. "
+                "Use this to discover available datasets before calling "
+                "ragflow_retrieval, list_documents, or get_document_chunks."
+            ),
+            inputSchema={
+                "type": "object",
+                "properties": {
+                    "name": {
+                        "type": "string",
+                        "description": "Optional case-insensitive name filter.",
+                    },
+                    "page": {"type": "integer", "default": 1, "minimum": 1},
+                    "page_size": {"type": "integer", "default": 100, "minimum": 1, "maximum": 1000},
+                },
+                "required": [],
+            },
+        ),
+        types.Tool(
+            name="list_documents",
+            description=(
+                "List documents inside a specific dataset, paginated. Returns id, "
+                "name, type, size, chunk_count, parsing status (run/progress), and "
+                "metadata fields. Use after list_datasets to browse a dataset, "
+                "then call get_document_chunks for the actual content."
+            ),
+            inputSchema={
+                "type": "object",
+                "properties": {
+                    "dataset_id": {
+                        "type": "string",
+                        "description": "ID of the dataset to list documents from.",
+                    },
+                    "keywords": {
+                        "type": "string",
+                        "description": "Optional keyword filter on document names.",
+                    },
+                    "page": {"type": "integer", "default": 1, "minimum": 1},
+                    "page_size": {"type": "integer", "default": 30, "minimum": 1, "maximum": 100},
+                },
+                "required": ["dataset_id"],
+            },
+        ),
+        # CUSTOM B2B SaaS — V2 write tools (Cyllene roadmap V2)
+        types.Tool(
+            name="create_dataset",
+            description=(
+                "Create a new dataset (knowledge base) in the current "
+                "workspace. Specify a name and optional description. The "
+                "embedding model defaults to the workspace's default if not "
+                "set. Use chunk_method=naive for plain markdown/text/PDF; "
+                "see RAGFlow docs for advanced parsers."
+            ),
+            inputSchema={
+                "type": "object",
+                "properties": {
+                    "name": {"type": "string", "description": "Dataset name (required, must be unique in the workspace)."},
+                    "description": {"type": "string", "description": "Optional description."},
+                    "embedding_model": {
+                        "type": "string",
+                        "description": "Embedding model to use (e.g. 'nomic-embed-text@Ollama'). Defaults to workspace default.",
+                    },
+                    "chunk_method": {
+                        "type": "string",
+                        "description": "Chunk method: naive | book | qa | manual | paper | one | etc. Defaults to naive.",
+                    },
+                    "permission": {
+                        "type": "string",
+                        "enum": ["me", "team"],
+                        "description": "Visibility: 'me' (private) or 'team' (workspace-wide).",
+                        "default": "me",
+                    },
+                },
+                "required": ["name"],
+            },
+        ),
+        types.Tool(
+            name="index_document",
+            description=(
+                "Upload a document into a dataset and (by default) trigger "
+                "parsing/embedding. The content is sent as a UTF-8 file with "
+                "the supplied filename — the extension drives RAGFlow's "
+                "parser selection (.md, .txt, .pdf, .docx, .json, ...). "
+                "Returns the new document_id; you can poll list_documents "
+                "to watch parse progress."
+            ),
+            inputSchema={
+                "type": "object",
+                "properties": {
+                    "dataset_id": {"type": "string", "description": "ID of the dataset to upload into."},
+                    "content": {"type": "string", "description": "Full text content of the document."},
+                    "filename": {"type": "string", "description": "Filename including extension (e.g. 'rfc-2026-auth.md')."},
+                    "auto_parse": {
+                        "type": "boolean",
+                        "description": "Trigger parse + embed after upload. Default true.",
+                        "default": True,
+                    },
+                },
+                "required": ["dataset_id", "content", "filename"],
+            },
+        ),
+        types.Tool(
+            name="delete_documents",
+            description=(
+                "Delete one or more documents from a dataset. Deletes the "
+                "file rows AND the indexed chunks in Infinity/ES (RGPD-"
+                "compliant)."
+            ),
+            inputSchema={
+                "type": "object",
+                "properties": {
+                    "dataset_id": {"type": "string", "description": "ID of the dataset."},
+                    "document_ids": {
+                        "type": "array",
+                        "items": {"type": "string"},
+                        "description": "List of document IDs to delete.",
+                        "minItems": 1,
+                    },
+                },
+                "required": ["dataset_id", "document_ids"],
+            },
+        ),
+        # CUSTOM B2B SaaS — V4 agents-as-tools (Cyllene roadmap V4)
+        types.Tool(
+            name="list_agents",
+            description=(
+                "List agent canvases (workflows) accessible in the current "
+                "workspace. Each canvas can be invoked with run_agent. Returns "
+                "id, title, description, canvas_category. Filter by keywords or "
+                "canvas_category if needed."
+            ),
+            inputSchema={
+                "type": "object",
+                "properties": {
+                    "keywords": {"type": "string", "description": "Optional title keyword filter."},
+                    "canvas_category": {
+                        "type": "string",
+                        "description": "Optional category filter (Agent, DataFlow, etc.).",
+                    },
+                    "page": {"type": "integer", "default": 1, "minimum": 1},
+                    "page_size": {"type": "integer", "default": 30, "minimum": 1, "maximum": 100},
+                },
+                "required": [],
+            },
+        ),
+        types.Tool(
+            name="run_agent",
+            description=(
+                "Invoke an agent canvas synchronously and return its final "
+                "output. Blocks until the workflow_finished event (or timeout). "
+                "Use list_agents first to discover available canvas ids. "
+                "Returns the final text content plus any generated downloads "
+                "(file_ids in the workspace) and a debug log of events."
+            ),
+            inputSchema={
+                "type": "object",
+                "properties": {
+                    "agent_id": {
+                        "type": "string",
+                        "description": "Canvas ID returned by list_agents.",
+                    },
+                    "query": {
+                        "type": "string",
+                        "description": "Natural-language query / instruction for the agent.",
+                    },
+                    "inputs": {
+                        "type": "object",
+                        "description": "Optional structured inputs for canvas Begin form fields.",
+                    },
+                    "session_id": {
+                        "type": "string",
+                        "description": "Optional existing session id to continue a conversation.",
+                    },
+                    "max_seconds": {
+                        "type": "integer",
+                        "description": "Hard timeout in seconds (default 300). Long agents must stay under this.",
+                        "default": 300,
+                        "minimum": 30,
+                        "maximum": 1800,
+                    },
+                },
+                "required": ["agent_id", "query"],
+            },
+        ),
+        types.Tool(
+            name="continue_agent_session",
+            description=(
+                "Continue an existing agent conversation by posting another "
+                "message to the same session. Same return shape as run_agent. "
+                "Useful for multi-turn dialogs where the agent should keep "
+                "context (history, retrieved chunks, etc.)."
+            ),
+            inputSchema={
+                "type": "object",
+                "properties": {
+                    "agent_id": {"type": "string", "description": "Canvas ID of the agent."},
+                    "session_id": {"type": "string", "description": "Existing session id from a previous run_agent call."},
+                    "message": {"type": "string", "description": "User message to send next."},
+                    "max_seconds": {"type": "integer", "default": 300, "minimum": 30, "maximum": 1800},
+                },
+                "required": ["agent_id", "session_id", "message"],
+            },
+        ),
+        types.Tool(
+            name="get_document_chunks",
+            description=(
+                "Return all chunks of a specific document, in their natural order. "
+                "Useful when you want the full content of an indexed file (RFC, "
+                "ADR, procedure, etc.) rather than only the top-N relevant chunks. "
+                "Bounded by max_chunks to avoid blowing the context window."
+            ),
+            inputSchema={
+                "type": "object",
+                "properties": {
+                    "document_id": {
+                        "type": "string",
+                        "description": "ID of the document to fetch chunks from.",
+                    },
+                    "max_chunks": {
+                        "type": "integer",
+                        "description": "Maximum number of chunks to return.",
+                        "default": 100,
+                        "minimum": 1,
+                        "maximum": 500,
+                    },
+                },
+                "required": ["document_id"],
+            },
+        ),
+    ]
+
+
+@app.call_tool()
+@with_api_key(required=True)
+async def call_tool(
+    name: str,
+    arguments: dict,
+    *,
+    connector: RAGFlowConnector,
+    api_key: str,
+) -> list[types.TextContent | types.ImageContent | types.EmbeddedResource]:
+    if name == "ragflow_retrieval":
+        document_ids = arguments.get("document_ids", [])
+        dataset_ids = arguments.get("dataset_ids", [])
+        question = arguments.get("question", "")
+        page = arguments.get("page", 1)
+        page_size = arguments.get("page_size", 10)
+        similarity_threshold = arguments.get("similarity_threshold", 0.2)
+        vector_similarity_weight = arguments.get("vector_similarity_weight", 0.3)
+        keyword = arguments.get("keyword", False)
+        top_k = arguments.get("top_k", 1024)
+        rerank_id = arguments.get("rerank_id")
+        force_refresh = arguments.get("force_refresh", False)
+
+        return await connector.retrieval(
+            api_key=api_key,
+            dataset_ids=dataset_ids,
+            document_ids=document_ids,
+            question=question,
+            page=page,
+            page_size=page_size,
+            similarity_threshold=similarity_threshold,
+            vector_similarity_weight=vector_similarity_weight,
+            keyword=keyword,
+            top_k=top_k,
+            rerank_id=rerank_id,
+            force_refresh=force_refresh,
+        )
+
+    # CUSTOM B2B SaaS — V1 exploration tools dispatch
+    if name == "list_datasets":
+        result = await connector.list_datasets_structured(
+            api_key=api_key,
+            page=arguments.get("page", 1),
+            page_size=arguments.get("page_size", 100),
+            name=arguments.get("name"),
+        )
+        return [types.TextContent(type="text", text=json.dumps(result, ensure_ascii=False))]
+
+    if name == "list_documents":
+        dataset_id = arguments.get("dataset_id")
+        if not dataset_id:
+            raise ValueError("list_documents requires dataset_id")
+        result = await connector.list_documents(
+            api_key=api_key,
+            dataset_id=dataset_id,
+            page=arguments.get("page", 1),
+            page_size=arguments.get("page_size", 30),
+            keywords=arguments.get("keywords"),
+        )
+        return [types.TextContent(type="text", text=json.dumps(result, ensure_ascii=False))]
+
+    if name == "create_dataset":
+        ds_name = arguments.get("name")
+        if not ds_name:
+            raise ValueError("create_dataset requires name")
+        result = await connector.create_dataset(
+            api_key=api_key,
+            name=ds_name,
+            description=arguments.get("description"),
+            embedding_model=arguments.get("embedding_model"),
+            chunk_method=arguments.get("chunk_method"),
+            permission=arguments.get("permission", "me"),
+        )
+        return [types.TextContent(type="text", text=json.dumps(result, ensure_ascii=False))]
+
+    if name == "index_document":
+        dataset_id = arguments.get("dataset_id")
+        content = arguments.get("content", "")
+        filename = arguments.get("filename")
+        if not dataset_id or not filename:
+            raise ValueError("index_document requires dataset_id and filename")
+        result = await connector.index_document(
+            api_key=api_key,
+            dataset_id=dataset_id,
+            content=content,
+            filename=filename,
+            auto_parse=arguments.get("auto_parse", True),
+        )
+        return [types.TextContent(type="text", text=json.dumps(result, ensure_ascii=False))]
+
+    if name == "delete_documents":
+        dataset_id = arguments.get("dataset_id")
+        document_ids = arguments.get("document_ids") or []
+        if not dataset_id or not document_ids:
+            raise ValueError("delete_documents requires dataset_id and a non-empty document_ids array")
+        result = await connector.delete_documents(
+            api_key=api_key,
+            dataset_id=dataset_id,
+            document_ids=document_ids,
+        )
+        return [types.TextContent(type="text", text=json.dumps(result, ensure_ascii=False))]
+
+    if name == "list_agents":
+        result = await connector.list_agents(
+            api_key=api_key,
+            keywords=arguments.get("keywords"),
+            canvas_category=arguments.get("canvas_category"),
+            page=arguments.get("page", 1),
+            page_size=arguments.get("page_size", 30),
+        )
+        return [types.TextContent(type="text", text=json.dumps(result, ensure_ascii=False))]
+
+    if name == "run_agent":
+        agent_id = arguments.get("agent_id")
+        query = arguments.get("query", "")
+        if not agent_id:
+            raise ValueError("run_agent requires agent_id")
+        if not query:
+            raise ValueError("run_agent requires query")
+        result = await connector.run_agent(
+            api_key=api_key,
+            agent_id=agent_id,
+            query=query,
+            inputs=arguments.get("inputs"),
+            session_id=arguments.get("session_id"),
+            max_seconds=arguments.get("max_seconds", 300),
+        )
+        return [types.TextContent(type="text", text=json.dumps(result, ensure_ascii=False))]
+
+    if name == "continue_agent_session":
+        agent_id = arguments.get("agent_id")
+        session_id = arguments.get("session_id")
+        message = arguments.get("message", "")
+        if not agent_id or not session_id or not message:
+            raise ValueError("continue_agent_session requires agent_id, session_id, and message")
+        result = await connector.run_agent(
+            api_key=api_key,
+            agent_id=agent_id,
+            query=message,
+            session_id=session_id,
+            max_seconds=arguments.get("max_seconds", 300),
+        )
+        return [types.TextContent(type="text", text=json.dumps(result, ensure_ascii=False))]
+
+    if name == "get_document_chunks":
+        document_id = arguments.get("document_id")
+        if not document_id:
+            raise ValueError("get_document_chunks requires document_id")
+        result = await connector.get_document_chunks(
+            api_key=api_key,
+            document_id=document_id,
+            max_chunks=arguments.get("max_chunks", 100),
+        )
+        return [types.TextContent(type="text", text=json.dumps(result, ensure_ascii=False))]
+
+    raise ValueError(f"Tool not found: {name}")
+
+
+def create_starlette_app():
+    routes = []
+    middleware = None
+    if MODE == LaunchMode.HOST:
+        from starlette.types import ASGIApp, Receive, Scope, Send
+
+        class AuthMiddleware:
+            def __init__(self, app: ASGIApp):
+                self.app = app
+
+            async def __call__(self, scope: Scope, receive: Receive, send: Send):
+                if scope["type"] != "http":
+                    await self.app(scope, receive, send)
+                    return
+
+                path = scope["path"]
+                if path.startswith("/messages/") or path.startswith("/sse") or path.startswith("/mcp"):
+                    headers = dict(scope["headers"])
+                    token = _extract_token_from_headers(headers)
+
+                    if not token:
+                        response = JSONResponse({"error": "Missing or invalid authorization header"}, status_code=401)
+                        await response(scope, receive, send)
+                        return
+                    scope.setdefault("state", {})[AUTH_TOKEN_STATE_KEY] = token
+
+                await self.app(scope, receive, send)
+
+        middleware = [Middleware(AuthMiddleware)]
+
+    # Add SSE routes if enabled
+    if TRANSPORT_SSE_ENABLED:
+        from mcp.server.sse import SseServerTransport
+
+        sse = SseServerTransport("/messages/")
+
+        async def handle_sse(request):
+            async with sse.connect_sse(request.scope, request.receive, request._send) as streams:
+                await app.run(streams[0], streams[1], app.create_initialization_options(experimental_capabilities={"headers": dict(request.headers)}))
+            return Response()
+
+        routes.extend(
+            [
+                Route("/sse", endpoint=handle_sse, methods=["GET"]),
+                Mount("/messages/", app=sse.handle_post_message),
+            ]
+        )
+
+    # Add streamable HTTP route if enabled
+    streamablehttp_lifespan = None
+    if TRANSPORT_STREAMABLE_HTTP_ENABLED:
+        from mcp.server.streamable_http_manager import StreamableHTTPSessionManager
+        from starlette.types import Receive, Scope, Send
+
+        session_manager = StreamableHTTPSessionManager(
+            app=app,
+            event_store=None,
+            json_response=JSON_RESPONSE,
+            stateless=True,
+        )
+
+        class StreamableHTTPEntry:
+            async def __call__(self, scope: Scope, receive: Receive, send: Send) -> None:
+                await session_manager.handle_request(scope, receive, send)
+
+        streamable_http_entry = StreamableHTTPEntry()
+
+        @asynccontextmanager
+        async def streamablehttp_lifespan(app: Starlette) -> AsyncIterator[None]:
+            async with session_manager.run():
+                logging.info("StreamableHTTP application started with StreamableHTTP session manager!")
+                try:
+                    yield
+                finally:
+                    logging.info("StreamableHTTP application shutting down...")
+
+        routes.extend(
+            [
+                Route("/mcp", endpoint=streamable_http_entry, methods=["GET", "POST", "DELETE"]),
+                Mount("/mcp", app=streamable_http_entry),
+            ]
+        )
+
+    return Starlette(
+        debug=False,
+        routes=routes,
+        middleware=middleware,
+        lifespan=streamablehttp_lifespan,
+    )
+
+
+@click.command()
+@click.option("--base-url", type=str, default="http://127.0.0.1:9380", help="API base URL for RAGFlow backend")
+@click.option("--host", type=str, default="127.0.0.1", help="Host to bind the RAGFlow MCP server")
+@click.option("--port", type=int, default=9382, help="Port to bind the RAGFlow MCP server")
+@click.option(
+    "--mode",
+    type=click.Choice(["self-host", "host"]),
+    default="self-host",
+    help=("Launch mode:\n  self-host: run MCP for a single tenant (requires --api-key)\n  host: multi-tenant mode, users must provide Authorization headers"),
+)
+@click.option("--api-key", type=str, default="", help="API key to use when in self-host mode")
+@click.option(
+    "--transport-sse-enabled/--no-transport-sse-enabled",
+    default=True,
+    help="Enable or disable legacy SSE transport mode (default: enabled)",
+)
+@click.option(
+    "--transport-streamable-http-enabled/--no-transport-streamable-http-enabled",
+    default=True,
+    help="Enable or disable streamable-http transport mode (default: enabled)",
+)
+@click.option(
+    "--json-response/--no-json-response",
+    default=True,
+    help="Enable or disable JSON response mode for streamable-http (default: enabled)",
+)
+def main(base_url, host, port, mode, api_key, transport_sse_enabled, transport_streamable_http_enabled, json_response):
+    import os
+
+    import uvicorn
+    from dotenv import load_dotenv
+
+    load_dotenv()
+
+    def parse_bool_flag(key: str, default: bool) -> bool:
+        val = os.environ.get(key, str(default))
+        return str(val).strip().lower() in ("1", "true", "yes", "on")
+
+    global BASE_URL, HOST, PORT, MODE, HOST_API_KEY, TRANSPORT_SSE_ENABLED, TRANSPORT_STREAMABLE_HTTP_ENABLED, JSON_RESPONSE
+    BASE_URL = os.environ.get("RAGFLOW_MCP_BASE_URL", base_url)
+    HOST = os.environ.get("RAGFLOW_MCP_HOST", host)
+    PORT = os.environ.get("RAGFLOW_MCP_PORT", str(port))
+    MODE = os.environ.get("RAGFLOW_MCP_LAUNCH_MODE", mode)
+    HOST_API_KEY = os.environ.get("RAGFLOW_MCP_HOST_API_KEY", api_key)
+    TRANSPORT_SSE_ENABLED = parse_bool_flag("RAGFLOW_MCP_TRANSPORT_SSE_ENABLED", transport_sse_enabled)
+    TRANSPORT_STREAMABLE_HTTP_ENABLED = parse_bool_flag("RAGFLOW_MCP_TRANSPORT_STREAMABLE_ENABLED", transport_streamable_http_enabled)
+    JSON_RESPONSE = parse_bool_flag("RAGFLOW_MCP_JSON_RESPONSE", json_response)
+
+    if MODE == LaunchMode.SELF_HOST and not HOST_API_KEY:
+        raise click.UsageError("--api-key is required when --mode is 'self-host'")
+
+    if not TRANSPORT_STREAMABLE_HTTP_ENABLED and JSON_RESPONSE:
+        JSON_RESPONSE = False
+
+    print(
+        r"""
+__  __  ____ ____       ____  _____ ______     _______ ____
+|  \/  |/ ___|  _ \     / ___|| ____|  _ \ \   / / ____|  _ \
+| |\/| | |   | |_) |    \___ \|  _| | |_) \ \ / /|  _| | |_) |
+| |  | | |___|  __/      ___) | |___|  _ < \ V / | |___|  _ <
+|_|  |_|\____|_|        |____/|_____|_| \_\ \_/  |_____|_| \_\
+        """,
+        flush=True,
+    )
+    print(f"MCP launch mode: {MODE}", flush=True)
+    print(f"MCP host: {HOST}", flush=True)
+    print(f"MCP port: {PORT}", flush=True)
+    print(f"MCP base_url: {BASE_URL}", flush=True)
+
+    if not any([TRANSPORT_SSE_ENABLED, TRANSPORT_STREAMABLE_HTTP_ENABLED]):
+        print("At least one transport should be enabled, enable streamable-http automatically", flush=True)
+        TRANSPORT_STREAMABLE_HTTP_ENABLED = True
+
+    if TRANSPORT_SSE_ENABLED:
+        print("SSE transport enabled: yes", flush=True)
+        print("SSE endpoint available at /sse", flush=True)
+    else:
+        print("SSE transport enabled: no", flush=True)
+
+    if TRANSPORT_STREAMABLE_HTTP_ENABLED:
+        print("Streamable HTTP transport enabled: yes", flush=True)
+        print("Streamable HTTP endpoint available at /mcp", flush=True)
+        if JSON_RESPONSE:
+            print("Streamable HTTP mode: JSON response enabled", flush=True)
+        else:
+            print("Streamable HTTP mode: SSE over HTTP enabled", flush=True)
+    else:
+        print("Streamable HTTP transport enabled: no", flush=True)
+        if JSON_RESPONSE:
+            print("Warning: --json-response ignored because streamable transport is disabled.", flush=True)
+
+    uvicorn.run(
+        create_starlette_app(),
+        host=HOST,
+        port=int(PORT),
+    )
+
+
+if __name__ == "__main__":
+    """
+    Launch examples:
+
+    1. Self-host mode with both SSE and Streamable HTTP (in JSON response mode) enabled (default):
+        uv run mcp/server/server.py --host=127.0.0.1 --port=9382 \
+            --base-url=http://127.0.0.1:9380 \
+            --mode=self-host --api-key=ragflow-xxxxx
+
+    2. Host mode (multi-tenant, clients must provide Authorization headers):
+        uv run mcp/server/server.py --host=127.0.0.1 --port=9382 \
+            --base-url=http://127.0.0.1:9380 \
+            --mode=host
+
+    3. Disable legacy SSE (only streamable HTTP will be active):
+        uv run mcp/server/server.py --no-transport-sse-enabled \
+            --mode=self-host --api-key=ragflow-xxxxx
+
+    4. Disable streamable HTTP (only legacy SSE will be active):
+        uv run mcp/server/server.py --no-transport-streamable-http-enabled \
+            --mode=self-host --api-key=ragflow-xxxxx
+
+    5. Use streamable HTTP with SSE-style events (disable JSON response):
+        uv run mcp/server/server.py --transport-streamable-http-enabled --no-json-response \
+            --mode=self-host --api-key=ragflow-xxxxx
+
+    6. Disable both transports (for testing):
+        uv run mcp/server/server.py --no-transport-sse-enabled --no-transport-streamable-http-enabled \
+            --mode=self-host --api-key=ragflow-xxxxx
+    """
+    main()

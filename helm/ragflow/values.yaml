@@ -1,0 +1,227 @@
+# =============================================================================
+#  RAGFlow umbrella chart — defaults
+# -----------------------------------------------------------------------------
+#  This file holds documented defaults. Per-environment overrides live in
+#  values-<env>.yaml (e.g. values-cyllene-prod.yaml).
+#
+#  Convention: every cluster-specific value (storage class, gateway class,
+#  registry hostname, etc.) MUST be parameterised here, never hard-coded in
+#  templates. The same chart deploys to staging and prod with only the values
+#  file changing.
+# =============================================================================
+
+# --- global ------------------------------------------------------------------
+# Shared by all sub-charts. Sub-chart values override these only when set.
+global:
+  # Container image registry. In prod this is the Cyllene Harbor instance.
+  imageRegistry: "harbor.cyllene.local"
+  imageRepository: "ragflow/ragflow"
+  imageTag: "cyllene-1.0.0"
+  imagePullPolicy: IfNotPresent
+  # ImagePullSecret created from External Secrets pulling Harbor robot creds.
+  imagePullSecrets:
+    - name: harbor-pull-secret
+
+  # Storage class used for every PVC (MariaDB, Redis, MinIO drives, Infinity).
+  # On Cyllene cluster only `rook-ceph-block-alterai-cyllene` is available
+  # (RWO). RWX would be needed if we wanted Infinity multi-replica with shared
+  # storage — for Phase 0 we run Infinity in single-replica mode on RBD.
+  storageClass: "rook-ceph-block-alterai-cyllene"
+
+  # Envoy Gateway is the cluster ingress controller. Templates render
+  # `Gateway` + `HTTPRoute` resources rather than legacy `Ingress`.
+  gatewayClassName: "envoy"
+  # Gateway resource the HTTPRoutes attach to. Created cluster-wide once.
+  gatewayName: "envoy-gateway-cyllene"
+  gatewayNamespace: "envoy-gateway-system"
+
+  # External hostname. Multi-tenant uses workspace selection via the
+  # X-Workspace-Id header — NOT subdomain-per-client. A single hostname.
+  hostname: "ragflow.alterai.cyllene.com"
+  # cert-manager ClusterIssuer that signs the public TLS cert.
+  tlsClusterIssuer: "letsencrypt-cyllene"
+
+  # Environment shared by every workload. Anything secret goes through
+  # ExternalSecret (see externalSecrets: below), NEVER inline here.
+  env:
+    DOC_ENGINE: "infinity"
+    LIGHTEN: "0"
+    TZ: "Europe/Paris"
+
+  # Tighter PSS baseline (runAsUser:10001, etc.). Off in Phase 0 because
+  # the upstream image's venv is owned by root. See top-level `security:`.
+  security:
+    restricted: false
+
+# --- ragflow-api -------------------------------------------------------------
+# K8s-native: 1 worker per pod, scale through replica count. See
+# `charts/ragflow-api/values.yaml` for rationale.
+ragflow-api:
+  enabled: true
+  replicas: 4
+  hypercornWorkers: 1
+  resources:
+    requests:
+      cpu: "250m"
+      memory: "512Mi"
+    limits:
+      cpu: "1000m"
+      memory: "2Gi"
+  hpa:
+    enabled: true
+    minReplicas: 4
+    maxReplicas: 30
+    targetCPUUtilizationPercentage: 70
+    targetMemoryUtilizationPercentage: 80
+
+# --- ragflow-task-executor ---------------------------------------------------
+# Scaling is driven by KEDA on Redis stream length (`rag_flow_svr_queue:1`),
+# NOT CPU. CPU stays low while waiting on embedding/parse — Redis backlog is
+# the real signal of "we need more workers".
+ragflow-task-executor:
+  enabled: true
+  replicas: 2                    # KEDA scales 2..20
+  resources:
+    requests:
+      cpu: "1000m"
+      memory: "4Gi"
+    limits:
+      cpu: "4000m"
+      memory: "12Gi"
+  keda:
+    enabled: true
+    minReplicas: 2
+    maxReplicas: 20
+    redisStream: "rag_flow_svr_queue:1"
+    redisStreamPendingThreshold: 10   # pods+1 when XLEN > N
+
+# --- ragflow-frontend --------------------------------------------------------
+ragflow-frontend:
+  enabled: true
+  replicas: 2
+  resources:
+    requests:
+      cpu: "100m"
+      memory: "128Mi"
+    limits:
+      cpu: "500m"
+      memory: "512Mi"
+
+# --- mariadb (operator CR) ---------------------------------------------------
+# Provisioned by mariadb-operator. The operator installs separately; this
+# chart only declares the MariaDB resource it should reify.
+mariadb:
+  enabled: true
+  storage: "20Gi"
+  replicas: 3
+  galera: true
+  metrics: true
+  rootPasswordSecretRef: "ragflow-mariadb-root"
+  databaseSecretRef: "ragflow-mariadb-app"
+  resources:
+    requests: { cpu: "500m", memory: "2Gi" }
+    limits:   { cpu: "2000m", memory: "8Gi" }
+
+# --- redis (operator CR) -----------------------------------------------------
+redis:
+  enabled: true
+  storage: "5Gi"
+  masterReplicas: 1
+  slaveReplicas: 2
+  sentinelReplicas: 3
+  authSecretRef: "ragflow-redis-auth"
+  resources:
+    requests: { cpu: "200m", memory: "512Mi" }
+    limits:   { cpu: "1000m", memory: "2Gi" }
+
+# --- minio (operator Tenant CR) ----------------------------------------------
+# 4 servers × 1 drive = EC4+0 (no parity, fast). Move to 4×4 EC4+2 once
+# storage budget allows real durability. Per MinIO best-practice, every
+# drive gets its own PVC (no RWX needed).
+minio:
+  enabled: true
+  servers: 4
+  volumesPerServer: 1
+  size: "100Gi"
+  rootCredentialsSecretRef: "ragflow-minio-root"
+  resources:
+    requests: { cpu: "500m", memory: "1Gi" }
+    limits:   { cpu: "2000m", memory: "4Gi" }
+
+# --- infinity (custom StatefulSet, no operator) ------------------------------
+# Phase 0: 1 replica, RWO RBD. Phase 2 plan: rework to multi-replica when
+# CephFS RWX is available cluster-wide (admin-side change).
+infinity:
+  enabled: true
+  replicas: 1
+  storage: "50Gi"
+  image: "infiniflow/infinity:v0.7.0-dev5"
+  resources:
+    requests: { cpu: "1000m", memory: "4Gi" }
+    limits:   { cpu: "4000m", memory: "16Gi" }
+
+# --- vLLM endpoint (NOT deployed by this chart, just configured) -------------
+# vLLM lives in its own ns (`vllm-rag` or shared `gpt`/`glm`) and is shared
+# infra. We just point ragflow-api at its Service URLs.
+vllm:
+  chatBaseUrl: "http://vllm-chat.vllm-rag.svc.cluster.local:8000/v1"
+  embedBaseUrl: "http://vllm-embed.vllm-rag.svc.cluster.local:8000/v1"
+  rerankBaseUrl: "http://vllm-rerank.vllm-rag.svc.cluster.local:8000/v1"
+  chatModel: "meta-llama/Llama-3.3-70B-Instruct-FP8"
+  embedModel: "BAAI/bge-m3"
+  rerankModel: "BAAI/bge-reranker-v2-m3"
+
+# --- external-secrets / Vault ------------------------------------------------
+# All secrets sourced from Vault via ExternalSecrets Operator. The chart
+# creates `ExternalSecret` CRs that materialise as standard Kubernetes
+# Secrets which the workloads then `envFrom`/`volumeMount`.
+externalSecrets:
+  enabled: true
+  clusterSecretStore: "vault-cyllene"
+  vaultPathPrefix: "secret/data/ragflow/cyllene-prod"
+  refreshInterval: "1h"
+
+# --- networkpolicy -----------------------------------------------------------
+# Calico-compatible. Default-deny + explicit allow.
+networkPolicy:
+  enabled: true
+  # Pods authorized to reach ragflow-api on its Service port.
+  apiAllowedFrom:
+    - namespaceSelector:
+        matchLabels:
+          kubernetes.io/metadata.name: envoy-gateway-system
+    # Workspace admin panel (separate deployment we may add later).
+    - namespaceSelector:
+        matchLabels:
+          kubernetes.io/metadata.name: ragflow-admin
+
+# --- monitoring --------------------------------------------------------------
+monitoring:
+  serviceMonitor:
+    enabled: true
+    interval: "30s"
+    scrapeTimeout: "10s"
+    namespace: "monitoring"
+  # Grafana dashboards shipped in the chart (configmap with dashboard json).
+  dashboards:
+    enabled: true
+
+# --- security ----------------------------------------------------------------
+# Toggle the restricted PSS baseline. When false (Phase 0), pods stay as
+# default user (root in the upstream image's venv). When true, pods run
+# non-root — REQUIRES the image to chown /ragflow/.venv to UID 10001 at
+# build time, otherwise hypercorn / python interpreters trip "Permission
+# denied" on their shebang. Tracked in CLAUDE.md Phase 1 hardening.
+#
+# Defined under both top-level and global so sub-charts can read it via
+# `$.Values.global.security`.
+security:
+  restricted: false
+
+# --- audit (RGPD) ------------------------------------------------------------
+# All write actions are recorded into the application's `cyllene_audit_log`
+# table; the chart only ensures retention by sizing MariaDB storage above.
+# Deletion of a workspace must remove every row — see the multi-tenant test
+# suite (`test/multitenant/`) for the contract.
+audit:
+  retentionDays: 365

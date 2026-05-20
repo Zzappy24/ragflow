@@ -1,0 +1,150 @@
+{{- if .Values.infinity.enabled }}
+# Infinity vector DB — no operator exists yet, so we run it as a custom
+# StatefulSet. Phase 0 runs ONE replica because rook-ceph-block is RWO and
+# Infinity has no native multi-replica replication — it'd corrupt on
+# concurrent writes from two pods. When CephFS or another RWX option is
+# available, switch to clustered mode (3 nodes, raft) — see Phase 2 in
+# helm/upstream-monolith-reference/.archive-note.md.
+apiVersion: apps/v1
+kind: StatefulSet
+metadata:
+  name: {{ .Release.Name }}-infinity
+  labels:
+    {{- include "ragflow.labels" . | nindent 4 }}
+    app.kubernetes.io/component: infinity
+spec:
+  serviceName: {{ .Release.Name }}-infinity
+  replicas: {{ .Values.infinity.replicas }}
+  selector:
+    matchLabels:
+      app.kubernetes.io/name: ragflow
+      app.kubernetes.io/instance: {{ .Release.Name }}
+      app.kubernetes.io/component: infinity
+  template:
+    metadata:
+      labels:
+        app.kubernetes.io/name: ragflow
+        app.kubernetes.io/instance: {{ .Release.Name }}
+        app.kubernetes.io/component: infinity
+    spec:
+      terminationGracePeriodSeconds: 60
+      securityContext:
+        {{- include "ragflow.podSecurityContext" . | nindent 8 }}
+
+      # `infiniflow/infinity:v0.7.0-dev5` runs as root (`User=""`,
+      # `Entrypoint=/usr/bin/infinity`). On kindnet's local-path-provisioner
+      # the freshly-bound PVC was observed mounting in a state where even
+      # root couldn't open /var/infinity/log/infinity.log on first write —
+      # likely a quirk of the loopback driver. Pre-creating the dir tree
+      # with permissive bits at boot is the cheapest fix.
+      #
+      # On rook-ceph (Cyllene prod) this is a no-op: the volume is empty
+      # and root-writable. We keep the initContainer for portability.
+      # Phase 2: build a non-root Infinity image fork (USER 1001) and
+      # replace `chmod 0777` with `chown 1001:1001` here.
+      initContainers:
+        - name: prepare-data
+          image: busybox:1.36
+          command:
+            - sh
+            - -c
+            - |
+              for d in log data wal tmp persistence snapshot; do
+                mkdir -p /var/infinity/$d
+              done
+              chmod -R 0777 /var/infinity
+          securityContext:
+            runAsUser: 0
+          volumeMounts:
+            - name: data
+              mountPath: /var/infinity
+
+      containers:
+        - name: infinity
+          image: {{ .Values.infinity.image }}
+          imagePullPolicy: IfNotPresent
+          ports:
+            - name: thrift
+              containerPort: 23817
+            - name: http
+              containerPort: 23820
+            - name: psql
+              containerPort: 5432
+
+          # Probes — Infinity v0.7.0-dev5 doesn't expose `/admin/healthz`
+          # reliably (varies by build); fall back to a raw TCP check on
+          # the thrift port, which is up once the WAL is replayed.
+          # initialDelay 90s covers the cold WAL replay on the slowest path.
+          livenessProbe:
+            tcpSocket:
+              port: thrift
+            initialDelaySeconds: 90
+            periodSeconds: 30
+            failureThreshold: 5
+            timeoutSeconds: 5
+          readinessProbe:
+            tcpSocket:
+              port: thrift
+            initialDelaySeconds: 30
+            periodSeconds: 10
+            failureThreshold: 6
+
+          resources:
+            {{- toYaml .Values.infinity.resources | nindent 12 }}
+
+          volumeMounts:
+            - name: data
+              mountPath: /var/infinity
+
+          # Phase 0: relaxed FS — readOnlyRootFilesystem trips Infinity's
+          # internal scratch writes outside /var/infinity. Re-enable in
+          # Phase 1 when we know which paths it touches at runtime.
+          securityContext:
+            allowPrivilegeEscalation: false
+            capabilities:
+              drop: ["ALL"]
+
+      volumes:
+        # /tmp scratch — Infinity sort-merge can spill here under heavy
+        # batch loads. emptyDir keeps it node-local and fast.
+        - name: tmp
+          emptyDir:
+            sizeLimit: 2Gi
+
+  volumeClaimTemplates:
+    - metadata:
+        name: data
+      spec:
+        accessModes: ["ReadWriteOnce"]
+        storageClassName: {{ .Values.global.storageClass | quote }}
+        resources:
+          requests:
+            storage: {{ .Values.infinity.storage }}
+
+---
+# Headless Service — StatefulSet's `serviceName` requires this. Used by
+# ragflow-api / ragflow-task-executor to resolve `<release>-infinity`.
+apiVersion: v1
+kind: Service
+metadata:
+  name: {{ .Release.Name }}-infinity
+  labels:
+    {{- include "ragflow.labels" . | nindent 4 }}
+    app.kubernetes.io/component: infinity
+spec:
+  clusterIP: None
+  selector:
+    app.kubernetes.io/name: ragflow
+    app.kubernetes.io/instance: {{ .Release.Name }}
+    app.kubernetes.io/component: infinity
+  ports:
+    - name: thrift
+      port: 23817
+      targetPort: thrift
+    - name: http
+      port: 23820
+      targetPort: http
+    - name: psql
+      port: 5432
+      targetPort: psql
+{{- end }}

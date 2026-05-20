@@ -1,0 +1,77 @@
+# RAGFlow umbrella chart — Cyllene production install.
+#
+# ArgoCD watches the GitLab mirror of this repo (we keep the source of
+# truth in GitHub `Zzappy24/ragnarok` for personal backup, mirror to the
+# Cyllene GitLab where ArgoCD has read access). Path points at the
+# umbrella chart — `helm/ragflow/` — with the prod values overlay.
+apiVersion: argoproj.io/v1alpha1
+kind: Application
+metadata:
+  name: ragflow-cyllene-prod
+  namespace: argocd
+  finalizers:
+    # `resources-finalizer` ensures `argocd app delete` actually deletes
+    # the namespace + workloads, not just the ArgoCD record.
+    - resources-finalizer.argocd.argoproj.io
+  labels:
+    ragflow/env: cyllene-prod
+spec:
+  project: default
+
+  # Source of truth — adjust repoURL to the Cyllene GitLab project URL
+  # once mirroring is set up. For dev (local kubectl), point straight at
+  # GitHub via SSH key in argocd-repo-server.
+  source:
+    repoURL: git@gitlab.cyllene.local:platform/ragnarok.git
+    targetRevision: main          # or pin to a tag for prod releases
+    path: helm/ragflow
+    helm:
+      releaseName: ragflow
+      valueFiles:
+        - values.yaml
+        - values-cyllene-prod.yaml
+      # Force-recreate of CRD-backed resources on chart changes. Without
+      # this, ArgoCD treats the CR as immutable on field changes that the
+      # operator actually accepts (e.g. MariaDB.spec.replicas).
+      skipCrds: false
+
+  destination:
+    server: https://kubernetes.default.svc
+    namespace: ragflow            # the `ragflow` ns we already inspected
+
+  syncPolicy:
+    automated:
+      prune: true                 # remove resources deleted from Git
+      selfHeal: true              # revert manual edits to keep Git authoritative
+      allowEmpty: false           # safety: refuse to sync if Git is empty (deleted by mistake)
+    syncOptions:
+      - CreateNamespace=true
+      - ServerSideApply=true
+      - ApplyOutOfSyncOnly=true
+      # CRDs (MariaDB, RedisReplication, Tenant, ScaledObject, …) won't
+      # exist before the operators' Application has synced. Skip dry-run
+      # validation so the initial install doesn't fail on "unknown kind".
+      - SkipDryRunOnMissingResource=true
+    retry:
+      limit: 10
+      backoff:
+        duration: 30s
+        factor: 2
+        maxDuration: 10m
+
+  # Resource-level health hints. ArgoCD knows StatefulSets/Deployments
+  # natively; we add hints for the operator CRs so the UI shows green
+  # when they're actually ready (not just "applied").
+  ignoreDifferences:
+    # MinIO operator's mutating admission webhook injects fields that
+    # ArgoCD then sees as "drift". Ignore them to keep the app Synced.
+    - group: minio.min.io
+      kind: Tenant
+      jsonPointers:
+        - /spec/configuration/name
+    # MariaDB operator stamps generated fields into Status only — but
+    # also some Spec defaults during webhook conversion.
+    - group: k8s.mariadb.com
+      kind: MariaDB
+      jsonPointers:
+        - /spec/podSecurityContext

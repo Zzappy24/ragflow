@@ -1,0 +1,197 @@
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: {{ include "ragflow-api.fullname" . }}
+  labels:
+    {{- include "ragflow-api.labels" . | nindent 4 }}
+spec:
+  # When HPA is enabled we let it own `replicas` — set spec.replicas only on
+  # initial install (Helm honours it), the HPA takes over from there. We keep
+  # this default to seed the rollout; the HPA's targetRef.scaleTargetRef
+  # points to this Deployment by name.
+  {{- if not .Values.hpa.enabled }}
+  replicas: {{ .Values.replicas }}
+  {{- end }}
+  revisionHistoryLimit: 3
+  strategy:
+    type: RollingUpdate
+    rollingUpdate:
+      maxUnavailable: 0      # zero downtime — the api is on the hot path
+      maxSurge: 1
+  selector:
+    matchLabels:
+      {{- include "ragflow-api.selectorLabels" . | nindent 6 }}
+  template:
+    metadata:
+      labels:
+        {{- include "ragflow-api.selectorLabels" . | nindent 8 }}
+      annotations:
+        # Force a rollout on every `helm upgrade` so changes to values that
+        # only affect ConfigMap/Secret content (defined in the umbrella)
+        # still trigger a pod restart. Coarser than a content checksum but
+        # works cross-chart (sub-chart can't reach umbrella templates).
+        helm.sh/release-revision: {{ .Release.Revision | quote }}
+        # Prometheus operator scrapes via ServiceMonitor (templates/), but
+        # leave the legacy annotations as a fallback for ad-hoc kubectl
+        # port-forward scrapes.
+        prometheus.io/scrape: "true"
+        prometheus.io/port: "9380"
+        prometheus.io/path: "/metrics"
+    spec:
+      serviceAccountName: {{ include "ragflow-api.fullname" . }}
+      {{- with .Values.global.imagePullSecrets }}
+      imagePullSecrets:
+        {{- toYaml . | nindent 8 }}
+      {{- end }}
+      securityContext:
+        {{- include "ragflow.podSecurityContext" . | nindent 8 }}
+
+      # GPU nodes are kept free for vLLM. We rely on the NVIDIA GPU Operator
+      # taint (`nvidia.com/gpu=present:NoSchedule`) to keep us off them — we
+      # have no toleration so the scheduler routes us to CPU-only nodes
+      # automatically. If the cluster ever drops the taint, add a nodeSelector
+      # here (e.g. `node-role.kubernetes.io/worker: "true"`) — verify the
+      # exact label first via `kubectl get nodes --show-labels`.
+      affinity:
+        # Prefer to spread replicas across nodes (anti-affinity) so a single
+        # node failure doesn't take down all api pods.
+        podAntiAffinity:
+          preferredDuringSchedulingIgnoredDuringExecution:
+            - weight: 100
+              podAffinityTerm:
+                labelSelector:
+                  matchLabels:
+                    {{- include "ragflow-api.selectorLabels" . | nindent 20 }}
+                topologyKey: kubernetes.io/hostname
+
+      # On voluntary disruption (drain, upgrade) terminate gracefully — give
+      # in-flight requests up to 60s to finish before SIGKILL.
+      terminationGracePeriodSeconds: 60
+
+      # RAGFlow's Python config reads conf/service_conf.yaml (image-shipped)
+      # plus an optional conf/local.service_conf.yaml overlay. Env vars
+      # (MYSQL_HOST, REDIS_HOST, …) are NOT read directly — we have to
+      # render the overlay file. Init container does envsubst on the
+      # template ConfigMap, writes to a shared emptyDir which the main
+      # container mounts as conf/local.service_conf.yaml.
+      initContainers:
+        - name: render-service-conf
+          image: alpine:3.20
+          command:
+            - sh
+            - -c
+            - |
+              apk add --no-cache gettext >/dev/null 2>&1 || true
+              envsubst < /conf-template/service_conf.yaml.template > /conf-rendered/local.service_conf.yaml
+              echo "rendered:" && cat /conf-rendered/local.service_conf.yaml
+          envFrom:
+            - secretRef:
+                name: ragflow-app-secrets
+          volumeMounts:
+            - name: conf-template
+              mountPath: /conf-template
+              readOnly: true
+            - name: conf-rendered
+              mountPath: /conf-rendered
+
+      containers:
+        - name: api
+          image: {{ include "ragflow-api.image" . }}
+          imagePullPolicy: {{ .Values.global.imagePullPolicy | default .Values.image.pullPolicy }}
+          # The container starts hypercorn directly (no shell wrapping) so
+          # SIGTERM reaches PID 1 cleanly on rollout.
+          command: ["/bin/bash", "-lc"]
+          args:
+            - |
+              exec hypercorn api.asgi:app \
+                --bind 0.0.0.0:9380 \
+                --workers {{ .Values.hypercornWorkers }} \
+                --access-logfile - \
+                --error-logfile -
+          ports:
+            - name: http
+              containerPort: 9380
+              protocol: TCP
+
+          # All non-secret config from ConfigMap; secrets come from Vault via
+          # ExternalSecret (resolved as a Secret named `ragflow-app-secrets`).
+          envFrom:
+            - configMapRef:
+                name: {{ .Release.Name }}-app-config
+            - secretRef:
+                name: ragflow-app-secrets
+          # Per-pod environment that depends on K8s metadata.
+          env:
+            - name: POD_NAME
+              valueFrom: { fieldRef: { fieldPath: metadata.name } }
+            - name: POD_IP
+              valueFrom: { fieldRef: { fieldPath: status.podIP }}
+            # PYTHONPATH must point at the repo root inside the image.
+            - name: PYTHONPATH
+              value: "/ragflow"
+
+          resources:
+            {{- toYaml .Values.resources | nindent 12 }}
+
+          # /healthz + /readyz are public (no auth) — see api/asgi.py
+          # CUSTOM B2B SaaS comment.
+          startupProbe:
+            httpGet:
+              path: {{ .Values.probes.startup.path }}
+              port: http
+            periodSeconds: {{ .Values.probes.startup.periodSeconds }}
+            failureThreshold: {{ .Values.probes.startup.failureThreshold }}
+          livenessProbe:
+            httpGet:
+              path: {{ .Values.probes.liveness.path }}
+              port: http
+            periodSeconds: {{ .Values.probes.liveness.periodSeconds }}
+            failureThreshold: {{ .Values.probes.liveness.failureThreshold }}
+          readinessProbe:
+            httpGet:
+              path: {{ .Values.probes.readiness.path }}
+              port: http
+            periodSeconds: {{ .Values.probes.readiness.periodSeconds }}
+            failureThreshold: {{ .Values.probes.readiness.failureThreshold }}
+
+          # Phase 0: relaxed securityContext — readOnlyRootFilesystem stays
+          # off until we've validated nothing in the RAGFlow stack writes
+          # outside /tmp and /ragflow/logs at runtime (sentence-transformers
+          # cache, NLTK data, peewee compiled-query cache, etc. are all
+          # known offenders that trip readonly FS). Tighten in Phase 1.
+          securityContext:
+            allowPrivilegeEscalation: false
+            capabilities:
+              drop: ["ALL"]
+            # readOnlyRootFilesystem: true   # TODO Phase 1 — re-enable + add
+                                              # emptyDirs for any path that breaks
+
+          # Volumes for high-churn write paths even with the relaxed FS.
+          # Keeps the writable layer of the container small.
+          volumeMounts:
+            - name: tmp
+              mountPath: /tmp
+            - name: ragflow-runtime
+              mountPath: /ragflow/logs
+            # The rendered service_conf overlay (see initContainer above).
+            - name: conf-rendered
+              mountPath: /ragflow/conf/local.service_conf.yaml
+              subPath: local.service_conf.yaml
+              readOnly: true
+
+      volumes:
+        - name: tmp
+          emptyDir:
+            sizeLimit: 1Gi
+        - name: ragflow-runtime
+          emptyDir:
+            sizeLimit: 2Gi
+        - name: conf-template
+          configMap:
+            name: {{ .Release.Name }}-app-config
+            items:
+              - key: service_conf.yaml.template
+                path: service_conf.yaml.template
+        - name: conf-rendered
+          emptyDir:
+            sizeLimit: 64Mi

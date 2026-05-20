@@ -1,0 +1,19 @@
+# Headless Service — exists ONLY for Prometheus-operator's ServiceMonitor
+# selector. No clients call task_executor over HTTP; the workers consume
+# Redis. clusterIP: None saves cluster-IP allocation.
+apiVersion: v1
+kind: Service
+metadata:
+  name: {{ include "ragflow-task-executor.fullname" . }}-metrics
+  labels:
+    {{- include "ragflow-task-executor.labels" . | nindent 4 }}
+spec:
+  type: ClusterIP
+  clusterIP: None
+  selector:
+    {{- include "ragflow-task-executor.selectorLabels" . | nindent 4 }}
+  ports:
+    - name: metrics
+      port: 9381
+      targetPort: metrics
+      protocol: TCP

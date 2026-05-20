@@ -1,0 +1,104 @@
+# ApplicationSet — generates one ArgoCD Application per operator.
+# Operators are installed in dedicated namespaces (cluster-wide concerns,
+# don't pollute the ragflow namespace).
+#
+# All operators here are vanilla upstream Helm releases. We pin chart
+# versions so an upstream regression doesn't auto-roll out the next time
+# ArgoCD syncs.
+apiVersion: argoproj.io/v1alpha1
+kind: ApplicationSet
+metadata:
+  name: ragflow-operators
+  namespace: argocd
+spec:
+  generators:
+    - list:
+        elements:
+          - name: external-secrets
+            namespace: external-secrets
+            repoURL: https://charts.external-secrets.io
+            chart: external-secrets
+            targetRevision: 0.10.7
+            helm:
+              releaseName: external-secrets
+              parameters:
+                - name: installCRDs
+                  value: "true"
+
+          - name: keda
+            namespace: keda
+            repoURL: https://kedacore.github.io/charts
+            chart: keda
+            targetRevision: 2.16.1
+
+          # CRDs come FIRST (sync-wave 0). Separate chart so an accidental
+          # `argocd app delete ragflow-op-mariadb-operator` does NOT cascade
+          # to deleting every MariaDB instance via `crds.enabled=true` in the
+          # main chart. See mariadb-operator/values.yaml's WARNING.
+          - name: mariadb-operator-crds
+            namespace: mariadb-operator
+            repoURL: https://helm.mariadb.com/mariadb-operator
+            chart: mariadb-operator-crds
+            targetRevision: 0.37.1
+            syncWave: "0"
+
+          - name: mariadb-operator
+            namespace: mariadb-operator
+            repoURL: https://helm.mariadb.com/mariadb-operator
+            chart: mariadb-operator
+            targetRevision: 0.37.1
+            syncWave: "1"
+            helm:
+              parameters:
+                # Operator's webhook needs a cert — use cert-manager (already
+                # cluster-wide). Without this, mariadb-operator falls back to
+                # self-signed certs that need manual rotation.
+                - name: webhook.cert.certManager.enabled
+                  value: "true"
+
+          - name: redis-operator
+            namespace: redis-operator
+            repoURL: https://ot-container-kit.github.io/helm-charts
+            chart: redis-operator
+            targetRevision: 0.18.1
+
+          - name: minio-operator
+            namespace: minio-operator
+            repoURL: https://operator.min.io
+            chart: operator
+            targetRevision: 6.0.4
+
+  template:
+    metadata:
+      name: 'ragflow-op-{{ "{{ .name }}" }}'
+      labels:
+        ragflow/component: operator
+      annotations:
+        # syncWave default "0" — operators with CRD dependency override to "1"
+        # so ArgoCD applies them after the CRDs are committed to etcd.
+        argocd.argoproj.io/sync-wave: '{{ "{{ default \"0\" .syncWave }}" }}'
+    spec:
+      project: default
+      source:
+        repoURL: '{{ "{{ .repoURL }}" }}'
+        chart: '{{ "{{ .chart }}" }}'
+        targetRevision: '{{ "{{ .targetRevision }}" }}'
+        helm:
+          releaseName: '{{ "{{ default .name (index .helm \"releaseName\") }}" }}'
+      destination:
+        server: https://kubernetes.default.svc
+        namespace: '{{ "{{ .namespace }}" }}'
+      syncPolicy:
+        automated:
+          prune: false       # don't auto-delete operators if Git is unreachable
+          selfHeal: true
+        syncOptions:
+          - CreateNamespace=true
+          - ServerSideApply=true
+          - ApplyOutOfSyncOnly=true
+        retry:
+          limit: 5
+          backoff:
+            duration: 30s
+            factor: 2
+            maxDuration: 5m

@@ -1,0 +1,61 @@
+# Defaults — see umbrella values.yaml for the actual settings used.
+# This file exists so the sub-chart is independently lintable.
+
+# K8s-native scaling: 1 hypercorn worker PER pod, scale via replicas/HPA.
+# Multi-worker-per-pod (gunicorn-style) makes sense on a single VM but
+# defeats the K8s model — a leaky worker takes down the whole pod, kubelet
+# can't spread workers across nodes, observability is per-pod not per-worker,
+# and rolling updates restart N workers at once instead of one at a time.
+replicas: 4
+hypercornWorkers: 1
+
+image:
+  repository: harbor.cyllene.local/ragflow/ragflow
+  tag: cyllene-1.0.0
+  pullPolicy: IfNotPresent
+
+# Per-pod budget: 1 worker is fairly light. Hypercorn + Python stack ≈
+# 200-400 MB resident; the limits leave headroom for request handling
+# (Quart event loop, peewee connection pool, sentence-transformers cache).
+resources:
+  requests:
+    cpu: 250m
+    memory: 512Mi
+  limits:
+    cpu: 1000m
+    memory: 2Gi
+
+hpa:
+  enabled: true
+  minReplicas: 4               # Phase 0 baseline
+  maxReplicas: 30              # Phase 2 ceiling — covers 5000 users peak
+  targetCPUUtilizationPercentage: 70
+  targetMemoryUtilizationPercentage: 80
+
+service:
+  type: ClusterIP
+  port: 80
+  targetPort: 9380
+
+# Probes — `/api/v1/system/version` exists, returns 401 without auth which
+# the kubelet treats as "alive" because not 5xx.
+probes:
+  # K8s pattern: startupProbe (long, generous) gates liveness/readiness
+  # so cold-boot tolerance doesn't slow down warm restarts.
+  #
+  # /healthz and /readyz are the public endpoints we ship in api/asgi.py
+  # (see CUSTOM B2B SaaS comment there). They don't require auth, so
+  # httpGet probes get the right HTTP 200 / 503 contract instead of the
+  # 401 we got from /api/v1/system/version.
+  startup:
+    path: /healthz
+    periodSeconds: 10
+    failureThreshold: 60        # 600s total budget for first boot
+  liveness:
+    path: /healthz
+    periodSeconds: 15
+    failureThreshold: 4         # 60s tolerance once started
+  readiness:
+    path: /readyz               # checks Redis + MariaDB are reachable
+    periodSeconds: 10
+    failureThreshold: 3

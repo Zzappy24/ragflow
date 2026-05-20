@@ -1,0 +1,13 @@
+apiVersion: policy/v1
+kind: PodDisruptionBudget
+metadata:
+  name: {{ include "ragflow-task-executor.fullname" . }}
+  labels:
+    {{- include "ragflow-task-executor.labels" . | nindent 4 }}
+spec:
+  # Keep at least half the workers up during voluntary disruption so the
+  # Redis backlog keeps draining during a node drain or rolling upgrade.
+  minAvailable: 50%
+  selector:
+    matchLabels:
+      {{- include "ragflow-task-executor.selectorLabels" . | nindent 6 }}

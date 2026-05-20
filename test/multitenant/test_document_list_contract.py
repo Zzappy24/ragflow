@@ -1,0 +1,225 @@
+"""
+Contract tests for GET /api/v1/datasets/<dataset_id>/documents — the RESTful
+endpoint for listing documents in a dataset.
+
+WHY THESE TESTS EXIST
+---------------------
+Upstream regularly renames API fields (chunk_num→chunk_count, parser_id→chunk_method,
+run as integer→string). Each rename silently breaks the frontend until we notice.
+These tests catch field-level regressions within seconds of starting the server.
+
+Run:
+    cd test/multitenant
+    uv run python -m pytest test_document_list_contract.py -v
+    # or from repo root:
+    uv run python -m pytest test/multitenant/ -v
+
+Prerequisites: RAGFlow server running at HOST_ADDRESS (default: http://127.0.0.1:9380),
+test user exists in a workspace (TEST_EMAIL / TEST_PASSWORD env vars).
+"""
+import os
+from pathlib import Path
+
+import pytest
+import requests
+from requests.auth import AuthBase
+
+HOST_ADDRESS = os.getenv("HOST_ADDRESS", "http://127.0.0.1:9380")
+VERSION = "v1"
+INVALID_TOKEN = "invalid_token_000"
+
+VALID_RUN_VALUES = {"UNSTART", "RUNNING", "CANCEL", "DONE", "FAIL"}
+
+REQUIRED_DOC_FIELDS = {
+    "chunk_count",   # renamed from chunk_num in upstream #14232
+    "chunk_method",  # renamed from parser_id in upstream #14232
+    "run",           # must be string enum, not raw "0"/"1"/...
+    "id",
+    "name",
+    "progress",
+}
+
+
+class _InvalidAuth(AuthBase):
+    def __call__(self, r):
+        r.headers["Authorization"] = INVALID_TOKEN
+        return r
+
+
+def list_docs(auth, dataset_id):
+    """Call GET /api/v1/datasets/<dataset_id>/documents — the RESTful list endpoint.
+    Returns the JSON body. For auth/access-denial checks use list_docs_response()."""
+    url = f"{HOST_ADDRESS}/api/{VERSION}/datasets/{dataset_id}/documents"
+    return requests.get(url, auth=auth).json()
+
+
+def list_docs_response(auth, dataset_id):
+    """Return the raw requests.Response for HTTP-status-level checks."""
+    url = f"{HOST_ADDRESS}/api/{VERSION}/datasets/{dataset_id}/documents"
+    return requests.get(url, auth=auth)
+
+
+def _upload_txt(auth, kb_id, tmp_path, filename="contract_test.txt"):
+    """Upload a small text file via the RESTful upload endpoint."""
+    fp = tmp_path / filename
+    fp.write_text("contract test content")
+    url = f"{HOST_ADDRESS}/api/{VERSION}/datasets/{kb_id}/documents"
+    with open(fp, "rb") as f:
+        res = requests.post(url, auth=auth, files={"file": (fp.name, f)})
+    assert res.json().get("code") == 0, f"Upload failed: {res.json()}"
+
+
+# ---------------------------------------------------------------------------
+# Auth tests
+# ---------------------------------------------------------------------------
+
+@pytest.mark.p1
+class TestDocumentListAuth:
+    """Endpoint must reject unauthenticated and badly-authenticated requests.
+
+    The RESTful API signals auth failures via HTTP 401 status (not JSON code=401).
+    """
+
+    def test_no_auth_returns_401(self, workspace_id):
+        url = f"{HOST_ADDRESS}/api/{VERSION}/datasets/any-id/documents"
+        r = requests.get(url)
+        assert r.status_code == 401, f"Expected HTTP 401, got {r.status_code}: {r.json()}"
+
+    def test_invalid_token_returns_401(self, workspace_id):
+        r = list_docs_response(_InvalidAuth(), "any-id")
+        assert r.status_code == 401, f"Expected HTTP 401, got {r.status_code}: {r.json()}"
+
+
+# ---------------------------------------------------------------------------
+# Workspace isolation tests
+# ---------------------------------------------------------------------------
+
+@pytest.mark.p1
+class TestWorkspaceIsolation:
+    """X-Workspace-Id must be enforced — missing or invalid → 401."""
+
+    @staticmethod
+    def _assert_denied(r, hint: str) -> None:
+        """A denial may be signalled either by HTTP 401/403 (auth layer) OR by
+        HTTP 200 with `code` 401/403 in the JSON body (RBAC denial inside the
+        handler returns code via get_json_result, leaving HTTP at 200).
+
+        Either form means "request was rejected" — what we care about is that
+        no data leaked, not the wire encoding. If the route ever returns
+        HTTP 200 + `code: 0` here, that IS a real cross-workspace leak.
+        """
+        body_code = r.json().get("code") if r.headers.get("Content-Type", "").startswith("application/json") else None
+        denied = r.status_code in (401, 403) or body_code in (401, 403)
+        assert denied, (
+            f"{hint} — got HTTP {r.status_code} body={r.json()}. "
+            "Both HTTP status AND body 'code' must indicate denial; if neither "
+            "does, the request was authorized when it should not have been."
+        )
+
+    def test_missing_workspace_header_returns_401(self, bare_auth, ws_dataset):
+        """Without X-Workspace-Id the request must be rejected."""
+        r = list_docs_response(bare_auth, ws_dataset)
+        self._assert_denied(
+            r,
+            "Expected denial when X-Workspace-Id is missing — handler must "
+            "reject either at the auth/middleware layer (HTTP 401/403) or at "
+            "the RBAC layer (body code 403)",
+        )
+
+    def test_nonexistent_workspace_id_returns_401(self, bare_auth, ws_dataset):
+        """A fabricated workspace ID the user doesn't belong to → rejected."""
+        class _FakeWsAuth(AuthBase):
+            def __init__(self, inner):
+                self._inner = inner
+            def __call__(self, r):
+                r = self._inner(r)
+                r.headers["X-Workspace-Id"] = "00000000000000000000000000000000"
+                return r
+
+        r = list_docs_response(_FakeWsAuth(bare_auth), ws_dataset)
+        self._assert_denied(
+            r,
+            "Expected denial for fabricated workspace ID — cross-workspace "
+            "data leak possible if neither HTTP nor body code signals 401/403",
+        )
+
+    def test_valid_workspace_returns_200(self, ws_auth, ws_dataset):
+        """Sanity: correct workspace + auth → 200."""
+        res = list_docs(ws_auth, ws_dataset)
+        assert res["code"] == 0, f"Expected 200 with valid workspace, got: {res}"
+        assert "docs" in res.get("data", {}), f"Missing 'docs' in response: {res}"
+
+
+# ---------------------------------------------------------------------------
+# API contract tests
+# ---------------------------------------------------------------------------
+
+@pytest.mark.p1
+class TestDocumentListContract:
+    """
+    Verify the response shape matches what the React frontend expects.
+
+    Each test targets a specific upstream regression pattern.
+    If a test fails after an upstream merge, check the CLAUDE.md merge table.
+    """
+
+    @pytest.fixture()
+    def dataset_with_doc(self, ws_auth, ws_dataset, tmp_path):
+        _upload_txt(ws_auth, ws_dataset, tmp_path)
+        return ws_dataset
+
+    def test_response_envelope(self, ws_auth, ws_dataset):
+        """Response must have code=0, data.docs list, data.total int."""
+        res = list_docs(ws_auth, ws_dataset)
+        assert res.get("code") == 0, res
+        assert isinstance(res.get("data", {}).get("docs"), list), res
+        assert isinstance(res.get("data", {}).get("total"), int), res
+
+    def test_chunk_count_present(self, ws_auth, dataset_with_doc):
+        """chunk_count must exist (renamed from chunk_num in upstream #14232)."""
+        res = list_docs(ws_auth, dataset_with_doc)
+        assert res["code"] == 0, res
+        docs = res["data"]["docs"]
+        assert docs, "No documents returned — cannot verify contract."
+        for doc in docs:
+            assert "chunk_count" in doc, (
+                f"'chunk_count' missing. Upstream may have reverted field rename. "
+                f"Keys: {sorted(doc.keys())}"
+            )
+
+    def test_chunk_method_present(self, ws_auth, dataset_with_doc):
+        """chunk_method must exist (renamed from parser_id in upstream #14232)."""
+        res = list_docs(ws_auth, dataset_with_doc)
+        assert res["code"] == 0, res
+        for doc in res["data"]["docs"]:
+            assert "chunk_method" in doc, (
+                f"'chunk_method' missing. Upstream may have reverted parser_id rename. "
+                f"Keys: {sorted(doc.keys())}"
+            )
+
+    def test_run_is_string_enum(self, ws_auth, dataset_with_doc):
+        """
+        'run' must be a string status like 'UNSTART', not a raw integer '0'.
+        Upstream commit 939933649 changed the frontend enum to string values.
+        Our /list endpoint must map DB integers to strings.
+        """
+        res = list_docs(ws_auth, dataset_with_doc)
+        assert res["code"] == 0, res
+        for doc in res["data"]["docs"]:
+            assert "run" in doc, f"'run' field missing. Keys: {sorted(doc.keys())}"
+            assert doc["run"] in VALID_RUN_VALUES, (
+                f"'run' = {doc['run']!r} is not a valid string status. "
+                f"Expected one of {VALID_RUN_VALUES}. "
+                f"Backend may be returning raw DB integer values."
+            )
+
+    def test_required_fields_all_present(self, ws_auth, dataset_with_doc):
+        """All fields the React frontend reads must be present in every doc."""
+        res = list_docs(ws_auth, dataset_with_doc)
+        assert res["code"] == 0, res
+        for doc in res["data"]["docs"]:
+            missing = REQUIRED_DOC_FIELDS - set(doc.keys())
+            assert not missing, (
+                f"Required fields missing from doc response: {missing}. "
+                f"Present keys: {sorted(doc.keys())}"
+            )
