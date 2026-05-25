@@ -16,6 +16,9 @@ image:
   imagePullSecrets:
     - name: harbor-pull-secret
 
+externalSecrets:
+  enabled: false
+
 # Per-pod budget: 1 worker is fairly light. Hypercorn + Python stack ≈
 # 200-400 MB resident; the limits leave headroom for request handling
 # (Quart event loop, peewee connection pool, sentence-transformers cache).

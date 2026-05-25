@@ -9,6 +9,9 @@ image:
   imagePullSecrets:
     - name: harbor-pull-secret
 
+externalSecrets:
+  enabled: false
+
 # Tiny — nginx serves static files, doesn't proxy.
 resources:
   requests:

@@ -9,6 +9,9 @@ image:
   imagePullSecrets:
     - name: harbor-pull-secret
 
+externalSecrets:
+  enabled: false
+
 # Workers are heavier than the api: they load embedding models, OCR weights,
 # Infinity client buffers, etc. Per-pod budget reflects that.
 resources:

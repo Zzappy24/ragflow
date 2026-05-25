@@ -12,6 +12,9 @@ global:
   imagePullSecrets:
     - name: harbor-pull-secret
 
+externalSecrets:
+  enabled: false
+
 # Phase 0 sizing — Bodemer launch (≤ 200 simultaneous users).
 # When we add the 2nd customer, bump these in values-cyllene-prod.yaml only.
 ragflow-api:
