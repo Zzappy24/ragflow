@@ -40,7 +40,7 @@ default:
 helm:lint:
   stage: lint
   tags:
-    - cylndata-preprod
+    - cylndata-prod
   image: alpine/helm:3.16.2
   script:
     - helm lint helm/ragflow
@@ -52,7 +52,7 @@ helm:lint:
 ruff:check:
   stage: lint
   tags:
-    - cylndata-preprod
+    - cylndata-prod
   image: ghcr.io/astral-sh/uv:0.5.4-debian
   script:
     - uv tool install ruff
@@ -69,7 +69,7 @@ ruff:check:
 pytest:invariants:
   stage: test
   tags:
-    - cylndata-preprod
+    - cylndata-prod
   image: ghcr.io/astral-sh/uv:0.5.4-debian
   variables:
     # The bridge suites need RAGFLOW_TEST_LOCAL_AUTH=1 + a running backend;
@@ -96,41 +96,20 @@ pytest:invariants:
 .build_template: &build_template
   stage: build
   tags:
-    - cylndata-preprod
+    - cylndata-prod
   image:
     name: $KANIKO_IMAGE
     entrypoint: [""]
-  before_script:
-    # Build the docker auth file kaniko expects. The Harbor robot creds are
-    # injected from GitLab CI/CD project variables: HARBOR_USER + HARBOR_PASSWORD.
-    # Robot account scope: push to harbor.cyllene.local/ragflow/* only.
-    - mkdir -p /kaniko/.docker
-    - |
-      cat <<EOF >/kaniko/.docker/config.json
-      {
-        "auths": {
-          "$HARBOR_REGISTRY": {
-            "auth": "$(printf "%s" "$HARBOR_USER:$HARBOR_PASSWORD" | base64 -w0)"
-          }
-        }
-      }
-      EOF
+  script:
+      - set -x
+      - echo "{\"auths\":{\"$HARBOR_REGISTRY_PROD\":{\"username\":\"$HARBOR_CYLNDATA_ROBOT_PRD\",\"password\":\"$HARBOR_CYLNDATA_ROBOT_PWD_PRD\"}}}" > /kaniko/.docker/config.json
+      - /kaniko/executor --cache=true --context "${CI_PROJECT_DIR}" --dockerfile "Docker/Dockerfile" --destination "${HARBOR_REGISTRY_PROD}/${HARBOR_PROJECT}/${IMAGE_NAME}:${IMAGE_TAG}"
+  
+
   script:
     - echo "{\"auths\":{\"$HARBOR_REGISTRY_PROD\":{\"username\":\"$HARBOR_CYLNDATA_ROBOT\",\"password\":\"$HARBOR_CYLNDATA_ROBOT_PWD\"}}}" > /kaniko/.docker/config.json
-      - /kaniko/executor --cache=true --context "${CI_PROJECT_DIR}" --dockerfile "Docker/Dockerfile" --destination "$HARBOR_REGISTRY_PROD/${HARBOR_PROJECT}/${IMAGE_NAME}:${CI_COMMIT_TAG}"
+      - /kaniko/executor --cache=true --context "${CI_PROJECT_DIR}" --dockerfile "Docker/Dockerfile" --destination "$HARBOR_REGISTRY_PROD/${HARBOR_PROJECT}/${IMAGE_NAME}:${CI_COMMIT_SHORT_SHA}"
 
-
-    - >
-      /kaniko/executor
-      --context "${CI_PROJECT_DIR}"
-      --dockerfile "${CI_PROJECT_DIR}/Dockerfile"
-      --destination "${HARBOR_REGISTRY}/${HARBOR_PROJECT}/${IMAGE_NAME}:${IMAGE_TAG}"
-      --destination "${HARBOR_REGISTRY}/${HARBOR_PROJECT}/${IMAGE_NAME}:${CI_COMMIT_SHORT_SHA}"
-      --cache=true
-      --cache-repo "${HARBOR_REGISTRY}/${HARBOR_PROJECT}/${IMAGE_NAME}-cache"
-      --cache-ttl=168h
-      --snapshot-mode=redo
-      --use-new-run
 
 # Build on main → tag the image `cyllene-main-<sha>`. ArgoCD picks up the
 # new SHA via the chart's image.tag if you bump it manually, or if you wire
