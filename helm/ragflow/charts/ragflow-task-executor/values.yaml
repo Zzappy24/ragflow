@@ -3,9 +3,11 @@
 replicas: 4
 
 image:
-  repository: harbor.cyllene.local/ragflow/ragflow
-  tag: cyllene-1.0.0
+  repository: harbor.cylndata.cyllene.pro/data/ragflow
+  tag: 538185be
   pullPolicy: IfNotPresent
+  imagePullSecrets:
+    - name: harbor-pull-secret
 
 # Workers are heavier than the api: they load embedding models, OCR weights,
 # Infinity client buffers, etc. Per-pod budget reflects that.
