@@ -120,6 +120,20 @@ ragflow:
     service:
       enabled: true
       type: ClusterIP
+  mcp:
+    # Enable the built-in MCP server (--enable-mcpserver)
+    enabled: false
+    port: 9382
+    baseUrl: "http://127.0.0.1:9382/"
+    # mode: "self-host" (per-instance api key) or "host" (shared)
+    mode: "self-host"
+    # When mode=self-host, an existing Secret with key `host-api-key`.
+    # Leave empty to let the chart create `<release>-mcp`.
+    existingSecret: ""
+    transport:
+      sse: true
+      streamableHttp: true
+      jsonResponse: false
 
 infinity:
   image:

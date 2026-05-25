@@ -1,0 +1,37 @@
+# =============================================================================
+#  Preprod first-touch test — no operators, no Vault, no scaling.
+# -----------------------------------------------------------------------------
+#  Goal: deploy the upstream-style monolithic stack on the preprod cluster
+#  to validate that the fork image actually runs end-to-end. This is NOT
+#  the production target — see helm/ragflow/ + argocd/application-ragflow-
+#  cyllene-prod.yaml for the Cyllene operator-based chart.
+#
+#  Namespace: ragflow-test. Access via port-forward (no Ingress).
+#
+#  Before first sync, two prerequisites must exist in the cluster:
+#    1. Namespace `ragflow-test` (CreateNamespace=true in the Application
+#       handles this on first sync).
+#    2. Harbor pull secret in that namespace:
+#         kubectl create secret docker-registry harbor-pull \
+#           --docker-server=<HARBOR_HOST> --docker-username=<USER> \
+#           --docker-password=<PASS> -n ragflow-test
+# =============================================================================
+
+global:
+  imagePullSecrets:
+    - name: harbor-pull
+
+env:
+  DOC_ENGINE: infinity
+  TZ: "Europe/Paris"
+
+ragflow:
+  image:
+    # TODO Yoan: replace with the Harbor ref once the image push completes.
+    # Example: harbor.cyllene.local/ragflow/ragflow
+    repository: "REPLACE-ME-HARBOR-REPO"
+    # TODO Yoan: replace with the pushed tag (the fork's build tag).
+    tag: "REPLACE-ME-TAG"
+    pullPolicy: IfNotPresent
+    pullSecrets:
+      - name: harbor-pull
