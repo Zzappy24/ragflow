@@ -13,7 +13,7 @@
 # =============================================================================
 
 variables:
-  HARBOR_REGISTRY: harbor.cyllene.local
+  HARBOR_REGISTRY: harbor.cylndata.cyllene.pro
   HARBOR_PROJECT: ragflow
   IMAGE_NAME: ragflow
   # Pin the kaniko version — `:latest` is a known footgun in CI.
