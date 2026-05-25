@@ -5,8 +5,12 @@
 # =============================================================================
 
 global:
-  imageTag: "cyllene-1.0.0"   # Pin per-release. Bump on each chart release.
-  hostname: "ragflow.alterai.cyllene.cloud"
+  imageRegistry: "harbor.cylndata.cyllene.pro"
+  imageRepository: "data/raflow"
+  imageTag: "538185be"
+  hostname: "ragflow.cyllene.cloud"
+  imagePullSecrets:
+    - name: harbor-pull-secret
 
 # Phase 0 sizing — Bodemer launch (≤ 200 simultaneous users).
 # When we add the 2nd customer, bump these in values-cyllene-prod.yaml only.
@@ -40,18 +44,7 @@ infinity:
 # vLLM is shared with the rest of the platform (ns `vllm-rag`); these URLs
 # are the agreed contract with the AI infra team. Confirm before flipping
 # values-cyllene-prod live.
-#vllm:
-#  chatBaseUrl: "http://vllm-chat.vllm-rag.svc.cluster.local:8000/v1"
-#  embedBaseUrl: "http://vllm-embed.vllm-rag.svc.cluster.local:8000/v1"
-#  rerankBaseUrl: "http://vllm-rerank.vllm-rag.svc.cluster.local:8000/v1"
-#  chatModel: "meta-llama/Llama-3.3-70B-Instruct-FP8"
-#  embedModel: "BAAI/bge-m3"
-#  rerankModel: "BAAI/bge-reranker-v2-m3"
 
-#externalSecrets:
-#  clusterSecretStore: "vault-cyllene"
-#  vaultPathPrefix: "secret/data/ragflow/cyllene-prod"
-
-#monitoring:
-#  serviceMonitor:
-#    namespace: "monitoring"     # the cluster's existing prom-operator ns
+monitoring:
+  serviceMonitor:
+    namespace: "monitoring"     # the cluster's existing prom-operator ns
