@@ -68,6 +68,8 @@ ruff:check:
 # -----------------------------------------------------------------------------
 pytest:invariants:
   stage: test
+  tags:
+    - cylndata-preprod
   image: ghcr.io/astral-sh/uv:0.5.4-debian
   variables:
     # The bridge suites need RAGFLOW_TEST_LOCAL_AUTH=1 + a running backend;
@@ -93,6 +95,8 @@ pytest:invariants:
 # -----------------------------------------------------------------------------
 .build_template: &build_template
   stage: build
+  tags:
+    - cylndata-preprod
   image:
     name: $KANIKO_IMAGE
     entrypoint: [""]
