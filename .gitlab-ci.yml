@@ -39,6 +39,8 @@ default:
 # -----------------------------------------------------------------------------
 helm:lint:
   stage: lint
+  tags:
+    - cylndata-preprod
   image: alpine/helm:3.16.2
   script:
     - helm lint helm/ragflow
@@ -49,6 +51,8 @@ helm:lint:
 
 ruff:check:
   stage: lint
+  tags:
+    - cylndata-preprod
   image: ghcr.io/astral-sh/uv:0.5.4-debian
   script:
     - uv tool install ruff
