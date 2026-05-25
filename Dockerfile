@@ -1,3 +1,6 @@
+# deps stage for Kaniko-compatible cross-stage COPY
+FROM infiniflow/ragflow_deps:latest AS deps
+
 # base stage
 FROM ubuntu:24.04 AS base
 USER root
@@ -9,18 +12,22 @@ WORKDIR /ragflow
 
 # copy models downloaded via download_deps.py
 RUN mkdir -p /ragflow/rag/res/deepdoc /root/.ragflow
-RUN --mount=type=bind,from=infiniflow/ragflow_deps:latest,source=/huggingface.co,target=/huggingface.co \
-    tar --exclude='.*' -cf - \
-        /huggingface.co/InfiniFlow/text_concat_xgb_v1.0 \
-        /huggingface.co/InfiniFlow/deepdoc \
-        | tar -xf - --strip-components=3 -C /ragflow/rag/res/deepdoc
+
+# Replace BuildKit mount with standard multi-stage COPY
+COPY --from=deps /huggingface.co/InfiniFlow/text_concat_xgb_v1.0 /tmp/ragflow_deps/InfiniFlow/text_concat_xgb_v1.0
+COPY --from=deps /huggingface.co/InfiniFlow/deepdoc /tmp/ragflow_deps/InfiniFlow/deepdoc
+
+RUN mkdir -p /ragflow/rag/res/deepdoc && \
+    cp -r /tmp/ragflow_deps/InfiniFlow/text_concat_xgb_v1.0 /ragflow/rag/res/deepdoc/ && \
+    cp -r /tmp/ragflow_deps/InfiniFlow/deepdoc /ragflow/rag/res/deepdoc/ && \
+    rm -rf /tmp/ragflow_deps
 
 # https://github.com/chrismattmann/tika-python
 # This is the only way to run python-tika without internet access. Without this set, the default is to check the tika version and pull latest every time from Apache.
-RUN --mount=type=bind,from=infiniflow/ragflow_deps:latest,source=/,target=/deps \
-    cp -r /deps/nltk_data /root/ && \
-    cp /deps/tika-server-standard-3.3.0.jar /deps/tika-server-standard-3.3.0.jar.md5 /ragflow/ && \
-    cp /deps/cl100k_base.tiktoken /ragflow/9b5ad71b2ce5302211f9c61530b329a4922fc6a4
+COPY --from=deps /nltk_data /root/nltk_data
+COPY --from=deps /tika-server-standard-3.3.0.jar /ragflow/tika-server-standard-3.3.0.jar
+COPY --from=deps /tika-server-standard-3.3.0.jar.md5 /ragflow/tika-server-standard-3.3.0.jar.md5
+COPY --from=deps /cl100k_base.tiktoken /ragflow/9b5ad71b2ce5302211f9c61530b329a4922fc6a4
 
 ENV TIKA_SERVER_JAR="file:///ragflow/tika-server-standard-3.3.0.jar"
 ENV DEBIAN_FRONTEND=noninteractive
@@ -65,8 +72,10 @@ RUN --mount=type=cache,id=ragflow_apt,target=/var/cache/apt,sharing=locked \
     apt-mark hold nginx
 
 # Install uv
-RUN --mount=type=bind,from=infiniflow/ragflow_deps:latest,source=/,target=/deps \
-    if [ "$NEED_MIRROR" == "1" ]; then \
+COPY --from=deps /uv-x86_64-unknown-linux-gnu.tar.gz /tmp/uv-x86_64-unknown-linux-gnu.tar.gz
+COPY --from=deps /uv-aarch64-unknown-linux-gnu.tar.gz /tmp/uv-aarch64-unknown-linux-gnu.tar.gz
+
+RUN if [ "$NEED_MIRROR" == "1" ]; then \
         mkdir -p /etc/uv && \
         echo 'python-install-mirror = "https://registry.npmmirror.com/-/binary/python-build-standalone/"' > /etc/uv/uv.toml && \
         echo '[[index]]' >> /etc/uv/uv.toml && \
@@ -75,10 +84,10 @@ RUN --mount=type=bind,from=infiniflow/ragflow_deps:latest,source=/,target=/deps 
     fi; \
     arch="$(uname -m)"; \
     if [ "$arch" = "x86_64" ]; then uv_arch="x86_64"; else uv_arch="aarch64"; fi; \
-    tar xzf "/deps/uv-${uv_arch}-unknown-linux-gnu.tar.gz" \
-    && cp "uv-${uv_arch}-unknown-linux-gnu/"* /usr/local/bin/ \
-    && rm -rf "uv-${uv_arch}-unknown-linux-gnu" \
-    && uv python install 3.13
+    tar xzf "/tmp/uv-${uv_arch}-unknown-linux-gnu.tar.gz" && \
+    cp "uv-${uv_arch}-unknown-linux-gnu/"* /usr/local/bin/ && \
+    rm -rf "uv-${uv_arch}-unknown-linux-gnu" "/tmp/uv-${uv_arch}-unknown-linux-gnu.tar.gz" && \
+    uv python install 3.13
 
 ENV PYTHONDONTWRITEBYTECODE=1 DOTNET_SYSTEM_GLOBALIZATION_INVARIANT=1 \
     UV_HTTP_TIMEOUT=200 \
@@ -102,32 +111,34 @@ RUN --mount=type=cache,id=ragflow_apt,target=/var/cache/apt,sharing=locked \
     apt update && \
     arch="$(uname -m)"; \
     if [ "$arch" = "arm64" ] || [ "$arch" = "aarch64" ]; then \
-        # ARM64 (macOS/Apple Silicon or Linux aarch64) \
         ACCEPT_EULA=Y apt install -y unixodbc-dev msodbcsql18; \
     else \
-        # x86_64 or others \
         ACCEPT_EULA=Y apt install -y unixodbc-dev msodbcsql17; \
     fi || \
     { echo "Failed to install ODBC driver"; exit 1; }
 
-
-
 # Add dependencies of selenium
-RUN --mount=type=bind,from=infiniflow/ragflow_deps:latest,source=/chrome-linux64-121-0-6167-85,target=/chrome-linux64.zip \
-    unzip /chrome-linux64.zip && \
-    mv chrome-linux64 /opt/chrome && \
-    ln -s /opt/chrome/chrome /usr/local/bin/
-RUN --mount=type=bind,from=infiniflow/ragflow_deps:latest,source=/chromedriver-linux64-121-0-6167-85,target=/chromedriver-linux64.zip \
-    unzip -j /chromedriver-linux64.zip chromedriver-linux64/chromedriver && \
-    mv chromedriver /usr/local/bin/ && \
-    rm -f /usr/bin/google-chrome
+COPY --from=deps /chrome-linux64-121-0-6167-85 /tmp/chrome-linux64.zip
+COPY --from=deps /chromedriver-linux64-121-0-6167-85 /tmp/chromedriver-linux64.zip
 
-RUN --mount=type=bind,from=infiniflow/ragflow_deps:latest,source=/,target=/deps \
-    if [ "$(uname -m)" = "x86_64" ]; then \
-        dpkg -i /deps/libssl1.1_1.1.1f-1ubuntu2_amd64.deb; \
+RUN unzip /tmp/chrome-linux64.zip && \
+    mv chrome-linux64 /opt/chrome && \
+    ln -s /opt/chrome/chrome /usr/local/bin/ && \
+    rm -f /tmp/chrome-linux64.zip
+
+RUN unzip -j /tmp/chromedriver-linux64.zip chromedriver-linux64/chromedriver && \
+    mv chromedriver /usr/local/bin/ && \
+    rm -f /usr/bin/google-chrome /tmp/chromedriver-linux64.zip
+
+COPY --from=deps /libssl1.1_1.1.1f-1ubuntu2_amd64.deb /tmp/libssl1.1_amd64.deb
+COPY --from=deps /libssl1.1_1.1.1f-1ubuntu2_arm64.deb /tmp/libssl1.1_arm64.deb
+
+RUN if [ "$(uname -m)" = "x86_64" ]; then \
+        dpkg -i /tmp/libssl1.1_amd64.deb; \
     elif [ "$(uname -m)" = "aarch64" ]; then \
-        dpkg -i /deps/libssl1.1_1.1.1f-1ubuntu2_arm64.deb; \
-    fi
+        dpkg -i /tmp/libssl1.1_arm64.deb; \
+    fi && \
+    rm -f /tmp/libssl1.1_amd64.deb /tmp/libssl1.1_arm64.deb
 
 
 # builder stage
@@ -148,7 +159,6 @@ RUN --mount=type=cache,id=ragflow_uv,target=/root/.cache/uv,sharing=locked \
         sed -i 's|mirrors.aliyun.com/pypi|pypi.org|g' uv.lock; \
     fi; \
     uv sync --python 3.13 --frozen && \
-    # Ensure pip is available in the venv for runtime package installation (fixes #12651)
     .venv/bin/python3 -m ensurepip --upgrade
 
 COPY web web
@@ -160,7 +170,6 @@ RUN --mount=type=cache,id=ragflow_npm,target=/root/.npm,sharing=locked \
 COPY .git /ragflow/.git
 
 RUN version_info=$(git describe --tags --match=v* --first-parent --always); \
-    version_info="$version_info"; \
     echo "RAGFlow version: $version_info"; \
     echo $version_info > /ragflow/VERSION
 
@@ -170,7 +179,6 @@ USER root
 
 WORKDIR /ragflow
 
-# Copy Python environment and packages
 ENV VIRTUAL_ENV=/ragflow/.venv
 COPY --from=builder ${VIRTUAL_ENV} ${VIRTUAL_ENV}
 ENV PATH="${VIRTUAL_ENV}/bin:${PATH}"
@@ -194,26 +202,15 @@ COPY docker/service_conf.yaml.template ./conf/service_conf.yaml.template
 COPY docker/entrypoint.sh ./
 RUN chmod +x ./entrypoint*.sh
 
-# Copy nginx configuration for frontend serving
 COPY docker/nginx/ragflow.conf.golang docker/nginx/ragflow.conf.python docker/nginx/ragflow.conf.hybrid docker/nginx/nginx.conf docker/nginx/proxy.conf /etc/nginx/
 RUN mv /etc/nginx/ragflow.conf.golang /etc/nginx/conf.d/ragflow.conf.golang && \
     mv /etc/nginx/ragflow.conf.python /etc/nginx/conf.d/ragflow.conf.python && \
     mv /etc/nginx/ragflow.conf.hybrid /etc/nginx/conf.d/ragflow.conf.hybrid && \
     rm -f /etc/nginx/sites-enabled/default
 
-# Copy compiled web pages
 COPY --from=builder /ragflow/web/dist /ragflow/web/dist
-
 COPY --from=builder /ragflow/VERSION /ragflow/VERSION
 
-# CUSTOM B2B SaaS — create non-root user (uid 10001) for future
-# `runAsUser: 10001` adoption (Phase 2 hardening), and chown the paths
-# nginx writes to. We deliberately DO NOT chown /ragflow itself: the K8s
-# pods drop CAP_DAC_OVERRIDE via `capabilities.drop: ["ALL"]`, after
-# which root is denied write access on paths it doesn't own — chown'ing
-# /ragflow to 10001 would break tiktoken's cache write at startup. The
-# venv stays root-owned and the runtime user (root by default in the
-# upstream image) keeps full control of /ragflow.
 RUN groupadd -g 10001 ragflow \
  && useradd -u 10001 -g 10001 -m -s /bin/bash ragflow \
  && chown -R 10001:10001 /var/log/nginx /var/cache/nginx /var/lib/nginx 2>/dev/null || true \
