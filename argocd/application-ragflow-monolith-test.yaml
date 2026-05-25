@@ -1,0 +1,50 @@
+# RAGFlow monolithic chart — first-touch preprod test (no operators).
+#
+# Deploys the upstream-style chart (helm/upstream-monolith-reference) with
+# plain StatefulSets for MySQL / Redis / MinIO / Infinity. Used to validate
+# the fork image on the preprod cluster before standing up the full
+# operator-based Cyllene chart.
+#
+# Companion overlay: helm/upstream-monolith-reference/values-preprod-test.yaml
+# Fill in the Harbor image repo+tag there before the first sync.
+apiVersion: argoproj.io/v1alpha1
+kind: Application
+metadata:
+  name: ragflow-monolith-test
+  namespace: argocd
+  finalizers:
+    - resources-finalizer.argocd.argoproj.io
+  labels:
+    ragflow/env: preprod-monolith-test
+spec:
+  project: default
+
+  source:
+    # Match the source.repoURL used by application-ragflow-cyllene-prod.yaml
+    # so ArgoCD reuses the same configured credentials.
+    repoURL: git@gitlab.cyllene.local:platform/ragnarok.git
+    targetRevision: dev
+    path: helm/upstream-monolith-reference
+    helm:
+      releaseName: ragflow
+      valueFiles:
+        - values.yaml
+        - values-preprod-test.yaml
+
+  destination:
+    server: https://kubernetes.default.svc
+    namespace: ragflow-test
+
+  syncPolicy:
+    # Manual sync for the first test — flip selfHeal/automated on once the
+    # stack is green and you trust the rollout. Prevents the chart from
+    # auto-installing while the Harbor placeholders are still unset.
+    syncOptions:
+      - CreateNamespace=true
+      - ServerSideApply=true
+    retry:
+      limit: 5
+      backoff:
+        duration: 30s
+        factor: 2
+        maxDuration: 5m
