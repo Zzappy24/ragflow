@@ -116,6 +116,10 @@ pytest:invariants:
       }
       EOF
   script:
+    - echo "{\"auths\":{\"$HARBOR_REGISTRY_PROD\":{\"username\":\"$HARBOR_CYLNDATA_ROBOT\",\"password\":\"$HARBOR_CYLNDATA_ROBOT_PWD\"}}}" > /kaniko/.docker/config.json
+      - /kaniko/executor --cache=true --context "${CI_PROJECT_DIR}" --dockerfile "Docker/Dockerfile" --destination "$HARBOR_REGISTRY_PROD/${HARBOR_PROJECT}/${IMAGE_NAME}:${CI_COMMIT_TAG}"
+
+
     - >
       /kaniko/executor
       --context "${CI_PROJECT_DIR}"
