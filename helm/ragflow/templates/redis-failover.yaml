@@ -73,7 +73,7 @@ spec:
     failoverTimeout: "30000"
     downAfterMilliseconds: "10000"
   kubernetesConfig:
-    image: quay.io/opstree/redis-sentinel:v7.4.0
+    image: quay.io/opstree/redis-sentinel:v7.4.4
     imagePullPolicy: IfNotPresent
     redisSecret:
       name: {{ .Values.redis.authSecretRef }}
