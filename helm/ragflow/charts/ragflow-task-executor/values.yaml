@@ -62,8 +62,9 @@ recycleAfterTasks: 200
 # Liveness probe — exec'd by kubelet, fails if the heartbeat file's mtime
 # is older than 90s (workers touch it at the end of every report_status
 # loop, period 30s; 90s = 3 missed iterations).
-#livenessProbe:
-#  enabled: true
+#
+livenessProbe:
+  enabled: false
 #  heartbeatFile: "/tmp/k8s_heartbeat"
 #  maxAgeSeconds: 90
 #  initialDelaySeconds: 60       # let model loading finish first
