@@ -1,7 +1,4 @@
 {{- if .Values.redis.enabled }}
-# Tuning ConfigMap — referenced by RedisReplication's
-# `redisConfig.additionalRedisConfig` (the field is a NAME, see template
-# below for the gotcha that bit us originally).
 apiVersion: v1
 kind: ConfigMap
 metadata:
@@ -15,12 +12,6 @@ data:
     appendfsync everysec
     save 300 100
 ---
-# Redis CR — provisioned by ot-container-kit/redis-operator (the maintained
-# successor to Spotahome's). Sentinel HA: 1 master + N replicas + N sentinel
-# pods that watch the master and trigger failover within ~30s.
-#
-# Operator install: helm/operators/redis-operator (separate ArgoCD app).
-# CRD reference: https://ot-redis-operator.netlify.app/docs/why-redis-operator/
 apiVersion: redis.redis.opstreelabs.in/v1beta2
 kind: RedisReplication
 metadata:
@@ -29,25 +20,24 @@ metadata:
     {{- include "ragflow.labels" . | nindent 4 }}
 spec:
   clusterSize: {{ add .Values.redis.masterReplicas .Values.redis.slaveReplicas }}
+
+  podSecurityContext:
+    runAsUser: 0
+    runAsGroup: 0
+    fsGroup: 0
+
+  securityContext:
+    runAsUser: 0
+    runAsGroup: 0
+    runAsNonRoot: false
+
   redisExporter:
     enabled: true
     image: quay.io/opstree/redis-exporter:v1.44.0
 
-  # Persistence + memory policy tuning is done via a separate ConfigMap
-  # referenced below (see redis-config-tuning.yaml). The operator's
-  # `additionalRedisConfig` field is a CONFIGMAP NAME, not inline content
-  # — passing yaml content here makes the operator try to mount a CM
-  # named after the literal string and the pod gets stuck ContainerCreating
-  # with `MountVolume.SetUp failed: configmap "<your yaml>" not found`.
   redisConfig:
     additionalRedisConfig: {{ .Release.Name }}-redis-tuning
 
-  # Auth from Vault via ExternalSecret. The operator reads `password` from
-  # the Secret and configures requirepass + masterauth on every node.
-  #
-  # Image pin: opstree's v7.x tags get pruned regularly (we hit a 404 on
-  # v7.4.0). Stick to a recent-enough v8.x. `helm search repo ot-helm`
-  # or `skopeo list-tags docker://quay.io/opstree/redis` to refresh.
   kubernetesConfig:
     image: quay.io/opstree/redis:v8.6.2
     imagePullPolicy: IfNotPresent
@@ -77,13 +67,11 @@ metadata:
 spec:
   clusterSize: {{ .Values.redis.sentinelReplicas }}
   redisSentinelConfig:
-    # The sentinel watches the RedisReplication above. quorum 2 = failover
-    # only if 2 sentinels agree the master is down (mitigates split-brain).
     redisReplicationName: {{ .Release.Name }}-redis
     quorum: "2"
     parallelSyncs: "1"
-    failoverTimeout: "30000"      # 30s — total tolerance for client reconnect
-    downAfterMilliseconds: "10000" # 10s before declaring master dead
+    failoverTimeout: "30000"
+    downAfterMilliseconds: "10000"
   kubernetesConfig:
     image: quay.io/opstree/redis-sentinel:v7.4.0
     imagePullPolicy: IfNotPresent
