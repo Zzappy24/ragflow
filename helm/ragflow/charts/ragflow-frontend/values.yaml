@@ -26,12 +26,12 @@ service:
   port: 80
   targetPort: 80
 
-#probes:
-#  liveness:
-#    path: /
-#    initialDelaySeconds: 5
-#    periodSeconds: 10
-#  readiness:
-#    path: /
-#    initialDelaySeconds: 2
-#    periodSeconds: 5
+probes:
+  liveness:
+    path: /
+    initialDelaySeconds: 5
+    periodSeconds: 10
+  readiness:
+    path: /
+    initialDelaySeconds: 2
+    periodSeconds: 5
