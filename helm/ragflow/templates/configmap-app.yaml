@@ -72,35 +72,54 @@ data:
   # from this template via envsubst in an initContainer (see deployment.yaml
   # of api + task-executor sub-charts).
   service_conf.yaml.template: |
-    ragflow:
-      host: 0.0.0.0
-      http_port: 9380
-    admin:
-      host: 0.0.0.0
-      http_port: 9381
-    mysql:
-      name: ragflow
-      user: ragflow
-      password: ${MYSQL_PASSWORD}
-      host: {{ .Release.Name }}-mariadb.{{ .Release.Namespace }}.svc.cluster.local
-      port: 3306
-      max_connections: 900
-      stale_timeout: 300
-      max_allowed_packet: 1073741824
-    minio:
-      user: ${MINIO_USER}
-      password: ${MINIO_PASSWORD}
-      host: minio.{{ .Release.Namespace }}.svc.cluster.local:9000
-      bucket: ragflow-storage
-      prefix_path: ''
-    redis:
-      # Format expected by rag/utils/redis_conn.py: "host:port" in a single
-      # string. Splitting on `:` gives the parts; setting host without port
-      # makes `.split(":")[1]` IndexError → REDIS stays None silently.
-      host: {{ .Release.Name }}-redis.{{ .Release.Namespace }}.svc.cluster.local:6379
-      password: ${REDIS_PASSWORD}
-      db: 1
-    infinity:
-      uri: {{ .Release.Name }}-infinity.{{ .Release.Namespace }}.svc.cluster.local:23817
-      postgres_port: 5432
-      db_name: default_db
+service_conf.yaml.template: |
+  ragflow:
+    host: 0.0.0.0
+    http_port: 9380
+  admin:
+    host: 0.0.0.0
+    http_port: 9381
+
+  mysql:
+    name: ragflow
+    user: ragflow
+    password: ${MYSQL_PASSWORD}
+    host: rag-mariadb.rag.svc.cluster.local
+    port: 3306
+    max_connections: 900
+    stale_timeout: 300
+    max_allowed_packet: 1073741824
+
+  minio:
+    user: ${MINIO_USER}
+    password: ${MINIO_PASSWORD}
+    host: minio.rag.svc.cluster.local:9000
+    bucket: ragflow-storage
+    prefix_path: ''
+
+  os:
+    hosts: ${OS_HOSTS}
+    username: ${OS_USERNAME}
+    password: ${OS_PASSWORD}
+
+  infinity:
+    uri: rag-infinity.rag.svc.cluster.local:23817
+    postgres_port: 5432
+    db_name: default_db
+
+  redis:
+    host: rag-redis.rag.svc.cluster.local:6379
+    username: ''
+    password: ${REDIS_PASSWORD}
+    db: 1
+
+  task_executor:
+    message_queue_type: redis
+
+  user_default_llm:
+    default_models:
+      embedding_model:
+        name: ${EMBEDDING_MODEL_NAME}
+        factory: ${EMBEDDING_MODEL_FACTORY}
+        api_key: ${OPENAI_API_KEY}
+        base_url: ${EMBEDDING_MODEL_BASE_URL}
