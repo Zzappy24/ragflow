@@ -81,10 +81,13 @@ spec:
             - sh
             - -c
             - |
-              apk add --no-cache gettext >/dev/null 2>&1 || true
+              set -eux
+              apk add --no-cache gettext
+              which envsubst
               envsubst < /conf-template/service_conf.yaml.template > /conf-rendered/local.service_conf.yaml
+              echo '==== rendered local.service_conf.yaml ===='
               cat /conf-rendered/local.service_conf.yaml
-              echo "rendered:" && cat /conf-rendered/local.service_conf.yaml
+              echo '==== end rendered local.service_conf.yaml ===='
           envFrom:
             - secretRef:
                 name: ragflow-app-secrets
