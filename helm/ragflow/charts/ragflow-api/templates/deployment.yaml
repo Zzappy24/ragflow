@@ -80,10 +80,10 @@ spec:
           command:
             - sh
             - -c
-            - cat /conf-rendered/local.service_conf.yaml
             - |
               apk add --no-cache gettext >/dev/null 2>&1 || true
               envsubst < /conf-template/service_conf.yaml.template > /conf-rendered/local.service_conf.yaml
+              cat /conf-rendered/local.service_conf.yaml
               echo "rendered:" && cat /conf-rendered/local.service_conf.yaml
           envFrom:
             - secretRef:
