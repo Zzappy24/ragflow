@@ -51,3 +51,6 @@ infinity:
 monitoring:
   serviceMonitor:
     namespace: "monitoring"     # the cluster's existing prom-operator ns
+
+networkPolicy:
+  enabled: false
