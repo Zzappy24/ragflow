@@ -53,7 +53,6 @@ service:
   # httpGet probes get the right HTTP 200 / 503 contract instead of the
   # 401 we got from /api/v1/system/version.
   startup:
-
     path: /healthz
     periodSeconds: 10
     failureThreshold: 600       # 600s total budget for first boot
