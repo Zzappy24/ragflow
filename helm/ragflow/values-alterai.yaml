@@ -21,7 +21,7 @@ ragflow-api:
   replicas: 4
   hpa:
     minReplicas: 4
-    maxReplicas: 12             # raise to 30 in Phase 2 (5000 users)
+    maxReplicas: 12
   affinity:
     nodeAffinity:
       requiredDuringSchedulingIgnoredDuringExecution:
