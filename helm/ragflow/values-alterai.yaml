@@ -21,7 +21,7 @@ ragflow-api:
   replicas: 4
   hpa:
     minReplicas: 4
-    maxReplicas: 12
+    maxReplicas: 12             # raise to 30 in Phase 2 (5000 users)
   affinity:
     nodeAffinity:
       requiredDuringSchedulingIgnoredDuringExecution:
@@ -37,25 +37,13 @@ ragflow-api:
       value: gpu
       effect: NoSchedule
 
+
 ragflow-task-executor:
   replicas: 2
   keda:
     minReplicas: 2
-    maxReplicas: 8
-  affinity:
-    nodeAffinity:
-      requiredDuringSchedulingIgnoredDuringExecution:
-        nodeSelectorTerms:
-          - matchExpressions:
-              - key: node-role.kubernetes.io/gpt
-                operator: In
-                values:
-                  - "true"
-  tolerations:
-    - key: node-role
-      operator: Equal
-      value: gpu
-      effect: NoSchedule
+    maxReplicas: 8              # raise to 20 in Phase 2
+
 mariadb:
   storage: "50Gi"               # ~10× the upstream POC for audit trail headroom
   replicas: 3                   # Galera HA from day 1 — 1 client × downtime is bad

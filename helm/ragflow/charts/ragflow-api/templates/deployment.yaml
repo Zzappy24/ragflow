@@ -87,7 +87,49 @@ spec:
               envsubst < /conf-template/service_conf.yaml.template > /conf-rendered/local.service_conf.yaml
               echo '==== rendered local.service_conf.yaml ===='
               cat /conf-rendered/local.service_conf.yaml
-              echo '==== end rendered local.service_conf.yaml ===='
+              echoapiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: {{ include "ragflow-api.fullname" . }}
+  labels:
+    {{- include "ragflow-api.labels" . | nindent 4 }}
+spec:
+  replicas: {{ .Values.replicas }}
+  revisionHistoryLimit: 3
+  selector:
+    matchLabels:
+      {{- include "ragflow-api.selectorLabels" . | nindent 6 }}
+  template:
+    metadata:
+      labels:
+        {{- include "ragflow-api.selectorLabels" . | nindent 8 }}
+    spec:
+      serviceAccountName: {{ include "ragflow-api.fullname" . }}
+      {{- with .Values.global.imagePullSecrets }}
+      imagePullSecrets:
+        {{- toYaml . | nindent 8 }}
+      {{- end }}
+      securityContext:
+        {{- include "ragflow.podSecurityContext" . | nindent 8 }}
+
+      {{- with .Values.affinity }}
+      affinity:
+        {{- toYaml . | nindent 8 }}
+      {{- end }}
+
+      {{- with .Values.tolerations }}
+      tolerations:
+        {{- toYaml . | nindent 8 }}
+      {{- end }}
+
+      containers:
+        - name: api
+          image: {{ include "ragflow-api.image" . }}
+          imagePullPolicy: {{ .Values.global.imagePullPolicy }}
+          ports:
+            - name: http
+              containerPort: 80
+              protocol: TCP '==== end rendered local.service_conf.yaml ===='
           envFrom:
             - secretRef:
                 name: ragflow-app-secrets
