@@ -44,7 +44,7 @@ service:
 
 # Probes — `/api/v1/system/version` exists, returns 401 without auth which
 # the kubelet treats as "alive" because not 5xx.
-#probes:
+probes:
   # K8s pattern: startupProbe (long, generous) gates liveness/readiness
   # so cold-boot tolerance doesn't slow down warm restarts.
   #
