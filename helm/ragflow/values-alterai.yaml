@@ -46,7 +46,7 @@ ragflow-task-executor:
 
 mariadb:
   storage: "50Gi"               # ~10× the upstream POC for audit trail headroom
-  replicas: 2                   # Galera HA from day 1 — 1 client × downtime is bad
+  replicas: 3                   # Galera HA from day 1 — 1 client × downtime is bad
 
 redis:
   storage: "10Gi"
