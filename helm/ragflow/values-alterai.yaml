@@ -15,13 +15,12 @@ global:
 externalSecrets:
   enabled: false
 
-# Phase 0 sizing — Bodemer launch (≤ 200 simultaneous users).
-# When we add the 2nd customer, bump these in values-cyllene-prod.yaml only.
+# Reduced bootstrap sizing for constrained cluster capacity.
 ragflow-api:
-  replicas: 2
+  replicas: 1
   hpa:
-    minReplicas: 2
-    maxReplicas: 4
+    minReplicas: 1
+    maxReplicas: 2
   affinity:
     nodeAffinity:
       requiredDuringSchedulingIgnoredDuringExecution:
@@ -37,20 +36,19 @@ ragflow-api:
       value: gpu
       effect: NoSchedule
 
-
 ragflow-task-executor:
   enabled: true
-  replicas: 2                    # KEDA scales 2..20
+  replicas: 1
   resources:
     requests:
-      cpu: "1000m"
-      memory: "4Gi"
+      cpu: "250m"
+      memory: "512Mi"
     limits:
-      cpu: "4000m"
-      memory: "12Gi"
+      cpu: "1000m"
+      memory: "2Gi"
   keda:
-    minReplicas: 2
-    maxReplicas: 8              # raise to 20 in Phase 2
+    minReplicas: 1
+    maxReplicas: 2
 
 mariadb:
   enabled: true
@@ -63,10 +61,10 @@ mariadb:
   resources:
     requests:
       cpu: "250m"
-      memory: "512Mi"
+      memory: "256Mi"
     limits:
       cpu: "1000m"
-      memory: "2Gi"
+      memory: "1Gi"
 
 redis:
   enabled: true
@@ -77,47 +75,7 @@ redis:
   authSecretRef: "ragflow-redis-auth"
   resources:
     requests:
-      cpu: "100m"
-      memory: "256Mi"
-    limits:
-      cpu: "500m"
-      memory: "1Gi"
-
-minio:
-  enabled: true
-  servers: 1
-  volumesPerServer: 1
-  size: "200Gi"
-  rootCredentialsSecretRef: "ragflow-minio-root"
-  resources:
-    requests:
-      cpu: "100m"
-      memory: "256Mi"
-    limits:
-      cpu: "1000m"
-      memory: "1Gi"
-
-infinity:
-  storage: "100Gi"
-
-# vLLM is shared with the rest of the platform (ns `vllm-rag`); these URLs
-# are the agreed contract with the AI infra team. Confirm before flipping
-# values-cyllene-prod live.
-
-monitoring:
-  serviceMonitor:
-    namespace: "monitoring"     # the cluster's existing prom-operator ns
-
-networkPolicy:
-  enabled: false
-
-ragflow-frontend:
-  enabled: true
-  replicas: 2
-  resources:
-    requests:
-      cpu: "100m"
+      cpu: "50m"
       memory: "128Mi"
     limits:
-      cpu: "500m"
-      memory: "512Mi"
+
