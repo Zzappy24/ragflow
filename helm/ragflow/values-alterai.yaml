@@ -47,7 +47,7 @@ ragflow-task-executor:
 mariadb:
   enabled: true
   storage: "10Gi"
-  replicas: 3
+  replicas: 1
   galera: false
   metrics: false
   rootPasswordSecretRef: "ragflow-mariadb-root"
