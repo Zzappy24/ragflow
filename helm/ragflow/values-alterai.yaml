@@ -15,6 +15,13 @@ global:
 externalSecrets:
   enabled: false
 
+ # Envoy Gateway is the cluster ingress controller. Templates render
+  # `Gateway` + `HTTPRoute` resources rather than legacy `Ingress`.
+  gatewayClassName: "envoy"
+  # Gateway resource the HTTPRoutes attach to. Created cluster-wide once.
+  gatewayName: "envoy-gateway"
+  gatewayNamespace: "envoy-gateway-system"
+
 # Reduced bootstrap sizing for constrained cluster capacity.
 ragflow-api:
   replicas: 1

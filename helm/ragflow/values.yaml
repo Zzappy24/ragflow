@@ -32,7 +32,7 @@ global:
   # `Gateway` + `HTTPRoute` resources rather than legacy `Ingress`.
   gatewayClassName: "envoy"
   # Gateway resource the HTTPRoutes attach to. Created cluster-wide once.
-  gatewayName: "envoy-gateway-cyllene"
+  gatewayName: "envoy-gateway"
   gatewayNamespace: "envoy-gateway-system"
 
   # External hostname. Multi-tenant uses workspace selection via the
