@@ -45,16 +45,49 @@ ragflow-task-executor:
     maxReplicas: 8              # raise to 20 in Phase 2
 
 mariadb:
-  storage: "50Gi"               # ~10× the upstream POC for audit trail headroom
-  replicas: 3                   # Galera HA from day 1 — 1 client × downtime is bad
+  enabled: true
+  storage: "10Gi"
+  replicas: 3
+  galera: false
+  metrics: false
+  rootPasswordSecretRef: "ragflow-mariadb-root"
+  databaseSecretRef: "ragflow-mariadb-app"
+  resources:
+    requests:
+      cpu: "250m"
+      memory: "512Mi"
+    limits:
+      cpu: "1000m"
+      memory: "2Gi"
 
 redis:
-  storage: "10Gi"
+  enabled: true
+  storage: "2Gi"
+  masterReplicas: 1
+  slaveReplicas: 0
+  sentinelReplicas: 0
+  authSecretRef: "ragflow-redis-auth"
+  resources:
+    requests:
+      cpu: "100m"
+      memory: "256Mi"
+    limits:
+      cpu: "500m"
+      memory: "1Gi"
 
 minio:
+  enabled: true
   servers: 1
   volumesPerServer: 1
-  size: "200Gi"                 # 800 GiB raw, ~600 GiB usable post EC
+  size: "20Gi"
+  rootCredentialsSecretRef: "ragflow-minio-root"
+  resources:
+    requests:
+      cpu: "100m"
+      memory: "256Mi"
+    limits:
+      cpu: "1000m"
+      memory: "1Gi"
 
 infinity:
   storage: "100Gi"
