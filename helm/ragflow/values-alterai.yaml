@@ -18,10 +18,10 @@ externalSecrets:
 # Phase 0 sizing — Bodemer launch (≤ 200 simultaneous users).
 # When we add the 2nd customer, bump these in values-cyllene-prod.yaml only.
 ragflow-api:
-  replicas: 4
+  replicas: 2
   hpa:
-    minReplicas: 4
-    maxReplicas: 12
+    minReplicas: 2
+    maxReplicas: 4
   affinity:
     nodeAffinity:
       requiredDuringSchedulingIgnoredDuringExecution:
@@ -52,7 +52,7 @@ redis:
   storage: "10Gi"
 
 minio:
-  servers: 4
+  servers: 2
   volumesPerServer: 1
   size: "200Gi"                 # 800 GiB raw, ~600 GiB usable post EC
 

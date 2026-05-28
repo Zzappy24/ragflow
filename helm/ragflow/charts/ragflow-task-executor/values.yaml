@@ -11,11 +11,7 @@ image:
 
 externalSecrets:
   enabled: false
-
-minio:
-  enabled: true
-  servers: 2
-
+  
 # Workers are heavier than the api: they load embedding models, OCR weights,
 # Infinity client buffers, etc. Per-pod budget reflects that.
 resources:
