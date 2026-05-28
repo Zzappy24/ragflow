@@ -46,7 +46,7 @@ ragflow-task-executor:
 
 mariadb:
   enabled: true
-  storage: "10Gi"
+  storage: "5"
   replicas: 1
   galera: false
   metrics: false
@@ -62,7 +62,7 @@ mariadb:
 
 redis:
   enabled: true
-  storage: "2Gi"
+  storage: "10Gi"
   masterReplicas: 1
   slaveReplicas: 0
   sentinelReplicas: 0
@@ -79,7 +79,7 @@ minio:
   enabled: true
   servers: 1
   volumesPerServer: 1
-  size: "20Gi"
+  size: "200Gi"
   rootCredentialsSecretRef: "ragflow-minio-root"
   resources:
     requests:
