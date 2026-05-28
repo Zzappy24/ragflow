@@ -78,4 +78,47 @@ redis:
       cpu: "50m"
       memory: "128Mi"
     limits:
+      cpu: "500m"
+      memory: "512Mi"
 
+minio:
+  enabled: true
+  servers: 1
+  volumesPerServer: 1
+  size: "200Gi"
+  rootCredentialsSecretRef: "ragflow-minio-root"
+  resources:
+    requests:
+      cpu: "100m"
+      memory: "256Mi"
+    limits:
+      cpu: "1000m"
+      memory: "1Gi"
+
+infinity:
+  storage: "100Gi"
+  resources:
+    requests:
+      cpu: "250m"
+      memory: "512Mi"
+    limits:
+      cpu: "1000m"
+      memory: "2Gi"
+
+monitoring:
+  serviceMonitor:
+    namespace: "monitoring"
+
+networkPolicy:
+  enabled: false
+
+ragflow-frontend:
+  enabled: true
+  replicas: 1
+  resources:
+    requests:
+      cpu: "100m"
+      memory: "128Mi"
+    limits:
+      cpu: "500m"
+      memory: "512Mi"
