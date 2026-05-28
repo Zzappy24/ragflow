@@ -68,7 +68,7 @@ spec:
   # Disable the public console exposure — admins access MinIO via
   # `kubectl port-forward` or through the s3manager UI in its own ns.
   exposeServices:
-    minio: false       # ClusterIP for ragflow-api/task-executor
+    minio: true       # ClusterIP for ragflow-api/task-executor
     console: false    # console kept private
 
   prometheusOperator: true
