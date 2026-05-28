@@ -52,8 +52,8 @@ redis:
   storage: "10Gi"
 
 minio:
-  servers: 2
-  volumesPerServer: 2
+  servers: 1
+  volumesPerServer: 1
   size: "200Gi"                 # 800 GiB raw, ~600 GiB usable post EC
 
 infinity:
