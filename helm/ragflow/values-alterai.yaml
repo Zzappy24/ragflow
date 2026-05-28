@@ -39,7 +39,15 @@ ragflow-api:
 
 
 ragflow-task-executor:
-  replicas: 2
+  enabled: true
+  replicas: 2                    # KEDA scales 2..20
+  resources:
+    requests:
+      cpu: "1000m"
+      memory: "4Gi"
+    limits:
+      cpu: "4000m"
+      memory: "12Gi"
   keda:
     minReplicas: 2
     maxReplicas: 8              # raise to 20 in Phase 2
@@ -102,3 +110,14 @@ monitoring:
 
 networkPolicy:
   enabled: false
+
+ragflow-frontend:
+  enabled: true
+  replicas: 2
+  resources:
+    requests:
+      cpu: "100m"
+      memory: "128Mi"
+    limits:
+      cpu: "500m"
+      memory: "512Mi"
