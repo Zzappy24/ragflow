@@ -46,7 +46,7 @@ ragflow-task-executor:
 
 mariadb:
   enabled: true
-  storage: "5"
+  storage: "50Gi"
   replicas: 1
   galera: false
   metrics: false
