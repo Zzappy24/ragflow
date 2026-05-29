@@ -199,6 +199,13 @@ RUN cd web && \
     NODE_OPTIONS="--max-old-space-size=8192" npm install && \
     NODE_OPTIONS="--max-old-space-size=8192" VITE_BUILD_SOURCEMAP=false VITE_MINIFY=esbuild npm run build
 
+# Cyllene management panel frontend — same Vite/React build pattern as web/
+# but smaller (admin UI). 4 GB heap is enough.
+COPY management/web management/web
+RUN --mount=type=cache,id=management_npm,target=/root/.npm,sharing=locked \
+    cd management/web && NODE_OPTIONS="--max-old-space-size=4096" npm install && \
+    NODE_OPTIONS="--max-old-space-size=4096" npm run build
+
 COPY .git /ragflow/.git
 
 RUN version_info=$(git describe --tags --match=v* --first-parent --always) && \
@@ -245,6 +252,11 @@ RUN mv /etc/nginx/ragflow.conf.golang /etc/nginx/conf.d/ragflow.conf.golang && \
 
 # Copy compiled web pages
 COPY --from=builder /ragflow/web/dist /ragflow/web/dist
+
+# Management panel frontend (Cyllene). dist/ is gitignored, so the COPY
+# management management above never carries it — the builder stage's npm
+# run build is what produces the artefact we ship here.
+COPY --from=builder /ragflow/management/web/dist /ragflow/management/web/dist
 
 COPY --from=builder /ragflow/VERSION /ragflow/VERSION
 

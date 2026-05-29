@@ -1,0 +1,158 @@
+{{- if and .Values.management.enabled .Values.management.frontend.enabled }}
+# Cyllene management panel — frontend.
+#
+# Serves /ragflow/management/web/dist (built in the Dockerfile builder stage)
+# via a dedicated nginx pod. Same RAGFlow image, command override to launch
+# nginx instead of entrypoint.sh — mirrors the ragflow-frontend pattern in
+# the Cyllene chart.
+#
+# The nginx ConfigMap proxies /api/admin/* to the FastAPI backend so the
+# whole panel speaks to a single host → zero CORS gymnastics.
+---
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: {{ include "ragflow.fullname" . }}-management-frontend-config
+  labels:
+    {{- include "ragflow.labels" . | nindent 4 }}
+    app.kubernetes.io/component: management-frontend
+data:
+  nginx.conf: |
+    worker_processes auto;
+    pid /tmp/nginx.pid;
+    events { worker_connections 1024; }
+    http {
+      include /etc/nginx/mime.types;
+      default_type application/octet-stream;
+      sendfile on;
+      keepalive_timeout 65;
+      client_max_body_size 32m;
+      # Ephemeral runtime paths so nginx works under a read-only root if
+      # we ever flip Phase 2 hardening on.
+      client_body_temp_path /tmp/client_body;
+      proxy_temp_path /tmp/proxy;
+      fastcgi_temp_path /tmp/fastcgi;
+      uwsgi_temp_path /tmp/uwsgi;
+      scgi_temp_path /tmp/scgi;
+      gzip on;
+      gzip_types text/plain text/css application/javascript application/json application/xml text/xml;
+      server {
+        listen 80;
+        server_name _;
+        root /ragflow/management/web/dist;
+        index index.html;
+        # Long cache for hashed asset files — Vite rebuilds change the hash
+        # so we can be aggressive.
+        location /assets/ {
+          expires 30d;
+          add_header Cache-Control "public, immutable";
+          try_files $uri =404;
+        }
+        # API → FastAPI backend. Keep the path verbatim (no rewrite) so
+        # FastAPI sees exactly the same path the browser sent.
+        location /api/admin/ {
+          proxy_pass http://{{ include "ragflow.fullname" . }}-management.{{ .Release.Namespace }}.svc.cluster.local:{{ .Values.management.service.port }};
+          proxy_http_version 1.1;
+          proxy_set_header Host $host;
+          proxy_set_header X-Real-IP $remote_addr;
+          proxy_set_header X-Forwarded-For $proxy_add_x_forwarded_for;
+          proxy_set_header X-Forwarded-Proto $scheme;
+          proxy_read_timeout 60s;
+        }
+        # SPA fallback — any non-asset, non-API path returns index.html so
+        # React Router resolves on the client.
+        location / {
+          try_files $uri $uri/ /index.html;
+        }
+      }
+    }
+---
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: {{ include "ragflow.fullname" . }}-management-frontend
+  labels:
+    {{- include "ragflow.labels" . | nindent 4 }}
+    app.kubernetes.io/component: management-frontend
+spec:
+  replicas: {{ .Values.management.frontend.replicas | default 1 }}
+  selector:
+    matchLabels:
+      {{- include "ragflow.selectorLabels" . | nindent 6 }}
+      app.kubernetes.io/component: management-frontend
+  template:
+    metadata:
+      labels:
+        {{- include "ragflow.labels" . | nindent 8 }}
+        app.kubernetes.io/component: management-frontend
+      annotations:
+        # Restart pods when frontend config values change. We hash the
+        # values block (not the rendered template) to avoid the recursive
+        # include trap.
+        checksum/frontend-values: {{ .Values.management.frontend | toYaml | sha256sum }}
+    spec:
+      {{- if or .Values.global.imagePullSecrets .Values.ragflow.image.pullSecrets }}
+      imagePullSecrets:
+        {{- with .Values.global.imagePullSecrets }}
+        {{- toYaml . | nindent 8 }}
+        {{- end }}
+        {{- with .Values.ragflow.image.pullSecrets }}
+        {{- toYaml . | nindent 8 }}
+        {{- end }}
+      {{- end }}
+      containers:
+        - name: nginx
+          # Reuse the RAGFlow image — it already bundles nginx + the built
+          # management/web/dist (via the Dockerfile production stage).
+          image: {{ include "ragflow.imageRepo" (dict "root" . "repo" .Values.ragflow.image.repository) }}:{{ .Values.ragflow.image.tag }}
+          {{- with .Values.ragflow.image.pullPolicy }}
+          imagePullPolicy: {{ . }}
+          {{- end }}
+          command: ["/usr/sbin/nginx"]
+          args: ["-c", "/etc/nginx/management.conf", "-g", "daemon off;"]
+          ports:
+            - containerPort: 80
+              name: http
+          volumeMounts:
+            - name: nginx-config
+              mountPath: /etc/nginx/management.conf
+              subPath: nginx.conf
+          {{- with .Values.management.frontend.deployment.resources }}
+          resources:
+            {{- . | toYaml | nindent 12 }}
+          {{- end }}
+          livenessProbe:
+            httpGet:
+              path: /
+              port: http
+            periodSeconds: 15
+            failureThreshold: 4
+          readinessProbe:
+            httpGet:
+              path: /
+              port: http
+            periodSeconds: 5
+            failureThreshold: 3
+      volumes:
+        - name: nginx-config
+          configMap:
+            name: {{ include "ragflow.fullname" . }}-management-frontend-config
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: {{ include "ragflow.fullname" . }}-management-frontend
+  labels:
+    {{- include "ragflow.labels" . | nindent 4 }}
+    app.kubernetes.io/component: management-frontend
+spec:
+  type: {{ .Values.management.frontend.service.type }}
+  ports:
+    - port: {{ .Values.management.frontend.service.port }}
+      targetPort: http
+      protocol: TCP
+      name: http
+  selector:
+    {{- include "ragflow.selectorLabels" . | nindent 4 }}
+    app.kubernetes.io/component: management-frontend
+{{- end }}
