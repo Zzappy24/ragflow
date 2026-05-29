@@ -135,6 +135,29 @@ ragflow:
       streamableHttp: true
       jsonResponse: false
 
+# Cyllene management panel — separate FastAPI Deployment using the same
+# RAGFlow image. See templates/management.yaml for what gets deployed.
+management:
+  enabled: true
+  replicas: 1
+  service:
+    type: ClusterIP
+    port: 8000
+  deployment:
+    resources: {}
+  jwtSecret:
+    # Reference a pre-existing Secret (recommended for prod). Must hold a
+    # `jwt-secret` key. Leave empty and the chart auto-generates one (kept
+    # across upgrades via helm.sh/resource-policy: keep).
+    existingSecret: ""
+    value: ""
+  # Invite token TTL — 172800s = 48h, matches management/server/config.py.
+  inviteTokenExpireSeconds: 172800
+  # Defaults to the in-cluster ragflow service URL. Override to the public
+  # customer-facing URL once you have ingress / Gateway TLS.
+  ragflowBaseUrl: ""
+  extraEnv: []
+
 infinity:
   image:
     repository: infiniflow/infinity

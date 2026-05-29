@@ -1,0 +1,152 @@
+{{- if .Values.management.enabled }}
+# Cyllene management panel — FastAPI admin API running off the *same* RAGFlow
+# image. The image already bundles management/server/ (see Dockerfile), so we
+# just launch a second Deployment with a different command. Uvicorn binds to
+# port 8000, shares the MySQL/Redis/MinIO Secret that the main ragflow pod
+# uses, and only adds 3 management-specific env vars on top.
+#
+# Frontend (management/web/dist) is NOT served here — it stays out of scope
+# for this first deploy. Add an nginx pod or FastAPI StaticFiles later.
+---
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: {{ include "ragflow.fullname" . }}-management
+  labels:
+    {{- include "ragflow.labels" . | nindent 4 }}
+    app.kubernetes.io/component: management
+spec:
+  replicas: {{ .Values.management.replicas | default 1 }}
+  selector:
+    matchLabels:
+      {{- include "ragflow.selectorLabels" . | nindent 6 }}
+      app.kubernetes.io/component: management
+  template:
+    metadata:
+      labels:
+        {{- include "ragflow.labels" . | nindent 8 }}
+        app.kubernetes.io/component: management
+      annotations:
+        checksum/values: {{ .Values | toYaml | sha256sum }}
+        checksum/config-env: {{ include (print $.Template.BasePath "/env.yaml") . | sha256sum }}
+    spec:
+      {{- if or .Values.global.imagePullSecrets .Values.ragflow.image.pullSecrets }}
+      imagePullSecrets:
+        {{- with .Values.global.imagePullSecrets }}
+        {{- toYaml . | nindent 8 }}
+        {{- end }}
+        {{- with .Values.ragflow.image.pullSecrets }}
+        {{- toYaml . | nindent 8 }}
+        {{- end }}
+      {{- end }}
+      containers:
+        - name: management
+          # Reuses the RAGFlow image — management/server/ ships inside it.
+          image: {{ include "ragflow.imageRepo" (dict "root" . "repo" .Values.ragflow.image.repository) }}:{{ .Values.ragflow.image.tag }}
+          {{- with .Values.ragflow.image.pullPolicy }}
+          imagePullPolicy: {{ . }}
+          {{- end }}
+          # PYTHONPATH=/ragflow is set in the image, so module path
+          # `management.server.main:app` resolves and management's runtime
+          # `from api.db.* import ...` calls also work.
+          command: ["/bin/bash", "-lc"]
+          args:
+            - >
+              cd /ragflow &&
+              exec .venv/bin/uvicorn management.server.main:app
+              --host 0.0.0.0
+              --port 8000
+              --loop uvloop
+              --http httptools
+              --timeout-keep-alive 5
+              --limit-concurrency 1000
+              --backlog 2048
+              --no-access-log
+          ports:
+            - containerPort: 8000
+              name: http
+          envFrom:
+            # Reuse the same Secret as the main ragflow pod for MYSQL/REDIS/
+            # MINIO/DOC_ENGINE/TZ. Adding management-specific vars below via
+            # `env:` so they don't pollute the shared Secret.
+            - secretRef:
+                name: {{ include "ragflow.fullname" . }}-env-config
+          env:
+            - name: ADMIN_JWT_SECRET
+              valueFrom:
+                secretKeyRef:
+                  {{- if .Values.management.jwtSecret.existingSecret }}
+                  name: {{ .Values.management.jwtSecret.existingSecret }}
+                  {{- else }}
+                  name: {{ include "ragflow.fullname" . }}-management-jwt
+                  {{- end }}
+                  key: jwt-secret
+            - name: ADMIN_INVITE_TOKEN_EXPIRE_SECONDS
+              value: {{ .Values.management.inviteTokenExpireSeconds | quote }}
+            - name: ADMIN_RAGFLOW_BASE_URL
+              value: {{ .Values.management.ragflowBaseUrl | default (printf "http://%s.%s.svc.cluster.local" (include "ragflow.fullname" .) .Release.Namespace) | quote }}
+            {{- with .Values.management.extraEnv }}
+            {{- toYaml . | nindent 12 }}
+            {{- end }}
+          {{- with .Values.management.deployment.resources }}
+          resources:
+            {{- . | toYaml | nindent 12 }}
+          {{- end }}
+          # Standard FastAPI probes — keep startup tolerant (DB init + RAGFlow
+          # module loading on first request takes a beat), liveness lean.
+          startupProbe:
+            httpGet:
+              path: /api/admin/system/health
+              port: http
+            periodSeconds: 5
+            failureThreshold: 30
+          livenessProbe:
+            httpGet:
+              path: /api/admin/system/health
+              port: http
+            periodSeconds: 15
+            failureThreshold: 4
+          readinessProbe:
+            httpGet:
+              path: /api/admin/system/health
+              port: http
+            periodSeconds: 5
+            failureThreshold: 3
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: {{ include "ragflow.fullname" . }}-management
+  labels:
+    {{- include "ragflow.labels" . | nindent 4 }}
+    app.kubernetes.io/component: management
+spec:
+  type: {{ .Values.management.service.type }}
+  ports:
+    - port: {{ .Values.management.service.port }}
+      targetPort: http
+      protocol: TCP
+      name: http
+  selector:
+    {{- include "ragflow.selectorLabels" . | nindent 4 }}
+    app.kubernetes.io/component: management
+---
+# Auto-generated JWT secret if no externally-managed Secret is referenced.
+# In prod, set management.jwtSecret.existingSecret to a Vault-sourced Secret
+# instead of leaving this generated each helm upgrade.
+{{- if not .Values.management.jwtSecret.existingSecret }}
+apiVersion: v1
+kind: Secret
+metadata:
+  name: {{ include "ragflow.fullname" . }}-management-jwt
+  labels:
+    {{- include "ragflow.labels" . | nindent 4 }}
+    app.kubernetes.io/component: management
+  annotations:
+    # Don't regenerate on every chart upgrade — would invalidate live JWTs.
+    "helm.sh/resource-policy": keep
+type: Opaque
+stringData:
+  jwt-secret: {{ .Values.management.jwtSecret.value | default (randAlphaNum 48) | quote }}
+{{- end }}
+{{- end }}
