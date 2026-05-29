@@ -165,6 +165,14 @@ dependencies = [
     "python-gitlab>=7.0.0",
     "alibabacloud-dingtalk>=2.0.0",
     "quart-schema==0.23.0",
+    # --- Cyllene management panel (FastAPI service, shares the RAGFlow venv).
+    # Runs as a separate k8s Deployment with command override but uses the
+    # same image as the main RAGFlow process — see management/server/.
+    "fastapi>=0.110.0",
+    "uvicorn[standard]>=0.29.0",
+    "pydantic-settings>=2.2.0",
+    "PyJWT>=2.8.0",
+    "httpx>=0.27.0",
 ]
 
 [dependency-groups]

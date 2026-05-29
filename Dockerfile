@@ -186,6 +186,7 @@ COPY rag rag
 COPY agent agent
 COPY pyproject.toml uv.lock ./
 COPY mcp mcp
+COPY management management
 COPY common common
 COPY memory memory
 COPY bin bin
