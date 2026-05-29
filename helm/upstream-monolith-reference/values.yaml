@@ -157,6 +157,16 @@ management:
   # customer-facing URL once you have ingress / Gateway TLS.
   ragflowBaseUrl: ""
   extraEnv: []
+  # Admin panel frontend — nginx pod serving management/web/dist (built in
+  # the Dockerfile builder stage). See templates/management-frontend.yaml.
+  frontend:
+    enabled: true
+    replicas: 1
+    service:
+      type: ClusterIP
+      port: 80
+    deployment:
+      resources: {}
 
 infinity:
   image:
