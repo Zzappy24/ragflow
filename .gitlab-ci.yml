@@ -28,7 +28,7 @@ kaniko_build_prd:
       - echo "{\"auths\":{\"$HARBOR_REGISTRY_PROD\":{\"username\":\"$HARBOR_CYLNDATA_ROBOT_PRD\",\"password\":\"$HARBOR_CYLNDATA_ROBOT_PWD_PRD\"}}}" > /kaniko/.docker/config.json
       - |
         /kaniko/executor \
-          --cache=true \
+          --cache=false \
           --cache-repo "${HARBOR_REGISTRY_PROD}/${HARBOR_PROJECT}/${IMAGE_NAME}/cache" \
           --compressed-caching=false \
           --snapshot-mode=redo \
