@@ -188,6 +188,9 @@ RUN if [ "$NEED_MIRROR" == "1" ]; then \
     uv sync --python 3.13 --frozen && \
     .venv/bin/python3 -m ensurepip --upgrade
 
+# docs are required by web build through raw imports
+COPY docs /ragflow/docs
+
 # Web frontend: copy manifests first for better layer caching
 COPY web/package*.json /ragflow/web/
 WORKDIR /ragflow/web
@@ -205,8 +208,6 @@ COPY management/web /ragflow/management/web
 RUN NODE_OPTIONS="--max-old-space-size=4096" npm run build
 
 WORKDIR /ragflow
-COPY docs docs
-
 RUN echo "RAGFlow version: $VERSION_INFO" && \
     echo "$VERSION_INFO" > /ragflow/VERSION
 
@@ -235,6 +236,7 @@ COPY management management
 COPY common common
 COPY memory memory
 COPY bin bin
+COPY docs docs
 
 COPY docker/service_conf.yaml.template ./conf/service_conf.yaml.template
 COPY docker/entrypoint.sh ./
