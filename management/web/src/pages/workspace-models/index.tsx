@@ -5,7 +5,7 @@ import {
 } from 'antd';
 import {
   PlusOutlined, DeleteOutlined, EditOutlined,
-  CheckCircleOutlined, CloseCircleOutlined, ThunderboltOutlined,
+  ThunderboltOutlined,
 } from '@ant-design/icons';
 import api from '@/lib/api';
 
