@@ -8,6 +8,7 @@ SHELL ["/bin/bash", "-c"]
 
 ARG NEED_MIRROR=0
 ARG NGINX_VERSION=1.29.5-1~noble
+ARG VERSION_INFO=dev
 
 WORKDIR /ragflow
 
@@ -140,8 +141,6 @@ RUN curl -fsSL https://deb.nodesource.com/setup_20.x | bash - && \
     rm -rf /var/lib/apt/lists/*
 
 # Add msssql ODBC driver
-# macOS ARM64 environment, install msodbcsql18.
-# general x86_64 environment, install msodbcsql17.
 RUN curl -fsSL https://packages.microsoft.com/keys/microsoft.asc | apt-key add - && \
     curl -fsSL https://packages.microsoft.com/config/ubuntu/22.04/prod.list > /etc/apt/sources.list.d/mssql-release.list && \
     apt update && \
@@ -177,14 +176,10 @@ RUN if [ "$(uname -m)" = "x86_64" ]; then \
 # builder stage
 FROM base AS builder
 USER root
-
 WORKDIR /ragflow
 
-# install dependencies from uv.lock file
+# Python deps
 COPY pyproject.toml uv.lock ./
-
-# https://github.com/astral-sh/uv/issues/10462
-# uv records index url into uv.lock but doesn't failover among multiple indexes
 RUN if [ "$NEED_MIRROR" == "1" ]; then \
         sed -i 's|pypi.org|mirrors.aliyun.com/pypi|g' uv.lock; \
     else \
@@ -193,29 +188,31 @@ RUN if [ "$NEED_MIRROR" == "1" ]; then \
     uv sync --python 3.13 --frozen && \
     .venv/bin/python3 -m ensurepip --upgrade
 
-COPY web web
+# Web frontend: copy manifests first for better layer caching
+COPY web/package*.json /ragflow/web/
+WORKDIR /ragflow/web
+RUN NODE_OPTIONS="--max-old-space-size=8192" npm ci
+
+COPY web /ragflow/web
+RUN NODE_OPTIONS="--max-old-space-size=8192" VITE_BUILD_SOURCEMAP=false VITE_MINIFY=esbuild npm run build
+
+# Management frontend: same optimization
+COPY management/web/package*.json /ragflow/management/web/
+WORKDIR /ragflow/management/web
+RUN NODE_OPTIONS="--max-old-space-size=4096" npm ci
+
+COPY management/web /ragflow/management/web
+RUN NODE_OPTIONS="--max-old-space-size=4096" npm run build
+
+WORKDIR /ragflow
 COPY docs docs
-RUN cd web && \
-    NODE_OPTIONS="--max-old-space-size=8192" npm install && \
-    NODE_OPTIONS="--max-old-space-size=8192" VITE_BUILD_SOURCEMAP=false VITE_MINIFY=esbuild npm run build
 
-# Cyllene management panel frontend — same Vite/React build pattern as web/
-# but smaller (admin UI). 4 GB heap is enough.
-COPY management/web management/web
-RUN --mount=type=cache,id=management_npm,target=/root/.npm,sharing=locked \
-    cd management/web && NODE_OPTIONS="--max-old-space-size=4096" npm install && \
-    NODE_OPTIONS="--max-old-space-size=4096" npm run build
-
-COPY .git /ragflow/.git
-
-RUN version_info=$(git describe --tags --match=v* --first-parent --always) && \
-    echo "RAGFlow version: $version_info" && \
-    echo "$version_info" > /ragflow/VERSION
+RUN echo "RAGFlow version: $VERSION_INFO" && \
+    echo "$VERSION_INFO" > /ragflow/VERSION
 
 # production stage
 FROM base AS production
 USER root
-
 WORKDIR /ragflow
 
 # Copy Python environment and packages
@@ -252,22 +249,10 @@ RUN mv /etc/nginx/ragflow.conf.golang /etc/nginx/conf.d/ragflow.conf.golang && \
 
 # Copy compiled web pages
 COPY --from=builder /ragflow/web/dist /ragflow/web/dist
-
-# Management panel frontend (Cyllene). dist/ is gitignored, so the COPY
-# management management above never carries it — the builder stage's npm
-# run build is what produces the artefact we ship here.
 COPY --from=builder /ragflow/management/web/dist /ragflow/management/web/dist
-
 COPY --from=builder /ragflow/VERSION /ragflow/VERSION
 
-# CUSTOM B2B SaaS — create non-root user (uid 10001) for future
-# `runAsUser: 10001` adoption (Phase 2 hardening), and chown the paths
-# nginx writes to. We deliberately DO NOT chown /ragflow itself: the K8s
-# pods drop CAP_DAC_OVERRIDE via `capabilities.drop: ["ALL"]`, after
-# which root is denied write access on paths it doesn't own — chown'ing
-# /ragflow to 10001 would break tiktoken's cache write at startup. The
-# venv stays root-owned and the runtime user (root by default in the
-# upstream image) keeps full control of /ragflow.
+# CUSTOM B2B SaaS — create non-root user (uid 10001) for future hardening
 RUN groupadd -g 10001 ragflow \
  && useradd -u 10001 -g 10001 -m -s /bin/bash ragflow \
  && chown -R 10001:10001 /var/log/nginx /var/cache/nginx /var/lib/nginx 2>/dev/null || true \

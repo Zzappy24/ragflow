@@ -26,5 +26,16 @@ kaniko_build_prd:
         fi
       - set -x
       - echo "{\"auths\":{\"$HARBOR_REGISTRY_PROD\":{\"username\":\"$HARBOR_CYLNDATA_ROBOT_PRD\",\"password\":\"$HARBOR_CYLNDATA_ROBOT_PWD_PRD\"}}}" > /kaniko/.docker/config.json
-      - /kaniko/executor --cache=true --compressed-caching=false --snapshot-mode=redo --use-new-run --context "${CI_PROJECT_DIR}" --dockerfile "Dockerfile" --destination "${HARBOR_REGISTRY_PROD}/${HARBOR_PROJECT}/${IMAGE_NAME}:${IMAGE_TAG}"
+      - |
+        /kaniko/executor \
+          --cache=true \
+          --cache-repo "${HARBOR_REGISTRY_PROD}/${HARBOR_PROJECT}/${IMAGE_NAME}/cache" \
+          --compressed-caching=false \
+          --snapshot-mode=redo \
+          --use-new-run \
+          --cleanup \
+          --build-arg VERSION_INFO="${IMAGE_TAG}" \
+          --context "${CI_PROJECT_DIR}" \
+          --dockerfile "Dockerfile" \
+          --destination "${HARBOR_REGISTRY_PROD}/${HARBOR_PROJECT}/${IMAGE_NAME}:${IMAGE_TAG}"
   when: manual
