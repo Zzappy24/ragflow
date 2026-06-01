@@ -1,7 +1,7 @@
 import { useEffect, useState } from 'react';
 import { useSearchParams, useParams } from 'react-router-dom';
 import { Table, Button, Card, Modal, Form, Input, Select, App, Popconfirm, Space, Typography, Tooltip } from 'antd';
-import { PlusOutlined, UserAddOutlined, CopyOutlined, UserDeleteOutlined, FireOutlined, MinusCircleOutlined } from '@ant-design/icons';
+import { PlusOutlined, UserAddOutlined, CopyOutlined, FireOutlined, MinusCircleOutlined } from '@ant-design/icons';
 import type { ColumnsType } from 'antd/es/table';
 import api from '@/lib/api';
 import { useBulkDelete } from '@/components/BulkActions';

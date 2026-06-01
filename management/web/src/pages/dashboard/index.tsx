@@ -1,5 +1,5 @@
 import { useEffect, useState } from 'react';
-import { Card, Row, Col, Statistic, Spin, Table, Select, Tag, Space, Tooltip as AntTooltip, Progress } from 'antd';
+import { Card, Row, Col, Statistic, Spin, Table, Select, Tag, Tooltip as AntTooltip, Progress } from 'antd';
 import { WarningOutlined } from '@ant-design/icons';
 import dayjs, { Dayjs } from 'dayjs';
 import { DatePicker } from 'antd';
@@ -330,7 +330,7 @@ function OrgDashboard({ orgId, orgName }: { orgId: string; orgName: string }) {
                 <CartesianGrid strokeDasharray="3 3" stroke="#f0f0f0" />
                 <XAxis dataKey="date" tick={{ fontSize: 10 }} tickFormatter={shortDate} interval="preserveStartEnd" />
                 <YAxis tickFormatter={fmtTokens} tick={{ fontSize: 10 }} width={48} />
-                <Tooltip formatter={(v: number, name: string) => [fmtTokens(v), data.workspace_id_to_name[name] ?? name]} />
+                <Tooltip formatter={(v, name) => [fmtTokens(v as number), data.workspace_id_to_name[name as string] ?? (name as string)]} />
                 <Legend formatter={(id) => data.workspace_id_to_name[id] ?? id} iconSize={10} />
                 {activeWs.map((wsId, i) => (
                   <Area key={wsId} type="monotone" dataKey={wsId} stackId="1"
@@ -347,8 +347,8 @@ function OrgDashboard({ orgId, orgName }: { orgId: string; orgName: string }) {
                 <CartesianGrid strokeDasharray="3 3" stroke="#f0f0f0" />
                 <XAxis dataKey="date" tick={{ fontSize: 10 }} tickFormatter={shortDate} interval="preserveStartEnd" />
                 <YAxis tickFormatter={fmtTokens} tick={{ fontSize: 10 }} width={48} />
-                <Tooltip formatter={(v: number, name: string) =>
-                  [fmtTokens(v), data.by_model_type.find((m) => m.type === name)?.type_label ?? name]} />
+                <Tooltip formatter={(v, name) =>
+                  [fmtTokens(v as number), data.by_model_type.find((m) => m.type === (name as string))?.type_label ?? (name as string)]} />
                 <Legend iconSize={10} />
                 {activeTypes.map((mt) => (
                   <Area key={mt} type="monotone" dataKey={mt} stackId="1"
@@ -374,7 +374,7 @@ function OrgDashboard({ orgId, orgName }: { orgId: string; orgName: string }) {
                     labelLine={false} label={DonutLabel}>
                     {filteredModelTypes.map((m) => <Cell key={m.type} fill={typeColor(m.type)} />)}
                   </Pie>
-                  <Tooltip formatter={(v: number, name: string) => [fmtTokens(v), name]} />
+                  <Tooltip formatter={(v, name) => [fmtTokens(v as number), name as string]} />
                   <Legend iconSize={10} formatter={(_, entry: any) => entry.payload.type_label} />
                 </PieChart>
               </ResponsiveContainer>
@@ -390,8 +390,8 @@ function OrgDashboard({ orgId, orgName }: { orgId: string; orgName: string }) {
                 <CartesianGrid strokeDasharray="3 3" stroke="#f0f0f0" horizontal={false} />
                 <XAxis type="number" tickFormatter={fmtTokens} tick={{ fontSize: 10 }} />
                 <YAxis type="category" dataKey="workspace_name" tick={{ fontSize: 11 }} width={90} />
-                <Tooltip formatter={(v: number, name: string) =>
-                  [fmtTokens(v), name === 'indexed_tokens' ? 'Tokens indexés' : 'Tokens LLM (30j)']} />
+                <Tooltip formatter={(v, name) =>
+                  [fmtTokens(v as number), name === 'indexed_tokens' ? 'Tokens indexés' : 'Tokens LLM (30j)']} />
                 <Legend iconSize={10} formatter={(k) => k === 'indexed_tokens' ? 'Tokens indexés' : 'Tokens LLM (30j)'} />
                 <Bar dataKey="indexed_tokens" fill="#10b981" radius={[0, 2, 2, 0]} stackId={undefined} />
                 <Bar dataKey="tokens" fill="#6366f1" radius={[0, 2, 2, 0]} stackId={undefined} />
@@ -630,8 +630,8 @@ function SuperDashboard() {
                 <XAxis dataKey="date" tick={{ fontSize: 10 }} tickFormatter={shortDate} interval="preserveStartEnd" />
                 <YAxis tickFormatter={fmtTokens} tick={{ fontSize: 10 }} width={52} />
                 <Tooltip
-                  formatter={(v: number, name: string) =>
-                    [fmtTokens(v), data.by_model_type.find((m) => m.type === name)?.type_label ?? name]}
+                  formatter={(v, name) =>
+                    [fmtTokens(v as number), data.by_model_type.find((m) => m.type === (name as string))?.type_label ?? (name as string)]}
                 />
                 <Legend iconSize={10}
                   formatter={(name) => data.by_model_type.find((m) => m.type === name)?.type_label ?? name} />
@@ -653,7 +653,7 @@ function SuperDashboard() {
                     labelLine={false} label={DonutLabel}>
                     {filteredModelTypes.map((m) => <Cell key={m.type} fill={typeColor(m.type)} />)}
                   </Pie>
-                  <Tooltip formatter={(v: number, name: string) => [fmtTokens(v), name]} />
+                  <Tooltip formatter={(v, name) => [fmtTokens(v as number), name as string]} />
                   <Legend iconSize={10} formatter={(_, entry: any) => entry.payload.type_label} />
                 </PieChart>
               </ResponsiveContainer>
@@ -676,8 +676,8 @@ function SuperDashboard() {
                   <CartesianGrid strokeDasharray="3 3" stroke="#f0f0f0" />
                   <XAxis dataKey="name" tick={{ fontSize: 10 }} />
                   <YAxis tickFormatter={fmtTokens} tick={{ fontSize: 10 }} width={48} />
-                  <Tooltip formatter={(v: number, k: string) =>
-                    [fmtTokens(v), k === 'llm' ? 'Tokens LLM' : 'Tokens indexés']} />
+                  <Tooltip formatter={(v, k) =>
+                    [fmtTokens(v as number), k === 'llm' ? 'Tokens LLM' : 'Tokens indexés']} />
                   <Legend iconSize={10} formatter={(k) => k === 'llm' ? 'Tokens LLM' : 'Tokens indexés'} />
                   <Bar dataKey="indexed" fill="#10b981" radius={[3, 3, 0, 0]} />
                   <Bar dataKey="llm" fill="#6366f1" radius={[3, 3, 0, 0]} />
@@ -694,7 +694,7 @@ function SuperDashboard() {
                   <CartesianGrid strokeDasharray="3 3" stroke="#f0f0f0" horizontal={false} />
                   <XAxis type="number" tickFormatter={fmtTokens} tick={{ fontSize: 10 }} />
                   <YAxis type="category" dataKey="factory" tick={{ fontSize: 11 }} width={80} />
-                  <Tooltip formatter={(v: number) => [fmtTokens(v), 'Tokens']} />
+                  <Tooltip formatter={(v) => [fmtTokens(v as number), 'Tokens']} />
                   <Bar dataKey="tokens" radius={[0, 3, 3, 0]}>
                     {data.by_factory.slice(0, 8).map((_, i) => (
                       <Cell key={i} fill={ORG_COLORS[i % ORG_COLORS.length]} />

@@ -223,7 +223,7 @@ function OrgUsageTab({ orgId }: { orgId: string }) {
                 <CartesianGrid strokeDasharray="3 3" stroke="#f0f0f0" />
                 <XAxis dataKey="date" tick={{ fontSize: 10 }} tickFormatter={shortDate} interval="preserveStartEnd" />
                 <YAxis tickFormatter={fmtTokens} tick={{ fontSize: 10 }} width={48} />
-                <RechartsTooltip formatter={(v: number, name: string) => [fmtTokens(v), data.workspace_id_to_name[name] ?? name]} />
+                <RechartsTooltip formatter={(v, name) => [fmtTokens(v as number), data.workspace_id_to_name[name as string] ?? (name as string)]} />
                 <Legend formatter={(id) => data.workspace_id_to_name[id] ?? id} iconSize={10} />
                 {activeWs.map((wsId, i) => (
                   <Area key={wsId} type="monotone" dataKey={wsId} stackId="1"
@@ -240,8 +240,8 @@ function OrgUsageTab({ orgId }: { orgId: string }) {
                 <CartesianGrid strokeDasharray="3 3" stroke="#f0f0f0" />
                 <XAxis dataKey="date" tick={{ fontSize: 10 }} tickFormatter={shortDate} interval="preserveStartEnd" />
                 <YAxis tickFormatter={fmtTokens} tick={{ fontSize: 10 }} width={48} />
-                <RechartsTooltip formatter={(v: number, name: string) =>
-                  [fmtTokens(v), data.by_model_type.find((m) => m.type === name)?.type_label ?? name]} />
+                <RechartsTooltip formatter={(v, name) =>
+                  [fmtTokens(v as number), data.by_model_type.find((m) => m.type === (name as string))?.type_label ?? (name as string)]} />
                 <Legend iconSize={10} />
                 {activeTypes.map((mt) => (
                   <Area key={mt} type="monotone" dataKey={mt} stackId="1"
@@ -267,7 +267,7 @@ function OrgUsageTab({ orgId }: { orgId: string }) {
                     labelLine={false} label={DonutLabel}>
                     {filteredModelTypes.map((m) => <Cell key={m.type} fill={typeColor(m.type)} />)}
                   </Pie>
-                  <RechartsTooltip formatter={(v: number, name: string) => [fmtTokens(v), name]} />
+                  <RechartsTooltip formatter={(v, name) => [fmtTokens(v as number), name as string]} />
                   <Legend iconSize={10} formatter={(_, entry: any) => entry.payload.type_label} />
                 </PieChart>
               </ResponsiveContainer>
@@ -281,8 +281,8 @@ function OrgUsageTab({ orgId }: { orgId: string }) {
                 <CartesianGrid strokeDasharray="3 3" stroke="#f0f0f0" horizontal={false} />
                 <XAxis type="number" tickFormatter={fmtTokens} tick={{ fontSize: 10 }} />
                 <YAxis type="category" dataKey="workspace_name" tick={{ fontSize: 11 }} width={90} />
-                <RechartsTooltip formatter={(v: number, k: string) =>
-                  [fmtTokens(v), k === 'indexed_tokens' ? 'Tokens indexés' : 'Tokens LLM']} />
+                <RechartsTooltip formatter={(v, k) =>
+                  [fmtTokens(v as number), k === 'indexed_tokens' ? 'Tokens indexés' : 'Tokens LLM']} />
                 <Legend iconSize={10} formatter={(k) => k === 'indexed_tokens' ? 'Tokens indexés' : 'Tokens LLM'} />
                 <Bar dataKey="indexed_tokens" fill="#10b981" radius={[0, 2, 2, 0]} />
                 <Bar dataKey="tokens" fill="#6366f1" radius={[0, 2, 2, 0]} />

@@ -1,5 +1,5 @@
 import { Select, Input, DatePicker, Space } from 'antd';
-import dayjs, { Dayjs } from 'dayjs';
+import dayjs from 'dayjs';
 
 const { RangePicker } = DatePicker;
 
