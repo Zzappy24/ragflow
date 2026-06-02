@@ -1238,6 +1238,20 @@ Example: Virtual Hosted Style`,
         'Upload the OAuth JSON generated from Google Console. If it only contains client credentials, run the browser-based verification once to mint long-lived refresh tokens.',
       dropboxDescription:
         'Connect your Dropbox to sync files and folders from a chosen account.',
+      teamsDescription:
+        'Connect Microsoft Teams via Microsoft Graph to sync channel posts and replies.',
+      teamsTenantIdTip:
+        'Azure AD tenant ID. Requires an app with Team.ReadBasic.All and ChannelMessage.Read.All application permissions (admin consent).',
+      slackDescription:
+        'Connect your Slack workspace to sync channel messages and threads.',
+      slackBotTokenTip:
+        'Slack bot user OAuth token (starts with xoxb-). The app needs the channels:read, channels:history, and users:read scopes.',
+      slackChannelsTip:
+        'Optional: channel names to sync (e.g., general). Leave empty to sync all accessible channels.',
+      sharepointDescription:
+        'Connect a SharePoint site via Microsoft Graph to sync its document libraries.',
+      sharepointSiteUrlTip:
+        'Full URL of the SharePoint site to index, e.g. https://contoso.sharepoint.com/sites/MySite. Requires an Azure AD app with Sites.Read.All and Files.Read.All application permissions (admin consent).',
       bitbucketDescription: 'Connect Bitbucket to sync PR content.',
       bitbucketTopWorkspaceTip:
         'The Bitbucket workspace to index (e.g., "atlassian" from https://bitbucket.org/atlassian/workspace ).',
@@ -1371,6 +1385,28 @@ Example: Virtual Hosted Style`,
         'Datetime/timestamp column for incremental sync. Only rows modified after the last sync will be fetched.',
       rest_apiDescription:
         'Connect any REST API endpoint as a data source using a flexible, configuration-driven connector.',
+      onedriveDescription:
+        'Connect OneDrive or OneDrive for Business to index files and folders via Microsoft Graph delta queries.',
+      onedriveTenantIdTip:
+        'Azure Active Directory tenant ID (Directory ID) of the Microsoft 365 organisation.',
+      onedriveClientIdTip:
+        'Application (client) ID of the Azure AD app registration with Files.Read.All permission.',
+      onedriveClientSecretTip:
+        'Client secret value generated in the Azure AD app registration.',
+      onedriveFolderPathTip:
+        'Optional sub-folder path to limit indexing (e.g. /Documents/Reports). Leave blank to index the entire drive.',
+      outlookDescription:
+        'Connect Outlook / Microsoft 365 mailboxes and index messages via Microsoft Graph delta queries.',
+      outlookTenantIdTip:
+        'Azure Active Directory tenant ID (Directory ID) of the Microsoft 365 organisation.',
+      outlookClientIdTip:
+        'Application (client) ID of the Azure AD app registration with Mail.Read permission.',
+      outlookClientSecretTip:
+        'Client secret value generated in the Azure AD app registration.',
+      outlookFolderTip:
+        'Mail folder to sync (e.g. inbox, sentitems, archive). Defaults to inbox.',
+      outlookUserIdsTip:
+        'Comma-separated UPNs or object IDs of mailboxes to sync. Leave blank to sync every mailbox in the tenant (requires User.Read.All).',
       restApiQueryParamsTip:
         'Key=value pairs (one per line) sent as URL query parameters. Use this instead of embedding params in the URL.',
       restApiHeadersTip:
@@ -1501,6 +1537,10 @@ Example: Virtual Hosted Style`,
       addLlmTitle: 'Add LLM',
       editLlmTitle: 'Edit {{name}} model',
       editModel: 'Edit model',
+      instanceName: 'Instance name',
+      instanceNameMessage: 'Please input the instance name!',
+      instanceNameTip:
+        'A unique name to identify this provider instance under the same factory.',
       modelName: 'Model name',
       modelID: 'Model ID',
       modelUid: 'Model UID',
@@ -1840,6 +1880,20 @@ Best for: Documents with flowing, contextually connected content — such as boo
       maxRounds: 'Max reflection rounds',
       delayAfterError: 'Delay after error',
       maxRetries: 'Max retry rounds',
+      maxSteps: 'Max steps',
+      headless: 'Headless',
+      enableDefaultExtensions: 'Enable default extensions',
+      enableDefaultExtensionsTip:
+        'Enable browser-use default extensions (uBlock, cookie handling, ClearURLs). Disable this to avoid runtime extension downloads.',
+      chromiumSandbox: 'Chromium sandbox',
+      chromiumSandboxTip:
+        'Whether to enable Chromium sandbox. In Docker root environments this is usually disabled; on regular hosts it is recommended to enable.',
+      persistSession: 'Persist session',
+      persistSessionTip:
+        'When enabled, this Browser node reuses its browser session to avoid repeated logins.',
+      uploadSources: 'Upload sources',
+      uploadSourcesTip:
+        'Supports file IDs, file URLs, or variables. You can separate multiple values with commas or use a JSON array format (for example ["id1","https://example.com/a.pdf"]).',
       advancedSettings: 'Advanced settings',
       addTools: 'Add tools',
       sysPromptDefaultValue: `
@@ -1942,6 +1996,9 @@ Best for: Documents with flowing, contextually connected content — such as boo
         'A component that searches via your provided SearXNG instance URL. Specify TopN and the instance URL.',
       docGenerator: 'Doc Generator',
       docGeneratorDescription: `Generate a file from Markdown content.`,
+      browser: 'Browser',
+      browserDescription:
+        'Automate browser tasks. Supports model configuration and prompt-driven actions. Upload sources support file IDs and URLs, and downloaded files can be saved to a target folder.',
       subtitle: 'Subtitle',
       logoImage: 'Logo Image',
       logoPosition: 'Logo Position',

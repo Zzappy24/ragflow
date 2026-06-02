@@ -44,8 +44,10 @@ type Router struct {
 	searchHandler        *handler.SearchHandler
 	fileHandler          *handler.FileHandler
 	memoryHandler        *handler.MemoryHandler
+	mcpHandler           *handler.MCPHandler
 	skillSearchHandler   *handler.SkillSearchHandler
 	providerHandler      *handler.ProviderHandler
+	agentHandler         *handler.AgentHandler
 }
 
 // NewRouter create router
@@ -56,6 +58,7 @@ func NewRouter(
 	documentHandler *handler.DocumentHandler,
 	datasetsHandler *handler.DatasetsHandler,
 	systemHandler *handler.SystemHandler,
+	knowledgebaseHandler *handler.KnowledgebaseHandler,
 	chunkHandler *handler.ChunkHandler,
 	llmHandler *handler.LLMHandler,
 	chatHandler *handler.ChatHandler,
@@ -64,26 +67,31 @@ func NewRouter(
 	searchHandler *handler.SearchHandler,
 	fileHandler *handler.FileHandler,
 	memoryHandler *handler.MemoryHandler,
+	mcpHandler *handler.MCPHandler,
 	skillSearchHandler *handler.SkillSearchHandler,
 	providerHandler *handler.ProviderHandler,
+	agentHandler *handler.AgentHandler,
 ) *Router {
 	return &Router{
-		authHandler:        authHandler,
-		userHandler:        userHandler,
-		tenantHandler:      tenantHandler,
-		documentHandler:    documentHandler,
-		datasetsHandler:    datasetsHandler,
-		systemHandler:      systemHandler,
-		chunkHandler:       chunkHandler,
-		llmHandler:         llmHandler,
-		chatHandler:        chatHandler,
-		chatSessionHandler: chatSessionHandler,
-		connectorHandler:   connectorHandler,
-		searchHandler:      searchHandler,
-		fileHandler:        fileHandler,
-		memoryHandler:      memoryHandler,
-		skillSearchHandler: skillSearchHandler,
-		providerHandler:    providerHandler,
+		authHandler:          authHandler,
+		userHandler:          userHandler,
+		tenantHandler:        tenantHandler,
+		documentHandler:      documentHandler,
+		datasetsHandler:      datasetsHandler,
+		systemHandler:        systemHandler,
+		knowledgebaseHandler: knowledgebaseHandler,
+		chunkHandler:         chunkHandler,
+		llmHandler:           llmHandler,
+		chatHandler:          chatHandler,
+		chatSessionHandler:   chatSessionHandler,
+		connectorHandler:     connectorHandler,
+		searchHandler:        searchHandler,
+		fileHandler:          fileHandler,
+		memoryHandler:        memoryHandler,
+		mcpHandler:           mcpHandler,
+		skillSearchHandler:   skillSearchHandler,
+		providerHandler:      providerHandler,
+		agentHandler:         agentHandler,
 	}
 }
 
@@ -104,6 +112,7 @@ func (r *Router) Setup(engine *gin.Engine) {
 		apiNoAuth.GET("/system/ping", r.systemHandler.Ping)
 		apiNoAuth.GET("/system/config", r.systemHandler.GetConfig)
 		apiNoAuth.GET("/system/version", r.systemHandler.GetVersion)
+		apiNoAuth.GET("/system/healthz", r.systemHandler.Healthz)
 
 		// User login channels endpoint
 		apiNoAuth.GET("/auth/login/channels", r.userHandler.GetLoginChannels)
@@ -111,8 +120,18 @@ func (r *Router) Setup(engine *gin.Engine) {
 		// User login by email endpoint
 		apiNoAuth.POST("/auth/login", r.userHandler.LoginByEmail)
 
+		// OAuth / OIDC login routes. The static "channels" segment is
+		// registered before the wildcard, so gin's tree resolves
+		// /auth/login/channels to GetLoginChannels and other values to
+		// OAuthLogin without conflict.
+		apiNoAuth.GET("/auth/login/:channel", r.userHandler.OAuthLogin)
+		apiNoAuth.GET("/auth/oauth/:channel/callback", r.userHandler.OAuthCallback)
+
 		// Register
 		apiNoAuth.POST("/users", r.userHandler.Register)
+
+		// Document images are embedded directly in pages and match Python's public route.
+		apiNoAuth.GET("/documents/images/:image_id", r.documentHandler.GetDocumentImage)
 	}
 
 	// Protected routes
@@ -164,6 +183,10 @@ func (r *Router) Setup(engine *gin.Engine) {
 			tenants := v1.Group("/tenants")
 			{
 				tenants.GET("", r.tenantHandler.TenantList)
+				tenants.PATCH("/:tenant_id", r.tenantHandler.AcceptTenantInvite)
+				tenants.GET("/:tenant_id/users", r.tenantHandler.ListTenantMembers)
+				tenants.POST("/:tenant_id/users", r.tenantHandler.AddTenantMember)
+				tenants.DELETE("/:tenant_id/users", r.tenantHandler.RemoveTenantMember)
 			}
 
 			v1.GET("/tenant/list", r.tenantHandler.TenantList)
@@ -197,14 +220,30 @@ func (r *Router) Setup(engine *gin.Engine) {
 				datasets.GET("", rbacPerm(common.PermDatasetRead), r.datasetsHandler.ListDatasets)
 				datasets.GET("/:dataset_id", rbacPerm(common.PermDatasetRead), r.datasetsHandler.GetDataset)
 				datasets.GET("/:dataset_id/graph", rbacPerm(common.PermDatasetRead), r.datasetsHandler.GetKnowledgeGraph)
+				datasets.DELETE("/:dataset_id/tags", rbacPerm(common.PermDatasetUpdate), r.datasetsHandler.RemoveTags)
 				datasets.DELETE("/:dataset_id/graph", rbacPerm(common.PermDatasetDelete), r.datasetsHandler.DeleteKnowledgeGraph)
 				datasets.POST("", rbacPerm(common.PermDatasetCreate), r.datasetsHandler.CreateDataset)
 				datasets.DELETE("", rbacPerm(common.PermDatasetDelete), r.datasetsHandler.DeleteDatasets)
 				// /datasets/search is a retrieval-test endpoint — reads only.
 				datasets.POST("/search", rbacPerm(common.PermDatasetRead), r.chunkHandler.RetrievalTest)
+				datasets.GET("/metadata/flattened", rbacPerm(common.PermDatasetRead), r.datasetsHandler.ListMetadataFlattened)
+
+				// Dataset ingestion logs (read-only).
+				datasets.GET("/:dataset_id/ingestions/summary", rbacPerm(common.PermDatasetRead), r.datasetsHandler.GetIngestionSummary)
+				datasets.GET("/:dataset_id/ingestions", rbacPerm(common.PermDatasetRead), r.datasetsHandler.ListIngestionLogs)
+				datasets.GET("/:dataset_id/ingestions/:log_id", rbacPerm(common.PermDatasetRead), r.datasetsHandler.GetIngestionLog)
+
+				// Metadata Config — GET is read, PUT is an update.
+				datasets.GET("/:dataset_id/metadata/config", rbacPerm(common.PermDatasetRead), r.datasetsHandler.GetMetadataConfig)
+				datasets.PUT("/:dataset_id/metadata/config", rbacPerm(common.PermDatasetUpdate), r.datasetsHandler.UpdateMetadataConfig)
 
 				// Listing documents within a dataset belongs to the documents scope.
 				datasets.GET("/:dataset_id/documents", rbacPerm(common.PermDocumentRead), r.documentHandler.ListDocuments)
+
+				// Dataset document chunk — single-chunk read + parse + chunk delete.
+				datasets.GET("/:dataset_id/documents/:document_id/chunks/:chunk_id", rbacPerm(common.PermDocumentRead), r.chunkHandler.Get)
+				datasets.POST("/:dataset_id/documents/parse", rbacPerm(common.PermDocumentCreate), r.documentHandler.ParseDocuments)
+				datasets.DELETE("/:dataset_id/documents/:document_id/chunks", rbacPerm(common.PermDocumentDelete), r.chunkHandler.RemoveChunks)
 			}
 
 			// Search applications — mirrors restful_apis/search_api.py exactly.
@@ -261,6 +300,16 @@ func (r *Router) Setup(engine *gin.Engine) {
 			// 	message.GET("", r.memoryHandler.GetMessages)
 			// 	message.GET("/:memory_id/:message_id/content", r.memoryHandler.GetMessageContent)
 			// }
+
+			// MCP servers — mirrors restful_apis/mcp_api.py which gates every
+			// route with @require_permission(Permission.MCP_CONFIGURE).
+			mcp := v1.Group("/mcp")
+			{
+				mcp.POST("/servers", rbacPerm(common.PermMCPConfigure), r.mcpHandler.CreateMCPServer)
+				mcp.GET("/servers", rbacPerm(common.PermMCPConfigure), r.mcpHandler.ListMCPServers)
+				mcp.PUT("/servers/:mcp_id", rbacPerm(common.PermMCPConfigure), r.mcpHandler.UpdateMCPServer)
+				mcp.DELETE("/servers/:mcp_id", rbacPerm(common.PermMCPConfigure), r.mcpHandler.DeleteMCPServer)
+			}
 
 			// Skills — Go-only feature (no Python equivalent). The whole subtree
 			// is gated by DATASET_* permissions because a skill space behaves as
@@ -333,11 +382,23 @@ func (r *Router) Setup(engine *gin.Engine) {
 				model.PATCH("/", rbacPerm(common.PermLLMConfigure), r.tenantHandler.SetModels)
 			}
 
+			// Agent routes — mirror Python's agent_api.py (PermAgentRead for read).
+			agents := v1.Group("/agents")
+			{
+				agents.GET("", rbacPerm(common.PermAgentRead), r.agentHandler.ListAgents)
+			}
+
 			// Connectors — see legacy /v1/connector above for the rationale
 			// (DATASOURCE_CONFIGURE = ws_admin only because credentials live here).
 			connector := v1.Group("/connectors")
 			{
 				connector.GET("/", rbacPerm(common.PermDatasourceConfigure), r.connectorHandler.ListConnectors)
+				connector.POST("/", rbacPerm(common.PermDatasourceConfigure), r.connectorHandler.CreateConnector)
+				connector.GET("/:connector_id", rbacPerm(common.PermDatasourceConfigure), r.connectorHandler.GetConnector)
+				connector.GET("/:connector_id/logs", rbacPerm(common.PermDatasourceConfigure), r.connectorHandler.ListLogs)
+				connector.DELETE("/:connector_id", rbacPerm(common.PermDatasourceConfigure), r.connectorHandler.DeleteConnector)
+				connector.POST("/:connector_id/rebuild", rbacPerm(common.PermDatasourceConfigure), r.connectorHandler.RebuildConnector)
+				connector.POST("/:connector_id/test", rbacPerm(common.PermDatasourceConfigure), r.connectorHandler.TestConnector)
 			}
 
 			// System config / log / tokens.
@@ -348,11 +409,31 @@ func (r *Router) Setup(engine *gin.Engine) {
 			system := v1.Group("/system")
 			{
 				system.GET("/configs", rbacPerm(common.PermChatUse), r.systemHandler.GetConfigs)
+				// /status + /stats — open to any authenticated user (mirrors Python's
+				// system_api.py which leaves these without @require_permission).
+				system.GET("/status", r.systemHandler.GetStatus)
+				system.GET("/stats", r.systemHandler.GetStats)
+				// Legacy /system/log group — keep the RBAC gating (AUDIT_READ for read,
+				// LLM_CONFIGURE for write). Upstream moved to /system/config/log; we
+				// mirror that too so frontend clients pinned on either path resolve.
 				log := system.Group("/log")
 				{
 					log.GET("", rbacPerm(common.PermAuditRead), r.systemHandler.GetLogLevel)
 					log.PUT("", rbacPerm(common.PermLLMConfigure), r.systemHandler.SetLogLevel)
 				}
+				config := system.Group("/config")
+				{
+					config.GET("/log", rbacPerm(common.PermAuditRead), r.systemHandler.GetLogLevel)
+					config.PUT("/log", rbacPerm(common.PermLLMConfigure), r.systemHandler.SetLogLevel)
+				}
+
+				//log := system.Group("/log")
+				//{
+				//	// /api/v1/system/log GET
+				//	log.GET("", r.systemHandler.GetLogLevel)
+				//	// /api/v1/system/log PUT
+				//	log.PUT("", r.systemHandler.SetLogLevel)
+				//}
 
 				tokens := system.Group("/tokens")
 				{
@@ -365,8 +446,8 @@ func (r *Router) Setup(engine *gin.Engine) {
 
 		// ---------------------------------------------------------------
 		// Legacy /v1/* groups — same handlers, kept for backward compat
-		// with the Python web-app frontend. Permissions mirror the new
-		// /api/v1/* routes above.
+		// with the Python web-app frontend (web/src/utils/api.ts pins
+		// `restAPIv1 = /v1`). Permissions mirror the new /api/v1/* routes.
 		// ---------------------------------------------------------------
 
 		// Knowledge base — datasets viewed through the legacy POST-everything API.
@@ -406,6 +487,18 @@ func (r *Router) Setup(engine *gin.Engine) {
 			tenant.POST("/insert_metadata_from_file", rbacPerm(common.PermDocumentCreate), r.tenantHandler.InsertMetadataFromFile)
 		}
 
+		// New /api/v1/tenant — Go-internal upstream additions, all gated by
+		// DATASOURCE_CONFIGURE (chunk/metadata stores rewrite doc-engine layouts).
+		tenantV1 := v1.Group("/tenant")
+		{
+			tenantV1.POST("/chunk_store", rbacPerm(common.PermDatasourceConfigure), r.tenantHandler.CreateChunkStore)
+			tenantV1.DELETE("/chunk_store", rbacPerm(common.PermDatasourceConfigure), r.tenantHandler.DeleteChunkStore)
+			tenantV1.POST("/metadata_store", rbacPerm(common.PermDatasourceConfigure), r.tenantHandler.CreateMetadataStore)
+			tenantV1.DELETE("/metadata_store", rbacPerm(common.PermDatasourceConfigure), r.tenantHandler.DeleteMetadataStore)
+			tenantV1.POST("/insert_chunks_from_file", rbacPerm(common.PermDocumentCreate), r.tenantHandler.InsertChunksFromFile)
+			tenantV1.POST("/insert_metadata_from_file", rbacPerm(common.PermDocumentCreate), r.tenantHandler.InsertMetadataFromFile)
+		}
+
 		// Document — legacy listing and metadata operations.
 		doc := authorized.Group("/v1/document")
 		{
@@ -413,6 +506,17 @@ func (r *Router) Setup(engine *gin.Engine) {
 			doc.POST("/metadata/summary", rbacPerm(common.PermDocumentRead), r.documentHandler.MetadataSummary)
 			doc.POST("/set_meta", rbacPerm(common.PermDocumentCreate), r.documentHandler.SetMeta)
 		}
+
+		// New /api/v1/document RESTful surface — adds delete_meta vs legacy.
+		docV1 := v1.Group("/document")
+		{
+			docV1.POST("/list", rbacPerm(common.PermDocumentRead), r.documentHandler.ListDocuments)
+			docV1.POST("/metadata/summary", rbacPerm(common.PermDocumentRead), r.documentHandler.MetadataSummary)
+			docV1.POST("/set_meta", rbacPerm(common.PermDocumentCreate), r.documentHandler.SetMeta)
+			docV1.POST("/delete_meta", rbacPerm(common.PermDocumentDelete), r.documentHandler.DeleteMeta)
+		}
+
+		v1.GET("/thumbnails", rbacPerm(common.PermDocumentRead), r.documentHandler.GetThumbnail)
 
 		// Chunk — retrieval test reads dataset; update/rm are document-level edits.
 		// The Internal Go-only /update is gated by ws_admin via DATASOURCE_CONFIGURE
@@ -424,6 +528,13 @@ func (r *Router) Setup(engine *gin.Engine) {
 			chunk.POST("/list", rbacPerm(common.PermDocumentRead), r.chunkHandler.List)
 			chunk.POST("/update", rbacPerm(common.PermDatasourceConfigure), r.chunkHandler.UpdateChunk)
 			chunk.POST("/rm", rbacPerm(common.PermDocumentDelete), r.chunkHandler.Remove)
+		}
+
+		// New /api/v1/chunk RESTful surface for the Python list + Go-internal update.
+		chunkV1 := v1.Group("/chunk")
+		{
+			chunkV1.POST("/list", rbacPerm(common.PermDocumentRead), r.chunkHandler.List)
+			chunkV1.POST("/update", rbacPerm(common.PermDatasourceConfigure), r.chunkHandler.UpdateChunk)
 		}
 
 		// LLM — Python LLM_CONFIGURE is ws_admin-only. Reads (my_llms, factories,
@@ -461,6 +572,8 @@ func (r *Router) Setup(engine *gin.Engine) {
 		connector := authorized.Group("/v1/connector")
 		{
 			connector.GET("/list", rbacPerm(common.PermDatasourceConfigure), r.connectorHandler.ListConnectors)
+			connector.GET("/:connector_id", rbacPerm(common.PermDatasourceConfigure), r.connectorHandler.GetConnector)
+			connector.POST("/:connector_id/rebuild", rbacPerm(common.PermDatasourceConfigure), r.connectorHandler.RebuildConnector)
 		}
 
 		// File folder lookups — pure read access on the workspace file tree.

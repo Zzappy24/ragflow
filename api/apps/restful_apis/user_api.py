@@ -44,7 +44,6 @@ from api.utils.api_utils import (
     validate_request,
 )
 from api.utils.crypt import decrypt
-from api.utils.tenant_utils import ensure_tenant_model_id_for_params
 from rag.utils.redis_conn import REDIS_CONN
 from api.apps import login_required, current_user, login_user, logout_user
 from api.apps.extensions.rbac import require_permission, Permission
@@ -95,6 +94,7 @@ async def login():
     """
     json_body = await get_request_json()
     if not json_body:
+        logging.warning("Login failed: invalid or empty JSON body")
         return get_json_result(data=False, code=RetCode.AUTHENTICATION_ERROR, message="Unauthorized!")
 
     email = json_body.get("email", "")
@@ -112,6 +112,7 @@ async def login():
 
     users = UserService.query(email=email)
     if not users:
+        logging.warning("Login failed: email not registered")
         return get_json_result(
             data=False,
             code=RetCode.AUTHENTICATION_ERROR,
@@ -122,31 +123,36 @@ async def login():
     try:
         password = decrypt(password)
     except BaseException:
+        logging.warning("Login failed: password decryption error")
         return get_json_result(data=False, code=RetCode.SERVER_ERROR, message="Fail to crypt password")
 
     user = UserService.query_user(email, password)
 
     if user and hasattr(user, 'is_active') and user.is_active == "0":
+        logging.warning("Login failed: disabled account for user_id=%s", user.id)
         return get_json_result(
             data=False,
             code=RetCode.FORBIDDEN,
             message="This account has been disabled, please contact the administrator!",
         )
     elif user:
+        # CUSTOM B2B SaaS: clear login-attempt rate-limit counter on success
+        # (the counter is incremented in REDIS_CONN at line ~105 above).
         try:
             REDIS_CONN.REDIS.delete(_rl_key)
         except Exception:
             pass
-        response_data = user.to_json()
         user.access_token = get_uuid()
         login_user(user)
         user.update_time = current_timestamp()
         user.update_date = datetime_format(datetime.now())
         user.save()
+        logging.info("Login successful: user_id=%s", user.id)
         msg = "Welcome back!"
 
-        return await construct_response(data=response_data, auth=user.get_id(), message=msg)
+        return await construct_response(data=user.to_safe_dict(for_self=True), auth=user.get_id(), message=msg)
     else:
+        logging.warning("Login failed: wrong credentials")
         return get_json_result(
             data=False,
             code=RetCode.AUTHENTICATION_ERROR,
@@ -366,6 +372,7 @@ async def oauth_login(channel):
     state = get_uuid()
     session["oauth_state"] = state
     auth_url = auth_cli.get_authorization_url(state)
+    logging.info("OAuth login initiated: channel='%s', state='%s'", channel, state)
     return redirect(auth_url)
 
 
@@ -480,9 +487,15 @@ async def log_out():
         schema:
           type: object
     """
-    current_user.access_token = f"INVALID_{secrets.token_hex(16)}"
-    current_user.save()
+    user = current_user._get_current_object() if hasattr(current_user, "_get_current_object") else current_user
+    user_id = user.id
+    user.access_token = f"INVALID_{secrets.token_hex(16)}"
+    saved = user.save()
+    if saved == 0:
+        logging.error("Logout failed to persist access token update: user_id=%s", user_id)
+        return get_json_result(code=RetCode.SERVER_ERROR, data=False, message="Failed to update access token")
     logout_user()
+    logging.info("Logout: user_id=%s, access_token invalidated", user_id)
     return get_json_result(data=True)
 
 
@@ -852,7 +865,7 @@ async def user_add():
         user = users[0]
         login_user(user)
         return await construct_response(
-            data=user.to_json(),
+            data=user.to_safe_dict(for_self=True),
             auth=user.get_id(),
             message=f"{nickname}, welcome aboard!",
         )
@@ -984,8 +997,7 @@ async def set_tenant_info():
     req = await get_request_json()
     try:
         tid = req.pop("tenant_id")
-        update_dict = ensure_tenant_model_id_for_params(tid, req)
-        TenantService.update_by_id(tid, update_dict)
+        TenantService.update_by_id(tid, req)
         return get_json_result(data=True)
     except Exception as e:
         return server_error_response(e)
@@ -1199,6 +1211,6 @@ async def forget_reset_password():
         pass
 
     msg = "Password reset successful. Logged in."
-    return await construct_response(data=user.to_json(), auth=user.get_id(), message=msg)
+    return await construct_response(data=user.to_safe_dict(for_self=True), auth=user.get_id(), message=msg)
 
 
