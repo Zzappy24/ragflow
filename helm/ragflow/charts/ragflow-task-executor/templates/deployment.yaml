@@ -83,14 +83,15 @@ spec:
           image: {{ include "ragflow-task-executor.image" . }}
           imagePullPolicy: {{ .Values.global.imagePullPolicy | default .Values.image.pullPolicy }}
 
-          # task_executor.py expects argv[1] = a unique consumer name in the
-          # Redis stream's group. We use POD_NAME (already unique per replica)
-          # to make sure two pods never share the same consumer name (Redis
-          # would route messages randomly between them, double-processing).
+          # task_executor.py uses argparse flags `-i <index> -t <type>`
+          # (upstream 2026-06-02 switched away from a positional worker name).
+          # CONSUMER_NAME becomes `task_executor_<type>_<index>`, so we pass
+          # POD_NAME as the index to keep per-replica uniqueness in the Redis
+          # stream's consumer group (two pods sharing a name would race).
           command: ["/bin/bash", "-lc"]
           args:
             - |
-              exec python rag/svr/task_executor.py "{{ .Values.workerNamePrefix }}_${POD_NAME}"
+              exec python rag/svr/task_executor.py -i "{{ .Values.workerNamePrefix }}_${POD_NAME}"
 
           # /metrics is exposed on 9381 (set in env via TASK_EXECUTOR_METRICS_PORT)
           # so Prometheus can scrape per-pod counters.

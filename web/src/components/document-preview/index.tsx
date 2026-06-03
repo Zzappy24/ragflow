@@ -19,13 +19,13 @@ type PreviewProps = {
   className?: string;
   url: string;
 };
-const Preview = ({
+const DocumentPreview = function ({
   fileType,
   className,
   highlights,
   setWidthAndHeight,
   url,
-}: PreviewProps & Partial<IProps>) => {
+}: PreviewProps & Partial<IProps>) {
   return (
     <>
       {fileType === 'pdf' && highlights && setWidthAndHeight && (
@@ -97,4 +97,4 @@ const Preview = ({
     </>
   );
 };
-export default memo(Preview);
+export default memo(DocumentPreview);

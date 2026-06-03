@@ -133,7 +133,7 @@ func (h *ChunkHandler) Get(c *gin.Context) {
 		return
 	}
 
-	chunkID := c.Query("chunk_id")
+	chunkID := c.Param("chunk_id")
 	if chunkID == "" {
 		c.JSON(http.StatusBadRequest, gin.H{
 			"code":    400,
@@ -337,7 +337,7 @@ func (h *ChunkHandler) UpdateChunk(c *gin.Context) {
 	})
 }
 
-// Remove handles chunk removal requests
+// RemoveChunks handles chunk removal requests
 // @Summary Remove Chunks
 // @Description Remove chunks from a document
 // @Tags chunks
@@ -345,11 +345,25 @@ func (h *ChunkHandler) UpdateChunk(c *gin.Context) {
 // @Produce json
 // @Param request body service.RemoveChunksRequest true "remove chunks request"
 // @Success 200 {object} map[string]interface{}
-// @Router /v1/chunk/rm [post]
-func (h *ChunkHandler) Remove(c *gin.Context) {
+// @Router /api/v1/datasets/{dataset_id}/documents/{document_id}/chunks [delete]
+// CUSTOM B2B SaaS: also exposed at the legacy /v1/chunk/rm path via
+// router.go for backward compatibility with existing SDK clients. The legacy
+// route is gated by rbacPerm(PermDocumentDelete); the RESTful route inherits
+// the RBAC middleware applied at the dataset group level.
+func (h *ChunkHandler) RemoveChunks(c *gin.Context) {
 	_, errorCode, errorMessage := GetUser(c)
 	if errorCode != common.CodeSuccess {
 		jsonError(c, errorCode, errorMessage)
+		return
+	}
+
+	// Get document_id from URL path
+	docID := c.Param("document_id")
+	if docID == "" {
+		c.JSON(http.StatusBadRequest, gin.H{
+			"code":    400,
+			"message": "document_id is required",
+		})
 		return
 	}
 
@@ -361,6 +375,8 @@ func (h *ChunkHandler) Remove(c *gin.Context) {
 		})
 		return
 	}
+
+	req.DocID = docID
 
 	if req.DocID == "" {
 		c.JSON(http.StatusBadRequest, gin.H{
@@ -384,4 +400,11 @@ func (h *ChunkHandler) Remove(c *gin.Context) {
 		"data":    deletedCount,
 		"message": "success",
 	})
+}
+
+// Remove — legacy alias for RemoveChunks. Kept for B2B SaaS API
+// compatibility: clients pinned on the /v1/chunk/rm POST route (router.go)
+// continue to work after upstream's RESTful renaming.
+func (h *ChunkHandler) Remove(c *gin.Context) {
+	h.RemoveChunks(c)
 }

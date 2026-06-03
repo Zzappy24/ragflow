@@ -15,6 +15,7 @@
 #
 from common.constants import LLMType
 from common.exceptions import ArgumentException
+from api.db.services.llm_service import LLMService
 from api.db.services.tenant_llm_service import TenantLLMService
 
 _KEY_TO_MODEL_TYPE = {
@@ -25,6 +26,18 @@ _KEY_TO_MODEL_TYPE = {
     "rerank_id": LLMType.RERANK,
     "tts_id": LLMType.TTS,
 }
+
+
+def _model_exists_globally(model_name_with_factory: str) -> bool:
+    # `model_name_with_factory` is `<name>@<factory>`. The combo MUST exist
+    # in the global LLM catalog (populated from llm_factories.json at
+    # startup). An unknown factory yields False even if the bare name exists
+    # under a different factory — matches upstream's "Unsupported" semantics.
+    pure_name, _, factory = model_name_with_factory.partition("@")
+    if not pure_name or not factory:
+        return False
+    return bool(LLMService.query(llm_name=pure_name, fid=factory))
+
 
 def ensure_tenant_model_id_for_params(tenant_id: str, param_dict: dict, *, strict: bool = False) -> dict:
     for key in ["llm_id", "embd_id", "asr_id", "img2txt_id", "rerank_id", "tts_id"]:
@@ -37,9 +50,13 @@ def ensure_tenant_model_id_for_params(tenant_id: str, param_dict: dict, *, stric
                 param_dict.update({f"tenant_{key}": tenant_model.id})
             else:
                 if strict:
-                    model_type_val = model_type.value if hasattr(model_type, "value") else model_type
-                    raise ArgumentException(
-                        f"Tenant Model with name {param_dict[key]} and type {model_type_val} not found"
-                    )
+                    # Distinguish "model name doesn't exist anywhere in the
+                    # catalog" (Unsupported) from "model is in the catalog
+                    # but THIS tenant has no API key for it" (Unauthorized).
+                    # Matches upstream's update_dataset test contract.
+                    model_ref = param_dict[key]
+                    if _model_exists_globally(model_ref):
+                        raise ArgumentException(f"Unauthorized model: <{model_ref}>")
+                    raise ArgumentException(f"Unsupported model: <{model_ref}>")
                 param_dict.update({f"tenant_{key}": 0})
     return param_dict

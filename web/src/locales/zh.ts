@@ -1099,6 +1099,39 @@ NER：使用 spaCy NER 和基于规则的关键词提取来抽取实体和关系
       gmailTokenTip:
         '请上传由 Google Console 生成的 OAuth JSON。如果仅包含 client credentials，请通过浏览器授权一次以获取长期有效的刷新 Token。',
       dropboxDescription: '连接 Dropbox，同步指定账号下的文件与文件夹。',
+      onedriveDescription:
+        '连接 OneDrive 或 OneDrive for Business，通过 Microsoft Graph delta 查询索引文件和文件夹。',
+      onedriveTenantIdTip:
+        'Microsoft 365 组织的 Azure Active Directory 租户 ID（目录 ID）。',
+      onedriveClientIdTip:
+        '拥有 Files.Read.All 权限的 Azure AD 应用注册的应用程序（客户端）ID。',
+      onedriveClientSecretTip: '在 Azure AD 应用注册中生成的客户端密钥值。',
+      onedriveFolderPathTip:
+        '可选的子文件夹路径，用于限制索引范围（例如 /Documents/Reports）。留空则索引整个云盘。',
+      outlookDescription:
+        '连接 Outlook / Microsoft 365 邮箱，通过 Microsoft Graph delta 查询索引邮件。',
+      outlookTenantIdTip:
+        'Microsoft 365 组织的 Azure Active Directory 租户 ID（目录 ID）。',
+      outlookClientIdTip:
+        '拥有 Mail.Read 权限的 Azure AD 应用注册的应用程序（客户端）ID。',
+      outlookClientSecretTip: '在 Azure AD 应用注册中生成的客户端密钥值。',
+      outlookFolderTip:
+        '要同步的邮件文件夹（例如 inbox、sentitems、archive），默认为 inbox。',
+      outlookUserIdsTip:
+        '要同步的邮箱 UPN 或对象 ID 列表（逗号分隔）。留空则同步租户内的所有邮箱（需要 User.Read.All 权限）。',
+      teamsDescription:
+        '通过 Microsoft Graph 连接 Microsoft Teams，同步频道帖子与回复。',
+      teamsTenantIdTip:
+        'Azure AD 租户 ID。需要具备 Team.ReadBasic.All 与 ChannelMessage.Read.All 应用权限（管理员同意）的应用。',
+      slackDescription: '连接你的 Slack 工作区，同步频道消息与讨论串。',
+      slackBotTokenTip:
+        'Slack 机器人用户 OAuth Token（以 xoxb- 开头）。应用需具备 channels:read、channels:history 和 users:read 权限。',
+      slackChannelsTip:
+        '可选：需要同步的频道名称（例如 general）。留空则同步所有可访问的频道。',
+      sharepointDescription:
+        '通过 Microsoft Graph 连接 SharePoint 站点，同步其文档库。',
+      sharepointSiteUrlTip:
+        '要索引的 SharePoint 站点完整 URL，例如 https://contoso.sharepoint.com/sites/MySite。需要具备 Sites.Read.All 与 Files.Read.All 应用权限（管理员同意）的 Azure AD 应用。',
       boxDescription: '连接你的 Box 云盘以同步文件和文件夹。',
       bitbucketDescription: '连接 Bitbucket，同步 PR 内容。',
       bitbucketTopWorkspaceTip:
@@ -1228,6 +1261,9 @@ NER：使用 spaCy NER 和基于规则的关键词提取来抽取实体和关系
       addLlmTitle: '添加 LLM',
       editLlmTitle: '编辑 {{name}} 模型',
       editModel: '编辑模型',
+      instanceName: '实例名称',
+      instanceNameMessage: '请输入实例名称！',
+      instanceNameTip: '用于在同一厂商下唯一标识该实例的名称。',
       modelName: '模型名称',
       modelID: '模型ID',
       modelUid: '模型UID',
@@ -1530,6 +1566,20 @@ NER：使用 spaCy NER 和基于规则的关键词提取来抽取实体和关系
       maxRounds: '最大反思轮数',
       delayAfterError: '错误后延迟',
       maxRetries: '最大重试轮数',
+      maxSteps: '最大步数',
+      headless: '无头模式',
+      enableDefaultExtensions: '启用默认扩展',
+      enableDefaultExtensionsTip:
+        '启用 browser-use 默认扩展（uBlock、Cookie 处理、ClearURLs）。关闭后可避免运行时下载扩展。',
+      chromiumSandbox: 'Chromium 沙箱',
+      chromiumSandboxTip:
+        '是否启用 Chromium 沙箱。Docker root 环境通常需要关闭，普通宿主机环境建议开启。',
+      persistSession: '持久化登录态',
+      persistSessionTip:
+        '开启后将复用该 Browser 节点的浏览器会话，避免重复登录。',
+      uploadSources: '上传来源',
+      uploadSourcesTip:
+        '支持文件 ID、文件 URL 或变量。可用逗号分隔多个值，也支持 JSON 数组格式（如 ["id1","https://example.com/a.pdf"]）。',
       advancedSettings: '高级设置',
       addTools: '添加工具',
       sysPromptDefultValue: `
@@ -1644,6 +1694,9 @@ NER：使用 spaCy NER 和基于规则的关键词提取来抽取实体和关系
         '该组件通过您提供的 SearXNG 实例地址进行搜索。请设置 Top N 和实例 URL。',
       docGenerator: '文档生成器',
       docGeneratorDescription: `从 Markdown 内容生成文件。`,
+      browser: 'Browser',
+      browserDescription:
+        '使用 Browser 自动执行浏览器任务。支持模型与提示词配置，上传来源支持文件 ID 与 URL，并可将下载文件保存到指定目录。',
       subtitle: '副标题',
       logoImage: '标志图片',
       logoPosition: '标志位置',

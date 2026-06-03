@@ -134,6 +134,19 @@ class LLMBundle(LLM4Tenant):
 
         return status
 
+    def close(self):
+        """Release resources held by this LLMBundle instance."""
+        super().close()
+
+    def __enter__(self):
+        """Enter context manager."""
+        return self
+
+    def __exit__(self, exc_type, exc_val, exc_tb):
+        """Exit context manager and release resources."""
+        self.close()
+        return False
+
     def bind_tools(self, toolcall_session, tools):
         if not self.is_tools:
             logging.warning(f"Model {self.model_config['llm_name']} does not support tool call, but you have assigned one or more tools to it!")

@@ -58,10 +58,19 @@ EXEMPT_GET: set[tuple[str, str]] = {
     ("api/apps/restful_apis/agent_api.py", "webhook"),
     ("api/apps/sdk/agents.py", "webhook"),
     ("api/apps/sdk/agents.py", "webhook_trace"),
+    # Same routes — upstream 2026-06-02 moved them from api/apps/sdk/agents.py
+    # to api/apps/restful_apis/agents.py. Auth model is unchanged (DSL token).
+    ("api/apps/restful_apis/agents.py", "webhook"),
+    ("api/apps/restful_apis/agents.py", "webhook_trace"),
     # Embedded chatbot/searchbot widgets — inline API-token validation, intentionally public.
     ("api/apps/sdk/session.py", "chatbots_inputs"),
     ("api/apps/sdk/session.py", "begin_inputs"),
     ("api/apps/sdk/session.py", "detail_share_embedded"),
+    # Same routes — upstream 2026-06-02 moved them from api/apps/sdk/session.py
+    # to api/apps/restful_apis/bot_api.py. Same inline API-token validation.
+    ("api/apps/restful_apis/bot_api.py", "chatbots_inputs"),
+    ("api/apps/restful_apis/bot_api.py", "begin_inputs"),
+    ("api/apps/restful_apis/bot_api.py", "detail_share_embedded"),
     # Old-style connector OAuth poll routes — redirect-based auth, no session.
     ("api/apps/connector_app.py", "poll_google_web_result"),
     ("api/apps/connector_app.py", "poll_box_web_result"),
@@ -76,6 +85,10 @@ EXEMPT_GET: set[tuple[str, str]] = {
     ("api/apps/sdk/dify_retrieval.py", "retrieval"),
     # Dify health check — public probe used by Dify to verify connectivity.
     ("api/apps/sdk/dify_retrieval.py", "retrieval_health_check"),
+    # Same routes — upstream 2026-06-02 moved them from api/apps/sdk/dify_retrieval.py
+    # to api/apps/restful_apis/dify_retrieval_api.py. Same Dify-style apikey auth.
+    ("api/apps/restful_apis/dify_retrieval_api.py", "retrieval"),
+    ("api/apps/restful_apis/dify_retrieval_api.py", "retrieval_health_check"),
 }
 
 # Routes intentionally exempt from @require_permission.
@@ -155,6 +168,19 @@ EXEMPT: set[tuple[str, str]] = {
     ("api/apps/sdk/agents.py", "webhook"),
     # Same webhook migrated to restful_apis/agent_api.py — same public-by-design semantics.
     ("api/apps/restful_apis/agent_api.py", "webhook"),
+
+    # Upstream 2026-06-02 moved the embedded-bot endpoints from api/apps/sdk/session.py
+    # to api/apps/restful_apis/bot_api.py — inline API-token validation unchanged.
+    ("api/apps/restful_apis/bot_api.py", "chatbot_completions"),
+    ("api/apps/restful_apis/bot_api.py", "agent_bot_completions"),
+    ("api/apps/restful_apis/bot_api.py", "ask_about_embedded"),
+    ("api/apps/restful_apis/bot_api.py", "mindmap"),
+    ("api/apps/restful_apis/bot_api.py", "retrieval_test_embedded"),
+    ("api/apps/restful_apis/bot_api.py", "related_questions_embedded"),
+    # Same webhook (all methods) moved from sdk/agents.py to restful_apis/agents.py.
+    ("api/apps/restful_apis/agents.py", "webhook"),
+    # Same Dify integration moved from sdk/dify_retrieval.py — same apikey auth.
+    ("api/apps/restful_apis/dify_retrieval_api.py", "retrieval"),
 
     # --- api/apps/backward_compat.py ---
     # backward_compat.py routes are deprecated forwarders that call the new RESTful
