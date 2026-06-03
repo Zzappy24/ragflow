@@ -1,0 +1,124 @@
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: {{ include "ragflow-management-backend.fullname" . }}
+  labels:
+    {{- include "ragflow-management-backend.labels" . | nindent 4 }}
+spec:
+  replicas: {{ .Values.replicas }}
+  revisionHistoryLimit: 3
+  strategy:
+    type: RollingUpdate
+    rollingUpdate:
+      maxUnavailable: 25%
+      maxSurge: 2
+  selector:
+    matchLabels:
+      {{- include "ragflow-management-backend.selectorLabels" . | nindent 6 }}
+  template:
+    metadata:
+      labels:
+        {{- include "ragflow-management-backend.selectorLabels" . | nindent 8 }}
+      annotations:
+        helm.sh/release-revision: {{ .Release.Revision | quote }}
+    spec:
+      serviceAccountName: {{ include "ragflow-management-backend.fullname" . }}
+      {{- with .Values.global.imagePullSecrets }}
+      imagePullSecrets:
+        {{- toYaml . | nindent 8 }}
+      {{- end }}
+
+      securityContext:
+        {{- include "ragflow.podSecurityContext" . | nindent 8 }}
+
+      affinity:
+        podAntiAffinity:
+          preferredDuringSchedulingIgnoredDuringExecution:
+            - weight: 100
+              podAffinityTerm:
+                labelSelector:
+                  matchLabels:
+                    {{- include "ragflow-management-backend.selectorLabels" . | nindent 20 }}
+                topologyKey: kubernetes.io/hostname
+
+      terminationGracePeriodSeconds: {{ .Values.terminationGracePeriodSeconds }}
+
+      containers:
+        - name: management-backend
+          image: {{ include "ragflow-management-backend.image" . }}
+          imagePullPolicy: {{ .Values.global.imagePullPolicy | default .Values.image.pullPolicy }}
+
+          command: ["/bin/bash", "-lc"]
+          args:
+            - |
+              exec uvicorn server.main:app \
+                --host 0.0.0.0 \
+                --port 8000 \
+                --loop uvloop \
+                --http httptools \
+                --timeout-keep-alive 5 \
+                --limit-concurrency 1000 \
+                --backlog 2048 \
+                --no-access-log
+
+          ports:
+            - name: http
+              containerPort: 8000
+              protocol: TCP
+
+          envFrom:
+            - configMapRef:
+                name: {{ .Release.Name }}-app-config
+            - secretRef:
+                name: ragflow-app-secrets
+          env:
+            - name: POD_NAME
+              valueFrom: { fieldRef: { fieldPath: metadata.name } }
+            - name: POD_IP
+              valueFrom: { fieldRef: { fieldPath: status.podIP } }
+            - name: PYTHONPATH
+              value: "/ragflow"
+
+          resources:
+            {{- toYaml .Values.resources | nindent 12 }}
+
+          {{- if .Values.readinessProbe.enabled }}
+          readinessProbe:
+            httpGet:
+              path: {{ .Values.readinessProbe.path | quote }}
+              port: http
+            initialDelaySeconds: {{ .Values.readinessProbe.initialDelaySeconds }}
+            periodSeconds: {{ .Values.readinessProbe.periodSeconds }}
+            failureThreshold: {{ .Values.readinessProbe.failureThreshold }}
+            timeoutSeconds: {{ .Values.readinessProbe.timeoutSeconds }}
+          {{- end }}
+
+          {{- if .Values.livenessProbe.enabled }}
+          livenessProbe:
+            httpGet:
+              path: {{ .Values.livenessProbe.path | quote }}
+              port: http
+            initialDelaySeconds: {{ .Values.livenessProbe.initialDelaySeconds }}
+            periodSeconds: {{ .Values.livenessProbe.periodSeconds }}
+            failureThreshold: {{ .Values.livenessProbe.failureThreshold }}
+            timeoutSeconds: {{ .Values.livenessProbe.timeoutSeconds }}
+          {{- end }}
+
+          securityContext:
+            allowPrivilegeEscalation: false
+            capabilities:
+              drop: ["ALL"]
+
+          volumeMounts:
+            - name: tmp
+              mountPath: /tmp
+            - name: runtime
+              mountPath: /ragflow/logs
+
+      volumes:
+        - name: tmp
+          emptyDir:
+            sizeLimit: 2Gi
+        - name: runtime
+          emptyDir:
+            sizeLimit: 2Gi

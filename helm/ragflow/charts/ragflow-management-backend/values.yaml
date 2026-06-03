@@ -1,0 +1,38 @@
+replicas: 2
+
+image:
+  repository: harbor.cylndata.cyllene.pro/data/ragflow
+  tag: v0.2
+  pullPolicy: IfNotPresent
+  imagePullSecrets:
+    - name: harbor-pull-secret
+
+resources:
+  requests:
+    cpu: 250m
+    memory: 512Mi
+  limits:
+    cpu: 1000m
+    memory: 2Gi
+
+terminationGracePeriodSeconds: 60
+
+service:
+  type: ClusterIP
+  port: 8000
+
+readinessProbe:
+  enabled: false
+  path: /health
+  initialDelaySeconds: 15
+  periodSeconds: 10
+  failureThreshold: 3
+  timeoutSeconds: 2
+
+livenessProbe:
+  enabled: false
+  path: /health
+  initialDelaySeconds: 30
+  periodSeconds: 20
+  failureThreshold: 3
+  timeoutSeconds: 2
