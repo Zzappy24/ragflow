@@ -42,10 +42,6 @@ const methods = {
     url: documentThumbnails,
     method: 'get',
   },
-  setMeta: {
-    url: setMeta,
-    method: 'post',
-  },
   listTagByKnowledgeIds: {
     url: listTagByKnowledgeIds,
     method: 'get',

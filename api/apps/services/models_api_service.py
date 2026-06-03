@@ -16,12 +16,95 @@
 import os
 import logging
 
-from common.constants import ActiveStatusEnum, LLMType
+from common.constants import ActiveStatusEnum, LLMType, StatusEnum
 from common.settings import FACTORY_LLM_INFOS
 from api.db.services.tenant_model_provider_service import TenantModelProviderService
 from api.db.services.tenant_model_instance_service import TenantModelInstanceService
 from api.db.services.tenant_model_service import TenantModelService
+from api.db.services.tenant_llm_service import TenantLLMService
 from api.db.services.user_service import TenantService
+
+# CUSTOM B2B SaaS: workspace tenants only have rows in the legacy `tenant_llm`
+# table (the admin panel writes there). Upstream's models_api expects the new
+# TenantModelProvider/Instance/Model tables and returns empty for our
+# workspaces. These helpers add a transparent fallback so /v1/models and
+# /v1/models/default return what the admin panel configured.
+_LEGACY_MODEL_TYPE_TO_TAG = {
+    "chat": "chat",
+    "embedding": "embedding",
+    "rerank": "rerank",
+    "speech2text": "asr",
+    "image2text": "vision",
+    "tts": "tts",
+    "ocr": "ocr",
+}
+
+
+def _legacy_model_type_to_tag(model_type: str) -> str:
+    """Map a `tenant_llm.model_type` value to the public model tag."""
+    return _LEGACY_MODEL_TYPE_TO_TAG.get(model_type, model_type)
+
+
+def _legacy_strip_factory_suffix(llm_name: str, llm_factory: str) -> str:
+    """Strip the `___FACTORY` suffix our admin panel adds (mirrors RAGFlow's
+    add_llm naming) so the model surfaces with its bare name."""
+    suffix = f"___{llm_factory}"
+    if llm_name.endswith(suffix):
+        return llm_name[: -len(suffix)]
+    return llm_name
+
+
+def _list_legacy_added_models(tenant_id: str, model_type_filter: str | None):
+    """Build the /v1/models payload from `tenant_llm` rows."""
+    target_tag = _legacy_model_type_to_tag(model_type_filter.lower()) if model_type_filter else None
+    rows = TenantLLMService.query(tenant_id=tenant_id)
+    added_models = []
+    for row in rows:
+        if row.status != StatusEnum.VALID.value:
+            continue
+        model_tag = _legacy_model_type_to_tag(row.model_type)
+        if target_tag and model_tag != target_tag:
+            continue
+        bare_name = _legacy_strip_factory_suffix(row.llm_name, row.llm_factory)
+        added_models.append({
+            "model_type": [model_tag],
+            "name": bare_name,
+            "provider_id": row.llm_factory,
+            "provider_name": row.llm_factory,
+            "instance_id": "default",
+            "instance_name": "default",
+        })
+    return added_models
+
+
+def _get_legacy_model_info(tenant_id: str, provider_name: str, model_name: str, model_type: str):
+    """Resolve a default-model reference from the legacy `tenant_llm` table.
+
+    `model_type` is the public tag (chat / embedding / …). Returns the dict
+    expected by /v1/models/default, or None if no matching row exists."""
+    # The admin panel stores names with the `___FACTORY` suffix; the tenant
+    # default fields store the bare name. Try both forms.
+    candidates = [model_name, f"{model_name}___{provider_name}"]
+    for candidate in candidates:
+        rows = TenantLLMService.query(
+            tenant_id=tenant_id,
+            llm_factory=provider_name,
+            llm_name=candidate,
+        )
+        for row in rows:
+            if row.status != StatusEnum.VALID.value:
+                continue
+            row_tag = _legacy_model_type_to_tag(row.model_type)
+            if row_tag != model_type:
+                continue
+            return {
+                "model_provider": provider_name,
+                "model_instance": "default",
+                "model_name": model_name,
+                "model_type": model_type,
+                "enable": True,
+            }
+    return None
 
 # Mapping from model_type string to Tenant model field name
 MODEL_TYPE_TO_FIELD = {
@@ -79,6 +162,11 @@ def _get_model_info(tenant_id: str, default_model: str, model_type: str):
     # Check if the provider exists for the tenant
     provider_obj = TenantModelProviderService.get_by_tenant_id_and_provider_name(tenant_id, provider_name)
     if not provider_obj:
+        # CUSTOM B2B SaaS: workspace tenants only have legacy `tenant_llm`
+        # rows — fall back to that table before giving up.
+        legacy = _get_legacy_model_info(tenant_id, provider_name, model_name, model_type)
+        if legacy:
+            return legacy
         logging.warning(f"Provider '{provider_name}' not found for tenant '{tenant_id}'")
         return None
 
@@ -279,12 +367,13 @@ def list_tenant_added_models(tenant_id: str, model_type_filter: str=None):
 
     providers = TenantModelProviderService.get_by_tenant_id(tenant_id)
     if not providers:
-        return True, []
+        # CUSTOM B2B SaaS: legacy tenant_llm fallback for workspace tenants.
+        return True, _list_legacy_added_models(tenant_id, model_type_filter)
 
     provider_ids = [provider.id for provider in providers]
     instances = TenantModelInstanceService.get_by_provider_ids(provider_ids)
     if not instances:
-        return True, []
+        return True, _list_legacy_added_models(tenant_id, model_type_filter)
     provider_instance_map: dict = {}
     provider_info_map = {provider.id: provider for provider in providers}
     for provider_instance_record in instances:

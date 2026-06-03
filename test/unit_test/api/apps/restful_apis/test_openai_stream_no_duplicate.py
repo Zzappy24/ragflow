@@ -53,6 +53,12 @@ def _load_openai_api(monkeypatch):
     """Load api/apps/restful_apis/openai_api.py with the heavy deps stubbed."""
     _stub(monkeypatch, "quart", Response=object, jsonify=lambda *a, **k: None)
     _stub(monkeypatch, "api.apps", current_user=SimpleNamespace(id="tenant-1"), login_required=lambda func: func)
+    # CUSTOM B2B SaaS: openai_api.py imports RBAC decorators from our extension.
+    # Upstream's test stubs `api.apps` as a ModuleType (not a package), so
+    # `from api.apps.extensions.rbac import require_permission, Permission`
+    # would fail. Inject a passthrough stub for both submodules.
+    _stub(monkeypatch, "api.apps.extensions", __path__=[])
+    _stub(monkeypatch, "api.apps.extensions.rbac", require_permission=lambda *_a, **_k: (lambda func: func), Permission=SimpleNamespace(CHAT_USE=None))
     _stub(monkeypatch, "api.db.services.dialog_service", DialogService=SimpleNamespace(), async_chat=lambda *_a, **_k: None)
     _stub(monkeypatch, "api.db.services.doc_metadata_service", DocMetadataService=SimpleNamespace())
     _stub(

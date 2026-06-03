@@ -43,13 +43,48 @@ def _load_agent_api(monkeypatch, get_by_id_result):
     `API4ConversationService.get_by_id` will return for any session_id.
     """
     _stub(monkeypatch, "api.apps", current_user=SimpleNamespace(id="tenant-1"), login_required=lambda func: func)
+    # CUSTOM B2B SaaS: agent_api.py imports RBAC decorators from our extension.
+    _stub(monkeypatch, "api.apps.extensions", __path__=[])
+    _stub(
+        monkeypatch,
+        "api.apps.extensions.rbac",
+        require_permission=lambda *_a, **_k: (lambda func: func),
+        has_permission=lambda *_a, **_k: True,
+        Permission=SimpleNamespace(
+            AGENT_CREATE=None, AGENT_DELETE=None, AGENT_READ=None, AGENT_UPDATE=None,
+            AUDIT_READ=None,
+            CHAT_USE=None, CHAT_READ=None, CHAT_WRITE=None,
+            DOCUMENT_READ=None,
+        ),
+    )
+    # `agent.canvas` (re-exported through agent_api.py) chains into
+    # `api.db.services.llm_service` which the test stubs out below. Provide a
+    # stub for the canvas/component modules too so the import never reaches
+    # the real LLMBundle.
+    _stub(monkeypatch, "agent.canvas", Canvas=SimpleNamespace, Graph=SimpleNamespace)
+    _stub(monkeypatch, "agent.component", LLM=SimpleNamespace)
+    _stub(monkeypatch, "agent.dsl_migration", normalize_chunker_dsl=lambda *_a, **_k: None)
     _stub(monkeypatch, "api.apps.services.canvas_replica_service", CanvasReplicaService=SimpleNamespace())
     _stub(monkeypatch, "api.db", CanvasCategory=SimpleNamespace())
+    # CUSTOM B2B SaaS: agent_api.py logs every webhook + session lifecycle event.
+    _stub(monkeypatch, "api.db.services.audit_service", AuditService=SimpleNamespace(record=lambda *_a, **_k: None))
     _stub(monkeypatch, "api.db.db_models", Task=SimpleNamespace())
+    # CUSTOM B2B SaaS: our fork's `get_agent_session` no longer uses
+    # `get_by_id(session_id)` — it calls
+    # `query(id=session_id, dialog_id=agent_id)` to enforce an IDOR guard
+    # (a leaked session_id from another canvas cannot be loaded by this
+    # route). The same `(exists, conv)` tuple drives both stubs so callers
+    # don't need to know which API the implementation picks.
+    _exists, _conv = get_by_id_result
     _stub(
         monkeypatch,
         "api.db.services.api_service",
-        API4ConversationService=SimpleNamespace(get_by_id=lambda _session_id: get_by_id_result, save=lambda **_kwargs: True, delete_by_id=lambda *_args, **_kwargs: True, query=lambda **_kwargs: []),
+        API4ConversationService=SimpleNamespace(
+            get_by_id=lambda _session_id: get_by_id_result,
+            save=lambda **_kwargs: True,
+            delete_by_id=lambda *_args, **_kwargs: True,
+            query=lambda **_kwargs: ([_conv] if _exists else []),
+        ),
     )
     _stub(
         monkeypatch,
@@ -63,7 +98,10 @@ def _load_agent_api(monkeypatch, get_by_id_result):
     _stub(monkeypatch, "api.db.services.file_service", FileService=SimpleNamespace())
     _stub(monkeypatch, "api.db.services.knowledgebase_service", KnowledgebaseService=SimpleNamespace())
     _stub(monkeypatch, "api.db.services.pipeline_operation_log_service", PipelineOperationLogService=SimpleNamespace())
-    _stub(monkeypatch, "api.db.services.task_service", CANVAS_DEBUG_DOC_ID="", TaskService=SimpleNamespace(), queue_dataflow=lambda *_a, **_k: None)
+    _stub(monkeypatch, "api.db.services.task_service", CANVAS_DEBUG_DOC_ID="", TaskService=SimpleNamespace(), queue_dataflow=lambda *_a, **_k: None, has_canceled=lambda *_a, **_k: False)
+    # Upstream 2026-06-02 lifted Pipeline into rag.flow which is now imported
+    # transitively by agent_api. Stub it so we don't drag the doc-store deps.
+    _stub(monkeypatch, "rag.flow.pipeline", Pipeline=SimpleNamespace)
     _stub(monkeypatch, "api.db.services.user_service", TenantService=SimpleNamespace(), UserService=SimpleNamespace(get_by_id=lambda *_a, **_k: (False, None)))
     _stub(monkeypatch, "api.db.services.user_canvas_version", UserCanvasVersionService=SimpleNamespace())
     _stub(

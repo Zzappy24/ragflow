@@ -725,9 +725,16 @@ def verify_embedding_availability(embd_id: str, tenant_id: str) -> tuple[bool, s
     try:
         get_model_config_from_provider_instance(tenant_id, LLMType.EMBEDDING, embd_id)
     except LookupError:
-        # Upstream test contract expects "Unsupported model: <X>". Our legacy
-        # get_model_config_by_type_and_name (the fallback) raises a longer
-        # message; normalize here so the API surface matches upstream's tests.
+        # Distinguish "Unsupported" (model name+factory unknown in the
+        # catalog) from "Unauthorized" (the (name, factory) tuple exists in
+        # the catalog but this tenant has no API key for it). Matches
+        # upstream's update_dataset contract: an unknown factory yields
+        # "Unsupported" even if the bare model name happens to exist under
+        # a different factory.
+        from api.db.services.llm_service import LLMService
+        pure_name, _, factory = (embd_id or "").partition("@")
+        if pure_name and factory and LLMService.query(llm_name=pure_name, fid=factory):
+            return False, f"Unauthorized model: <{embd_id}>"
         return False, f"Unsupported model: <{embd_id}>"
     except OperationalError as e:
         logging.exception(e)

@@ -39,8 +39,11 @@ pkill -f "hypercorn.*api.asgi" 2>/dev/null || true
 sleep 2
 
 echo "[dev_scaled] starting $WORKERS task_executor workers"
+# upstream 2026-06-02 switched from positional worker name to argparse flags
+# `-i <index> -t <type>`. The index suffix below becomes part of CONSUMER_NAME
+# (`task_executor_common_<i>`), so workers stay unique in Redis.
 for i in $(seq 0 $((WORKERS - 1))); do
-  nohup uv run python rag/svr/task_executor.py "scaled_w$i" \
+  nohup uv run python rag/svr/task_executor.py -i "$i" \
     > "/tmp/ragflow_te_$i.log" 2>&1 &
 done
 

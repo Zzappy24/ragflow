@@ -147,6 +147,18 @@ This fork adds a multi-tenant RBAC system (workspaces, organizations, roles) on 
 
 In upstream RAGFlow, `Tenant.id = User.id` (set in `api/db/init_data.py`). Our workspace tenants break this — a workspace has its own `tenant_id` that is NOT a user_id. **If upstream ever changes the user_id == tenant_id mapping, all our workspace logic must be revisited.**
 
+### Critical upstream assumption: model storage in `tenant_llm` (legacy)
+
+Upstream 2026-06-02 introduced a new 3-level hierarchy for model storage: `tenant_model_provider` → `tenant_model_instance` → `tenant_model` (+ `tenant_model_group`, `tenant_model_group_mapping`). Upstream also ships a migration tool at `tools/scripts/mysql_migration.py` (`--stages tenant_model_provider tenant_model_instance tenant_model model_id_config`) that copies rows from `tenant_llm` into the new tables.
+
+**We do NOT run this migration.** Our admin panel (`management/server/routers/models.py`) reads and writes only the legacy `tenant_llm` table. To keep upstream's new endpoints (`/v1/models`, `/v1/models/default`, ...) working when the new tables are empty, `api/apps/services/models_api_service.py` has a transparent fallback to `tenant_llm`. If you ever want to switch to the new schema, you'd need to:
+
+1. Run the migration once (`mysql_migration.py --stages tenant_model_provider tenant_model_instance tenant_model model_id_config --execute`)
+2. Rewrite `management/server/routers/models.py` to write the new tables
+3. Remove the `_list_legacy_added_models` / `_get_legacy_model_info` fallback in `models_api_service.py`
+
+**Until then**: any upstream PR that removes the fallback OR forces `migration_status=applied` for the model stages must be REJECTED.
+
 ### Custom files to watch on upstream merges
 
 These files contain custom multi-tenant code that will likely conflict with upstream changes:
@@ -328,6 +340,7 @@ The 164 skips in multitenant_http_api are upstream `@pytest.mark.skipif(DOC_ENGI
 - Bumping Infinity image (`docker/docker-compose-base.yml` + `pyproject.toml`) — nightly format breaks the local WAL silently. Our Helm chart pins `dev5` explicitly; **do not** propagate upstream bumps to `helm/ragflow/values.yaml` without a migration plan.
 
 **Watch for these upstream breaking changes (require full audit):**
+- `rag/svr/task_executor.py` CLI changes — upstream 2026-06-02 switched from a positional worker name to `argparse` flags `-i <index> -t <type>`. **All custom launchers** must pass `-i` explicitly: `scripts/dev_up.sh`, `scripts/dev_simple.sh`, `scripts/dev_scaled.sh`, and the Helm template at `helm/ragflow/charts/ragflow-task-executor/templates/deployment.yaml`. CONSUMER_NAME is now derived as `task_executor_<type>_<index>`. Symptom: `error: unrecognized arguments: <name>` in `/tmp/ragflow_task_executor.log` → no worker → `test_e2e_smoke` and any parse/embed flow times out.
 - Any change to `user_id == tenant_id` invariant in `api/db/init_data.py`
 - New top-level route group added outside `authorized` in `router.go` (won't get workspace middleware)
 - Rename of `GetInfoByUserID` in `internal/dao/tenant.go` (breaks `ListTenantDefaultModels`)

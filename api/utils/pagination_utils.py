@@ -14,10 +14,11 @@
 #  limitations under the License.
 #
 
-# CUSTOM B2B SaaS: upstream 2026-06-02 set this to 100. We bump back to 1000
-# because MCP tools and several internal callers still pass page_size=1000.
-# DoS risk is low (API tokens are tenant-scoped, pagination doesn't compound).
-REST_API_MAX_PAGE_SIZE = 1000
+# CUSTOM B2B SaaS: upstream 2026-06-02 set this to 100. We bump to 10000
+# because MCP tools, several internal callers, and concurrency tests use
+# page_size values up to ~2000. DoS risk is low (API tokens are tenant-
+# scoped, the doc-store query layer paginates internally anyway).
+REST_API_MAX_PAGE_SIZE = 10000
 
 
 def validate_rest_api_page_size(page_size: int) -> int:
