@@ -4,7 +4,7 @@ replicas: 2
 
 image:
   repository: harbor.cylndata.cyllene.pro/data/ragflow
-  tag: v0.1
+  tag: v0.2
   pullPolicy: IfNotPresent
   imagePullSecrets:
     - name: harbor-pull-secret
