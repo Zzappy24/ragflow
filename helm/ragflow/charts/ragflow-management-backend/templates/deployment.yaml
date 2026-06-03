@@ -50,16 +50,16 @@ spec:
 
           command: ["/bin/bash", "-lc"]
           args:
-            - |
-              exec uvicorn server.main:app \
-                --host 0.0.0.0 \
-                --port 8000 \
-                --loop uvloop \
-                --http httptools \
-                --timeout-keep-alive 5 \
-                --limit-concurrency 1000 \
-                --backlog 2048 \
-                --no-access-log
+          - |
+            exec uvicorn management.server.main:app \
+              --host 0.0.0.0 \
+              --port 8000 \
+              --loop uvloop \
+              --http httptools \
+              --timeout-keep-alive 5 \
+              --limit-concurrency 1000 \
+              --backlog 2048 \
+              --no-access-log
 
           ports:
             - name: http
