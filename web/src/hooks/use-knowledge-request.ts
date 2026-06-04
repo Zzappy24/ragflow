@@ -191,7 +191,6 @@ export const useFetchNextKnowledgeListByPage = () => {
     handleInputChange: onInputChange,
     pagination: { ...pagination, total: data?.total_datasets },
     setPagination,
-    loading,
     filterValue,
     handleFilterSubmit,
   };

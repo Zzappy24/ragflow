@@ -1,3 +1,4 @@
+import { Authorization } from '@/constants/authorization';
 import { IRenameTag } from '@/interfaces/database/dataset';
 import {
   IFetchDocumentListRequestBody,
@@ -5,8 +6,10 @@ import {
 } from '@/interfaces/request/knowledge';
 import { ProcessingType } from '@/pages/dataset/dataset-overview/dataset-common';
 import api from '@/utils/api';
+import { getAuthorization } from '@/utils/authorization-util';
 import registerServer from '@/utils/register-server';
 import request from '@/utils/request';
+import axios from 'axios';
 
 const {
   createKb,
