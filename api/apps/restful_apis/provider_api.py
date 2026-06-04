@@ -329,6 +329,12 @@ async def create_provider_instance(tenant_id: str = None, provider_name: str = N
             api_key:
               type: string
               description: API key.
+            region:
+              type: string
+              description: Region.
+            model_info:
+              type: object
+              description: Model info.
     responses:
       200:
         description: Instance created successfully.
@@ -343,10 +349,10 @@ async def create_provider_instance(tenant_id: str = None, provider_name: str = N
     api_key = data["api_key"]
     base_url = data.get("base_url", "")
     region = data.get("region", "")
-    verify = data.get("verify", False)
+    model_info = data.get("model_info", {})
 
     try:
-        success, msg = await provider_api_service.create_provider_instance(tenant_id, provider_name, instance_name, api_key, base_url, region, verify)
+        success, msg = await provider_api_service.create_provider_instance(tenant_id, provider_name, instance_name, api_key, base_url, region, model_info)
         if success:
             return get_result(message=msg)
         else:
@@ -393,6 +399,12 @@ async def verify_provider_api_key(provider_name: str = None):
             base_url:
               type: string
               description: Base URL.
+            region:
+              type: string
+              description: Region.
+            model_info:
+              type: object
+              description: Model info.
     responses:
       200:
         description: Instance created successfully.
@@ -405,8 +417,11 @@ async def verify_provider_api_key(provider_name: str = None):
 
     base_url = data.get("base_url", "")
     api_key = data["api_key"]
+    region = data.get("region", "default")
+    model_info = data.get("model_info", {})
+
     try:
-        success, msg = await provider_api_service.verify_api_key(provider_name, api_key, base_url)
+        success, msg = await provider_api_service.verify_api_key(provider_name, api_key, base_url, region, model_info)
         if success:
             return get_result(message=msg)
         else:
