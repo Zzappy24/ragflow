@@ -25,7 +25,7 @@ kaniko_build_prd:
           IMAGE_TAG="$CI_COMMIT_SHORT_SHA"
         fi
       - set -x
-      - echo "{\"auths\":{\"$HARBOR_REGISTRY_PROD\":{\"username\":\"$HARBOR_CYLNDATA_ROBOT_PRD\",\"password\":\"$HARBOR_CYLNDATA_ROBOT_PWD_PRD\"}}}" > /kaniko/.docker/config.json
+      - echo "{\"auths\":{\"goharbor-cylndata-prod-core.goharbor.svc.cluster.local\":{\"username\":\"$HARBOR_CYLNDATA_ROBOT_PRD\",\"password\":\"$HARBOR_CYLNDATA_ROBOT_PWD_PRD\"}}}" > /kaniko/.docker/config.json
       - |
         /kaniko/executor \
           --cache=true \
