@@ -1905,6 +1905,7 @@ async def handle_task():
         }
         set_recording_context(NullRecordingContext())
         await do_handle_task(task)
+
         DONE_TASKS += 1
         CURRENT_TASKS.pop(task_id, None)
         logging.info(f"handle_task done for task {json.dumps(task)}")

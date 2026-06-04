@@ -46,8 +46,9 @@ type Router struct {
 	memoryHandler        *handler.MemoryHandler
 	mcpHandler           *handler.MCPHandler
 	skillSearchHandler   *handler.SkillSearchHandler
-	providerHandler      *handler.ProviderHandler
-	agentHandler         *handler.AgentHandler
+	providerHandler           *handler.ProviderHandler
+	agentHandler              *handler.AgentHandler
+	relatedQuestionsHandler   *handler.SearchbotHandler
 }
 
 // NewRouter create router
@@ -71,6 +72,7 @@ func NewRouter(
 	skillSearchHandler *handler.SkillSearchHandler,
 	providerHandler *handler.ProviderHandler,
 	agentHandler *handler.AgentHandler,
+	relatedQuestionsHandler *handler.SearchbotHandler,
 ) *Router {
 	return &Router{
 		authHandler:          authHandler,
@@ -92,11 +94,21 @@ func NewRouter(
 		skillSearchHandler:   skillSearchHandler,
 		providerHandler:      providerHandler,
 		agentHandler:         agentHandler,
+		relatedQuestionsHandler: relatedQuestionsHandler,
 	}
 }
 
 // Setup setup routes
 func (r *Router) Setup(engine *gin.Engine) {
+	// Mark all responses from Go with a header for debugging.
+	engine.Use(func(c *gin.Context) {
+		c.Header("X-API-Source", "go")
+		c.Next()
+	})
+
+	// Log all HTTP requests.
+	engine.Use(gin.Logger())
+
 	// Health check
 	engine.GET("/health", r.systemHandler.Health)
 
@@ -106,6 +118,11 @@ func (r *Router) Setup(engine *gin.Engine) {
 
 	// User logout endpoint
 	engine.GET("/v1/user/logout", r.userHandler.Logout)
+
+	// OAuth callbacks are invoked by third-party providers and cannot rely on
+	// the RAGFlow auth middleware.
+	engine.GET("/connectors/gmail/oauth/web/callback", r.connectorHandler.GmailWebOAuthCallback)
+	engine.GET("/connectors/google-drive/oauth/web/callback", r.connectorHandler.GoogleDriveWebOAuthCallback)
 
 	apiNoAuth := engine.Group("/api/v1")
 	{
@@ -132,6 +149,10 @@ func (r *Router) Setup(engine *gin.Engine) {
 
 		// Document images are embedded directly in pages and match Python's public route.
 		apiNoAuth.GET("/documents/images/:image_id", r.documentHandler.GetDocumentImage)
+
+		// Google redirects here after Gmail / Google Drive web OAuth completes.
+		apiNoAuth.GET("/connectors/gmail/oauth/web/callback", r.connectorHandler.GmailWebOAuthCallback)
+		apiNoAuth.GET("/connectors/google-drive/oauth/web/callback", r.connectorHandler.GoogleDriveWebOAuthCallback)
 	}
 
 	// Protected routes
@@ -214,6 +235,9 @@ func (r *Router) Setup(engine *gin.Engine) {
 				chats.GET("/:chat_id/sessions", rbacPerm(common.PermChatRead), r.chatSessionHandler.ListChatSessions)
 			}
 
+			// Searchbot routes
+			v1.POST("/searchbots/related_questions", rbacPerm(common.PermChatUse), r.relatedQuestionsHandler.Handle)
+
 			// Dataset routes — mirrors restful_apis/dataset_api.py.
 			datasets := v1.Group("/datasets")
 			{
@@ -239,10 +263,12 @@ func (r *Router) Setup(engine *gin.Engine) {
 
 				// Listing documents within a dataset belongs to the documents scope.
 				datasets.GET("/:dataset_id/documents", rbacPerm(common.PermDocumentRead), r.documentHandler.ListDocuments)
+				datasets.DELETE("/:dataset_id/documents", rbacPerm(common.PermDocumentDelete), r.documentHandler.DeleteDocuments)
 
 				// Dataset document chunk — single-chunk read + parse + chunk delete.
 				datasets.GET("/:dataset_id/documents/:document_id/chunks/:chunk_id", rbacPerm(common.PermDocumentRead), r.chunkHandler.Get)
 				datasets.POST("/:dataset_id/documents/parse", rbacPerm(common.PermDocumentCreate), r.documentHandler.ParseDocuments)
+				datasets.POST("/:dataset_id/documents/stop", rbacPerm(common.PermDocumentDelete), r.documentHandler.StopParseDocuments)
 				datasets.DELETE("/:dataset_id/documents/:document_id/chunks", rbacPerm(common.PermDocumentDelete), r.chunkHandler.RemoveChunks)
 			}
 
@@ -352,14 +378,16 @@ func (r *Router) Setup(engine *gin.Engine) {
 				provider.GET("/:provider_name/instances", rbacPerm(common.PermChatUse), r.providerHandler.ListProviderInstances)
 				provider.GET("/:provider_name/instances/:instance_name", rbacPerm(common.PermChatUse), r.providerHandler.ShowProviderInstance)
 				provider.GET("/:provider_name/instances/:instance_name/balance", rbacPerm(common.PermLLMConfigure), r.providerHandler.ShowInstanceBalance)
-				provider.GET("/:provider_name/instances/:instance_name/connection", rbacPerm(common.PermLLMConfigure), r.providerHandler.CheckProviderConnection)
+				provider.GET("/:provider_name/instances/:instance_name/connection", rbacPerm(common.PermLLMConfigure), r.providerHandler.CheckInstanceConnection)
+				provider.GET("/:provider_name/connection", rbacPerm(common.PermLLMConfigure), r.providerHandler.CheckConnection)
 				provider.GET("/:provider_name/instances/:instance_name/tasks", rbacPerm(common.PermLLMConfigure), r.providerHandler.ListTasks)
 				provider.GET("/:provider_name/instances/:instance_name/tasks/:task_id", rbacPerm(common.PermLLMConfigure), r.providerHandler.ShowTask)
 				provider.PUT("/:provider_name/instances/:instance_name", rbacPerm(common.PermLLMConfigure), r.providerHandler.AlterProviderInstance)
 				provider.DELETE("/:provider_name/instances", rbacPerm(common.PermLLMConfigure), r.providerHandler.DropProviderInstance)
 				provider.GET("/:provider_name/instances/:instance_name/models", rbacPerm(common.PermChatUse), r.providerHandler.ListInstanceModels)
 				provider.PATCH("/:provider_name/instances/:instance_name/models/*model_name", rbacPerm(common.PermLLMConfigure), r.providerHandler.EnableOrDisableModel)
-				provider.POST("/:provider_name/instances/:instance_name/models", rbacPerm(common.PermLLMConfigure), r.providerHandler.AddCustomModel)
+				// upstream 2026-06-04 renamed AddCustomModel → AddModel.
+				provider.POST("/:provider_name/instances/:instance_name/models", rbacPerm(common.PermLLMConfigure), r.providerHandler.AddModel)
 				provider.DELETE("/:provider_name/instances/:instance_name/models", rbacPerm(common.PermLLMConfigure), r.providerHandler.DropInstanceModels)
 
 				// OpenAI-compatible inference endpoints — anyone who can use chat
@@ -386,6 +414,9 @@ func (r *Router) Setup(engine *gin.Engine) {
 			agents := v1.Group("/agents")
 			{
 				agents.GET("", rbacPerm(common.PermAgentRead), r.agentHandler.ListAgents)
+				agents.GET("/:agent_id/versions", rbacPerm(common.PermAgentRead), r.agentHandler.ListAgentVersions)
+				agents.GET("/:agent_id/versions/:version_id", rbacPerm(common.PermAgentRead), r.agentHandler.GetAgentVersion)
+				agents.POST("/:agent_id/upload", rbacPerm(common.PermAgentUpdate), r.agentHandler.UploadAgentFile)
 			}
 
 			// Connectors — see legacy /v1/connector above for the rationale
@@ -394,6 +425,8 @@ func (r *Router) Setup(engine *gin.Engine) {
 			{
 				connector.GET("/", rbacPerm(common.PermDatasourceConfigure), r.connectorHandler.ListConnectors)
 				connector.POST("/", rbacPerm(common.PermDatasourceConfigure), r.connectorHandler.CreateConnector)
+				connector.POST("/google/oauth/web/start", rbacPerm(common.PermDatasourceConfigure), r.connectorHandler.StartGoogleWebOAuth)
+				connector.POST("/google/oauth/web/result", rbacPerm(common.PermDatasourceConfigure), r.connectorHandler.PollGoogleWebOAuthResult)
 				connector.GET("/:connector_id", rbacPerm(common.PermDatasourceConfigure), r.connectorHandler.GetConnector)
 				connector.GET("/:connector_id/logs", rbacPerm(common.PermDatasourceConfigure), r.connectorHandler.ListLogs)
 				connector.DELETE("/:connector_id", rbacPerm(common.PermDatasourceConfigure), r.connectorHandler.DeleteConnector)
@@ -461,17 +494,19 @@ func (r *Router) Setup(engine *gin.Engine) {
 			kb.GET("/tags", rbacPerm(common.PermDatasetRead), r.knowledgebaseHandler.ListTagsFromKbs)
 			kb.GET("/get_meta", rbacPerm(common.PermDatasetRead), r.knowledgebaseHandler.GetMeta)
 			kb.GET("/basic_info", rbacPerm(common.PermDatasetRead), r.knowledgebaseHandler.GetBasicInfo)
-			// Internal Go-only doc-engine helpers — only ws_admin can configure
-			// the underlying index (treat as DATASOURCE_CONFIGURE).
-			kb.POST("/doc_engine_table", rbacPerm(common.PermDatasourceConfigure), r.knowledgebaseHandler.CreateDatasetInDocEngine)
-			kb.DELETE("/doc_engine_table", rbacPerm(common.PermDatasourceConfigure), r.knowledgebaseHandler.DeleteDatasetInDocEngine)
-			kb.POST("/insert_from_file", rbacPerm(common.PermDocumentCreate), r.knowledgebaseHandler.InsertDatasetFromFile)
+			// upstream 2026-06-04 removed knowledgebaseHandler.CreateDatasetInDocEngine,
+			// DeleteDatasetInDocEngine, InsertDatasetFromFile and RemoveTags — their
+			// underlying Go internals were refactored. The corresponding Go routes
+			// (kb.POST/doc_engine_table, kb.DELETE/doc_engine_table,
+			// kb.POST/insert_from_file, kbByID.POST/rm_tags) are dropped here.
+			// The Python `/v1/kb` and `/v1/llm/factories` endpoints still serve the
+			// same surface, and nothing in our frontend/sdk/test references the Go
+			// variants directly, so this is a safe removal.
 
 			// KB ID specific routes
 			kbByID := kb.Group("/:kb_id")
 			{
 				kbByID.GET("/tags", rbacPerm(common.PermDatasetRead), r.knowledgebaseHandler.ListTags)
-				kbByID.POST("/rm_tags", rbacPerm(common.PermDatasetUpdate), r.knowledgebaseHandler.RemoveTags)
 				kbByID.POST("/rename_tag", rbacPerm(common.PermDatasetUpdate), r.knowledgebaseHandler.RenameTag)
 				kbByID.GET("/knowledge_graph", rbacPerm(common.PermDatasetRead), r.knowledgebaseHandler.KnowledgeGraph)
 				kbByID.DELETE("/knowledge_graph", rbacPerm(common.PermDatasetDelete), r.knowledgebaseHandler.DeleteKnowledgeGraph)
@@ -542,7 +577,8 @@ func (r *Router) Setup(engine *gin.Engine) {
 		llm := authorized.Group("/v1/llm")
 		{
 			llm.GET("/my_llms", rbacPerm(common.PermChatUse), r.llmHandler.GetMyLLMs)
-			llm.GET("/factories", rbacPerm(common.PermChatUse), r.llmHandler.Factories)
+			// upstream 2026-06-04 removed llmHandler.Factories; Python /v1/llm/factories
+			// in api/apps/llm_app.py still serves the same payload.
 			llm.GET("/list", rbacPerm(common.PermChatUse), r.llmHandler.ListApp)
 			llm.POST("/set_api_key", rbacPerm(common.PermLLMConfigure), r.llmHandler.SetAPIKey)
 		}
