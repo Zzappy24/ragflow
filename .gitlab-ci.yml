@@ -29,13 +29,17 @@ kaniko_build_prd:
       - |
         /kaniko/executor \
           --cache=true \
-          --cache-repo "${HARBOR_REGISTRY_PROD}/${HARBOR_PROJECT}/${IMAGE_NAME}/cache" \
+          #--cache-repo "${HARBOR_REGISTRY_PROD}/${HARBOR_PROJECT}/${IMAGE_NAME}/cache" \
+          --cache-repo "goharbor-cylndata-prod-core.goharbor.svc.cluster.local:80/${HARBOR_PROJECT}/${IMAGE_NAME}/cache" \
           --compressed-caching=false \
+          --insecure=true \
+          --skip-tls-verify=true \
           --snapshot-mode=redo \
           --use-new-run \
           --cleanup \
           --build-arg VERSION_INFO="${IMAGE_TAG}" \
           --context "${CI_PROJECT_DIR}" \
           --dockerfile "Dockerfile" \
-          --destination "${HARBOR_REGISTRY_PROD}/${HARBOR_PROJECT}/${IMAGE_NAME}:${IMAGE_TAG}"
+          #--destination "${HARBOR_REGISTRY_PROD}/${HARBOR_PROJECT}/${IMAGE_NAME}:${IMAGE_TAG}"
+          --destination "goharbor-cylndata-prod-core.goharbor.svc.cluster.local:80/${HARBOR_PROJECT}/${IMAGE_NAME}:${IMAGE_TAG}"
   when: manual
