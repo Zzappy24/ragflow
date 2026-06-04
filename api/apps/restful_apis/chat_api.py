@@ -29,7 +29,7 @@ from api.apps import current_user, login_required
 from api.utils.tenant_context import active_tenant_id
 from api.db.joint_services.tenant_model_service import (
     get_tenant_default_model_by_type, get_model_config_from_provider_instance, get_api_key, split_model_name,
-    get_model_config_by_type_and_name,
+    get_model_config_from_provider_instance,
 )
 from api.utils.tenant_utils import ensure_tenant_model_id_for_params
 from api.db.services.chunk_feedback_service import ChunkFeedbackService
@@ -1221,7 +1221,7 @@ async def recommendation():
         # current_user.id which is the user_id-as-tenant_id antipattern
         # (works in upstream's model where user_id == tenant_id, but not
         # in our multi-tenant model where workspaces have distinct tenant_ids).
-        chat_model_config = get_model_config_by_type_and_name(active_tenant_id(), LLMType.CHAT, chat_id)
+        chat_model_config = get_model_config_from_provider_instance(active_tenant_id(), LLMType.CHAT, chat_id)
     else:
         chat_model_config = get_tenant_default_model_by_type(active_tenant_id(), LLMType.CHAT)
     chat_mdl = LLMBundle(active_tenant_id(), chat_model_config)

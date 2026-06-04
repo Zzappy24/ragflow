@@ -182,14 +182,21 @@ def get_tenant_default_model_by_type(tenant_id: str, model_type: str|enum.Enum):
             logging.info("No default %s on workspace tenant %s, falling back to personal tenant %s", model_type_val, tenant_id, fb_tid)
             return get_tenant_default_model_by_type(fb_tid, model_type)
         raise Exception(f"No default {model_type} model is set.")
+    # CUSTOM B2B SaaS: route through `get_model_config_from_provider_instance`
+    # so the post-migration 3-part `name@instance@provider` shape stored in
+    # `tenant.embd_id` / `llm_id` / etc. resolves through the new tables.
+    # The legacy `get_model_config_by_type_and_name` only understands 2-part
+    # identifiers and would raise LookupError on the 3-part form.
     try:
-        return get_model_config_by_type_and_name(tenant_id, model_type, model_name)
+        return get_model_config_from_provider_instance(tenant_id, model_type, model_name)
     except LookupError:
-        # CUSTOM: model name set on workspace tenant but config missing → fallback
+        # Workspace tenant's default points at a model whose config isn't in
+        # either table for this tenant → fall back to the workspace creator's
+        # personal tenant. Same shape (3-part) is tried there.
         fb_tid = _fallback_personal_tenant_id(tenant_id)
         if fb_tid:
             logging.info("Model %s not found on workspace tenant %s, falling back to personal tenant %s", model_name, tenant_id, fb_tid)
-            return get_model_config_by_type_and_name(fb_tid, model_type, model_name)
+            return get_model_config_from_provider_instance(fb_tid, model_type, model_name)
         raise
 
 
@@ -238,27 +245,42 @@ def get_model_config_from_provider_instance(tenant_id, model_type: str|enum.Enum
             "model_type": LLMType.EMBEDDING.value,
         }
 
-    # CUSTOM B2B SaaS: upstream's new tenant_model_provider/instance/model tables
-    # are empty in our deployment (we still use the legacy tenant_llm table).
-    # Fall back transparently to the legacy lookup so all callsites that switched
-    # to this function (task_executor, agent/*, chat_api, etc.) keep working.
+    # CUSTOM B2B SaaS: when the new provider/instance row is missing for
+    # this tenant we fall back to the legacy `tenant_llm` lookup. Upstream's
+    # `get_model_config_by_type_and_name` only understands 2-part
+    # `name@provider` identifiers, so collapse a 3-part input to 2-part
+    # before handing it off — otherwise the legacy path raises LookupError.
+    legacy_name = f"{pure_model_name}@{provider_name}" if provider_name else pure_model_name
     provider_obj = TenantModelProviderService.get_by_tenant_id_and_provider_name(tenant_id, provider_name)
     if not provider_obj:
-        return get_model_config_by_type_and_name(tenant_id, model_type, model_name)
+        return get_model_config_by_type_and_name(tenant_id, model_type, legacy_name)
     instance_obj = TenantModelInstanceService.get_by_provider_id_and_instance_name(provider_obj.id, instance_name)
     if not instance_obj:
-        return get_model_config_by_type_and_name(tenant_id, model_type, model_name)
+        return get_model_config_by_type_and_name(tenant_id, model_type, legacy_name)
     model_obj = TenantModelService.get_by_provider_id_and_instance_id_and_model_type_and_model_name(provider_obj.id, instance_obj.id, model_type_val, pure_model_name)
 
     import json
     api_key, is_tool, api_key_payload = TenantLLMService._decode_api_key_config(instance_obj.api_key)
     extra_fields = json.loads(instance_obj.extra) if instance_obj.extra else {}
 
+    # CUSTOM B2B SaaS: LLMBundle / LLM4Tenant downstream still call
+    # `TenantLLMService.increase_usage_by_id(self.model_config["id"], ...)`
+    # to track tokens against `tenant_llm.used_tokens`. Upstream forgot to
+    # include `id` when refactoring this function to return a dict instead
+    # of an ORM row. Look up the matching legacy `tenant_llm` row by
+    # (tenant, factory, llm_name) so token tracking keeps working. Once
+    # upstream rewires the usage path to the new tables we can drop this.
+    legacy_row = TenantLLMService.get_api_key(tenant_id, model_name, model_type_val)
+    if legacy_row is None:
+        legacy_row = TenantLLMService.get_api_key(tenant_id, pure_model_name, model_type_val)
+    legacy_id = legacy_row.id if legacy_row else None
+
     if model_obj:
         if model_obj.status == ActiveStatusEnum.INACTIVE.value:
             raise LookupError(f"Model {model_name} is disabled.")
 
         model_config = {
+            "id": legacy_id,
             "llm_factory": provider_obj.provider_name,
             "api_key": api_key,
             "llm_name": model_obj.model_name,
@@ -279,6 +301,7 @@ def get_model_config_from_provider_instance(tenant_id, model_type: str|enum.Enum
             raise LookupError(f"Model config not found: {model_name}")
         llm_info = llm_list[0]
         model_config = {
+            "id": legacy_id,
             "llm_factory": provider_obj.provider_name,
             "api_key": api_key,
             "llm_name": llm_info["llm_name"],

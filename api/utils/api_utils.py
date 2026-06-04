@@ -730,9 +730,11 @@ def verify_embedding_availability(embd_id: str, tenant_id: str) -> tuple[bool, s
         # the catalog but this tenant has no API key for it). Matches
         # upstream's update_dataset contract: an unknown factory yields
         # "Unsupported" even if the bare model name happens to exist under
-        # a different factory.
+        # a different factory. Accepts 2- and 3-part model identifiers.
         from api.db.services.llm_service import LLMService
-        pure_name, _, factory = (embd_id or "").partition("@")
+        from api.utils.tenant_utils import _bare_model_name, _provider_from_model_ref
+        pure_name = _bare_model_name(embd_id or "")
+        factory = _provider_from_model_ref(embd_id or "")
         if pure_name and factory and LLMService.query(llm_name=pure_name, fid=factory):
             return False, f"Unauthorized model: <{embd_id}>"
         return False, f"Unsupported model: <{embd_id}>"

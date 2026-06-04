@@ -147,17 +147,23 @@ This fork adds a multi-tenant RBAC system (workspaces, organizations, roles) on 
 
 In upstream RAGFlow, `Tenant.id = User.id` (set in `api/db/init_data.py`). Our workspace tenants break this — a workspace has its own `tenant_id` that is NOT a user_id. **If upstream ever changes the user_id == tenant_id mapping, all our workspace logic must be revisited.**
 
-### Critical upstream assumption: model storage in `tenant_llm` (legacy)
+### Model storage: dual-write (`tenant_llm` + `TenantModelProvider/Instance/Model`)
 
-Upstream 2026-06-02 introduced a new 3-level hierarchy for model storage: `tenant_model_provider` → `tenant_model_instance` → `tenant_model` (+ `tenant_model_group`, `tenant_model_group_mapping`). Upstream also ships a migration tool at `tools/scripts/mysql_migration.py` (`--stages tenant_model_provider tenant_model_instance tenant_model model_id_config`) that copies rows from `tenant_llm` into the new tables.
+Upstream 2026-06-02 introduced a 3-level hierarchy for model storage: `tenant_model_provider` → `tenant_model_instance` → `tenant_model` (+ `tenant_model_group`, `tenant_model_group_mapping`). We **migrated** to it on 2026-06-03 by running `tools/scripts/mysql_migration.py --stages tenant_model_provider,tenant_model_instance,tenant_model,model_id_config --execute`. The migration is idempotent (`INSERT IGNORE` semantics) — safe to re-run.
 
-**We do NOT run this migration.** Our admin panel (`management/server/routers/models.py`) reads and writes only the legacy `tenant_llm` table. To keep upstream's new endpoints (`/v1/models`, `/v1/models/default`, ...) working when the new tables are empty, `api/apps/services/models_api_service.py` has a transparent fallback to `tenant_llm`. If you ever want to switch to the new schema, you'd need to:
+**Both schemas are now kept in sync** by the admin panel:
+- `tenant_llm` (legacy) — STILL written by `management/server/routers/models.py`. Required because `TenantLLMService.get_api_key()` is still used at inference time (token usage tracking, `LLMBundle` lookups, etc.).
+- `tenant_model_provider/instance/model` (new) — written via `management/server/services/sync_tenant_model_tables.py::sync_tenant_llm_to_new_tables(tenant_id, llm_factory)` after every mutation. Required because upstream's `/v1/models`, `/v1/models/default`, and `get_model_config_from_provider_instance` read from these tables exclusively.
 
-1. Run the migration once (`mysql_migration.py --stages tenant_model_provider tenant_model_instance tenant_model model_id_config --execute`)
-2. Rewrite `management/server/routers/models.py` to write the new tables
-3. Remove the `_list_legacy_added_models` / `_get_legacy_model_info` fallback in `models_api_service.py`
+**`tenant.llm_id` / `embd_id` / etc. fields** store the 3-part format `name@instance@provider` post-migration (e.g. `nomic-embed-text@default@Ollama`). Upstream's `_get_model_info` accepts both 2- and 3-part — we standardize on 3-part for new writes.
 
-**Until then**: any upstream PR that removes the fallback OR forces `migration_status=applied` for the model stages must be REJECTED.
+**On upstream merges that touch model handling:**
+1. **Do NOT** re-introduce a "fallback to `tenant_llm` when new tables are empty" pattern in `api/apps/services/models_api_service.py` — the new tables are authoritative now.
+2. **Do NOT** drop the `legacy_id` lookup in `api/db/joint_services/tenant_model_service.py::get_model_config_from_provider_instance` — `LLMBundle.encode()` / `chat()` etc. still need `model_config["id"]` for `TenantLLMService.increase_usage_by_id` (token tracking). Upstream forgot to rewire this when they refactored the function.
+3. **Verify after merge**: `management/server/services/sync_tenant_model_tables.py` is still imported in the 5 mutation routes of `management/server/routers/models.py` (add / update / toggle-status / delete provider, set defaults).
+4. **When upstream rewires usage tracking to the new tables** (`tenant_model.used_tokens` or similar), THIS is the trigger to drop the dual-write: stop writing `tenant_llm`, remove the `legacy_id` injection, write only to the new tables.
+
+The custom helper is the entire mirror logic in ~150 lines and survives upstream model-layer churn without per-merge edits — much better than the previous fallback approach.
 
 ### Custom files to watch on upstream merges
 
@@ -264,7 +270,7 @@ git merge origin/main --no-commit   # stop before auto-commit to resolve conflic
 | `api/apps/restful_apis/document_api.py` | Take upstream (new RESTful `list_docs` route + imports) |
 | `web/src/utils/api.ts`, `use-rename-document.ts` | Take upstream (RESTful URL functions, `dataset_id` rename) |
 | `web/src/services/knowledge-service.ts` — `listDocument` | Take upstream (RESTful GET) |
-| `web/src/services/knowledge-service.ts` — `uploadDocument` | **Keep ours** — `X-Workspace-Id` header |
+| `web/src/services/knowledge-service.ts` — `uploadDocument` / `webCrawlDocument` | **Keep ours** — uses `axios.post()` directly (not `request.post`) to inject `X-Workspace-Id` header. **DANGER trap**: when resolving conflicts here, the imports block and the function bodies can drift apart. If upstream removes `axios` from imports because they no longer use it, but we keep our custom function body that does use it, the result is a silent runtime `ReferenceError` swallowed by the `try/catch → console.warn` in `useUploadDocument`. Symptom: Save button does nothing, no visible error, no network call. **Verify after merge**: `grep -E "^import.*(axios\|Authorization\|getAuthorization)" web/src/services/knowledge-service.ts` must show all three present. |
 | Test files | Take upstream |
 
 **After resolving:**

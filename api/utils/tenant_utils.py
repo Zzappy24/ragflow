@@ -28,12 +28,32 @@ _KEY_TO_MODEL_TYPE = {
 }
 
 
-def _model_exists_globally(model_name_with_factory: str) -> bool:
-    # `model_name_with_factory` is `<name>@<factory>`. The combo MUST exist
-    # in the global LLM catalog (populated from llm_factories.json at
-    # startup). An unknown factory yields False even if the bare name exists
-    # under a different factory — matches upstream's "Unsupported" semantics.
-    pure_name, _, factory = model_name_with_factory.partition("@")
+def _bare_model_name(model_ref: str) -> str:
+    """Extract just the model name (the first @-segment) from a 2-part
+    `name@provider` or 3-part `name@instance@provider` identifier.
+
+    `TenantLLMService.get_api_key` accepts either shape but we keep this
+    helper centralized so that `_model_exists_globally` and any future
+    callers agree on how to peel the identifier.
+    """
+    return model_ref.split("@", 1)[0] if model_ref else ""
+
+
+def _provider_from_model_ref(model_ref: str) -> str:
+    """Extract the provider name (the LAST @-segment) from a 2- or 3-part
+    identifier. Returns '' when no '@' is present."""
+    if not model_ref or "@" not in model_ref:
+        return ""
+    return model_ref.rsplit("@", 1)[1]
+
+
+def _model_exists_globally(model_ref: str) -> bool:
+    # The combo MUST exist in the global LLM catalog (populated from
+    # llm_factories.json at startup). An unknown factory yields False even
+    # if the bare name exists under a different factory — matches upstream's
+    # "Unsupported" semantics. Accepts 2-part and 3-part identifiers.
+    pure_name = _bare_model_name(model_ref)
+    factory = _provider_from_model_ref(model_ref)
     if not pure_name or not factory:
         return False
     return bool(LLMService.query(llm_name=pure_name, fid=factory))
@@ -43,6 +63,8 @@ def ensure_tenant_model_id_for_params(tenant_id: str, param_dict: dict, *, stric
     for key in ["llm_id", "embd_id", "asr_id", "img2txt_id", "rerank_id", "tts_id"]:
         if param_dict.get(key) and not param_dict.get(f"tenant_{key}"):
             model_type = _KEY_TO_MODEL_TYPE.get(key)
+            # `get_api_key` handles both 2-part `name@provider` and 3-part
+            # `name@instance@provider` via `split_model_name_and_factory`.
             tenant_model = TenantLLMService.get_api_key(tenant_id, param_dict[key], model_type)
             if not tenant_model and model_type == LLMType.CHAT:
                 tenant_model = TenantLLMService.get_api_key(tenant_id, param_dict[key])

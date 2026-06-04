@@ -139,6 +139,10 @@ def add_workspace_provider(
         TenantLLMService.save(**llm_row)
     from api.db.joint_services.tenant_model_service import _invalidate_model_config_cache
     _invalidate_model_config_cache(tenant_id)
+    # CUSTOM B2B SaaS: keep upstream's tenant_model_provider/instance/model
+    # tables in sync so /v1/models and /v1/models/default see the new row.
+    from management.server.services.sync_tenant_model_tables import sync_tenant_llm_to_new_tables
+    sync_tenant_llm_to_new_tables(tenant_id, body.llm_factory)
     return WsLlmProviderResponse(
         llm_factory=body.llm_factory,
         llm_name=body.llm_name,
@@ -190,6 +194,8 @@ def update_workspace_provider(
         raise HTTPException(status_code=404, detail="Model not found")
     from api.db.joint_services.tenant_model_service import _invalidate_model_config_cache
     _invalidate_model_config_cache(tenant_id)
+    from management.server.services.sync_tenant_model_tables import sync_tenant_llm_to_new_tables
+    sync_tenant_llm_to_new_tables(tenant_id, factory)
     # Return updated row
     llms = TenantLLMService.get_my_llms(tenant_id)
     row = next((r for r in llms if r.get("llm_name") == stored and r.get("llm_factory") == factory), None)
@@ -245,6 +251,8 @@ def toggle_workspace_provider_status(
         raise HTTPException(status_code=404, detail="Model not found")
     from api.db.joint_services.tenant_model_service import _invalidate_model_config_cache
     _invalidate_model_config_cache(tenant_id)
+    from management.server.services.sync_tenant_model_tables import sync_tenant_llm_to_new_tables
+    sync_tenant_llm_to_new_tables(tenant_id, factory)
     llms = TenantLLMService.get_my_llms(tenant_id)
     row = next((r for r in llms if r.get("llm_name") == stored and r.get("llm_factory") == factory), None)
 
@@ -286,6 +294,11 @@ def delete_workspace_provider(
         TenantLLM.llm_factory == factory,
         TenantLLM.llm_name == stored,
     ])
+    from api.db.joint_services.tenant_model_service import _invalidate_model_config_cache
+    _invalidate_model_config_cache(tenant_id)
+    # Whole-tenant sync so orphaned providers/instances get pruned too.
+    from management.server.services.sync_tenant_model_tables import sync_tenant_llm_to_new_tables
+    sync_tenant_llm_to_new_tables(tenant_id)
 
 
 # ---------------------------------------------------------------------------
