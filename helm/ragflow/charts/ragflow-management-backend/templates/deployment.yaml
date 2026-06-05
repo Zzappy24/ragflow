@@ -43,6 +43,27 @@ spec:
 
       terminationGracePeriodSeconds: {{ .Values.terminationGracePeriodSeconds }}
 
+      initContainers:
+        - name: render-service-conf
+          image: alpine:3.20
+          command:
+            - sh
+            - -c
+            - |
+              apk add --no-cache gettext >/dev/null 2>&1 || true
+              envsubst < /conf-template/service_conf.yaml.template > /conf-rendered/local.service_conf.yaml
+          envFrom:
+            - configMapRef:
+                name: {{ .Release.Name }}-app-config
+            - secretRef:
+                name: ragflow-app-secrets
+          volumeMounts:
+            - name: conf-template
+              mountPath: /conf-template
+              readOnly: true
+            - name: conf-rendered
+              mountPath: /conf-rendered
+
       containers:
         - name: management-backend
           image: {{ include "ragflow-management-backend.image" . }}
@@ -50,16 +71,16 @@ spec:
 
           command: ["/bin/bash", "-lc"]
           args:
-          - |
-            exec uvicorn management.server.main:app \
-              --host 0.0.0.0 \
-              --port 8000 \
-              --loop uvloop \
-              --http httptools \
-              --timeout-keep-alive 5 \
-              --limit-concurrency 1000 \
-              --backlog 2048 \
-              --no-access-log
+            - |
+              exec uvicorn management.server.main:app \
+                --host 0.0.0.0 \
+                --port 8000 \
+                --loop uvloop \
+                --http httptools \
+                --timeout-keep-alive 5 \
+                --limit-concurrency 1000 \
+                --backlog 2048 \
+                --no-access-log
 
           ports:
             - name: http
@@ -114,6 +135,10 @@ spec:
               mountPath: /tmp
             - name: runtime
               mountPath: /ragflow/logs
+            - name: conf-rendered
+              mountPath: /ragflow/conf/local.service_conf.yaml
+              subPath: local.service_conf.yaml
+              readOnly: true
 
       volumes:
         - name: tmp
@@ -122,3 +147,12 @@ spec:
         - name: runtime
           emptyDir:
             sizeLimit: 2Gi
+        - name: conf-template
+          configMap:
+            name: {{ .Release.Name }}-app-config
+            items:
+              - key: service_conf.yaml.template
+                path: service_conf.yaml.template
+        - name: conf-rendered
+          emptyDir:
+            sizeLimit: 64Mi
