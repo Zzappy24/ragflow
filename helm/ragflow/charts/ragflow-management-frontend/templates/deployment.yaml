@@ -1,0 +1,135 @@
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: {{ include "ragflow-management-frontend.fullname" . }}
+  labels:
+    {{- include "ragflow-management-frontend.labels" . | nindent 4 }}
+spec:
+  replicas: {{ .Values.replicas }}
+  revisionHistoryLimit: 3
+  strategy:
+    type: RollingUpdate
+    rollingUpdate:
+      maxUnavailable: 0
+      maxSurge: 1
+  selector:
+    matchLabels:
+      {{- include "ragflow-management-frontend.selectorLabels" . | nindent 6 }}
+  template:
+    metadata:
+      labels:
+        {{- include "ragflow-management-frontend.selectorLabels" . | nindent 8 }}
+      annotations:
+        checksum/nginx-config: {{ include (print $.Template.BasePath "/configmap-nginx.yaml") . | sha256sum }}
+    spec:
+      serviceAccountName: {{ include "ragflow-management-frontend.fullname" . }}
+      {{- with .Values.global.imagePullSecrets }}
+      imagePullSecrets:
+        {{- toYaml . | nindent 8 }}
+      {{- end }}
+
+      securityContext:
+        {{- include "ragflow.podSecurityContext" . | nindent 8 }}
+
+      affinity:
+        podAntiAffinity:
+          preferredDuringSchedulingIgnoredDuringExecution:
+            - weight: 100
+              podAffinityTerm:
+                labelSelector:
+                  matchLabels:
+                    {{- include "ragflow-management-frontend.selectorLabels" . | nindent 20 }}
+                topologyKey: kubernetes.io/hostname
+
+      initContainers:
+        - name: render-nginx-config
+          image: alpine:3.20
+          command:
+            - sh
+            - -c
+            - |
+              apk add --no-cache gettext >/dev/null 2>&1 || true
+              envsubst < /nginx-template/ragflow.conf.template > /nginx-rendered/ragflow.conf
+          env:
+            - name: POD_NAMESPACE
+              valueFrom:
+                fieldRef:
+                  fieldPath: metadata.namespace
+            - name: MANAGEMENT_BACKEND_SERVICE
+              value: {{ include "ragflow-management-frontend.backendServiceName" . | quote }}
+            - name: MANAGEMENT_BACKEND_PORT
+              value: {{ .Values.backend.port | quote }}
+          volumeMounts:
+            - name: nginx-template
+              mountPath: /nginx-template
+              readOnly: true
+            - name: nginx-rendered
+              mountPath: /nginx-rendered
+
+      containers:
+        - name: nginx
+          image: {{ include "ragflow-management-frontend.image" . }}
+          imagePullPolicy: {{ .Values.global.imagePullPolicy | default .Values.image.pullPolicy }}
+          command: ["/bin/bash", "-lc"]
+          args:
+            - |
+              exec nginx -g 'daemon off;'
+          ports:
+            - name: http
+              containerPort: 80
+              protocol: TCP
+
+          resources:
+            {{- toYaml .Values.resources | nindent 12 }}
+
+          {{- if .Values.probes.liveness.enabled }}
+          livenessProbe:
+            httpGet:
+              path: /healthz
+              port: http
+            initialDelaySeconds: {{ .Values.probes.liveness.initialDelaySeconds }}
+            periodSeconds: {{ .Values.probes.liveness.periodSeconds }}
+          {{- end }}
+
+          {{- if .Values.probes.readiness.enabled }}
+          readinessProbe:
+            httpGet:
+              path: /healthz
+              port: http
+            initialDelaySeconds: {{ .Values.probes.readiness.initialDelaySeconds }}
+            periodSeconds: {{ .Values.probes.readiness.periodSeconds }}
+          {{- end }}
+
+          securityContext:
+            allowPrivilegeEscalation: false
+            capabilities:
+              drop: ["ALL"]
+
+          volumeMounts:
+            - name: nginx-rendered
+              mountPath: /etc/nginx/conf.d/ragflow.conf
+              subPath: ragflow.conf
+              readOnly: true
+            - name: nginx-log
+              mountPath: /var/log/nginx
+            - name: nginx-cache
+              mountPath: /var/cache/nginx
+            - name: nginx-run
+              mountPath: /var/run
+            - name: nginx-tmp
+              mountPath: /tmp
+
+      volumes:
+        - name: nginx-template
+          configMap:
+            name: {{ include "ragflow-management-frontend.fullname" . }}-nginx
+        - name: nginx-rendered
+          emptyDir: {}
+        - name: nginx-log
+          emptyDir: {}
+        - name: nginx-cache
+          emptyDir: {}
+        - name: nginx-run
+          emptyDir: {}
+        - name: nginx-tmp
+          emptyDir: {}
