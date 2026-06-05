@@ -20,8 +20,8 @@ spec:
       labels:
         {{- include "ragflow-management-frontend.selectorLabels" . | nindent 8 }}
       annotations:
-        checksum/nginx-config: {{ include (print $.Template.BasePath "/configmap-nginx.yaml") . | sha256sum }}
-        checksum/nginx-main-config: {{ include (print $.Template.BasePath "/configmap-nginx-main.yaml") . | sha256sum }}
+        checksum/nginx-config: {{ include "ragflow-management-frontend.nginxVhostConfig" . | sha256sum }}
+        checksum/nginx-main-config: {{ include "ragflow-management-frontend.nginxMainConfig" . | sha256sum }}
     spec:
       serviceAccountName: {{ include "ragflow-management-frontend.fullname" . }}
       {{- with .Values.global.imagePullSecrets }}
