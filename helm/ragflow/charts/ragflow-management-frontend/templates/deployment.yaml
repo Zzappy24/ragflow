@@ -21,6 +21,7 @@ spec:
         {{- include "ragflow-management-frontend.selectorLabels" . | nindent 8 }}
       annotations:
         checksum/nginx-config: {{ include (print $.Template.BasePath "/configmap-nginx.yaml") . | sha256sum }}
+        checksum/nginx-main-config: {{ include (print $.Template.BasePath "/configmap-nginx-main.yaml") . | sha256sum }}
     spec:
       serviceAccountName: {{ include "ragflow-management-frontend.fullname" . }}
       {{- with .Values.global.imagePullSecrets }}
@@ -120,6 +121,10 @@ spec:
               mountPath: /var/run
             - name: nginx-tmp
               mountPath: /tmp
+            - name: nginx-main-config
+              mountPath: /etc/nginx/nginx.conf
+              subPath: nginx.conf
+              readOnly: true
 
       volumes:
         - name: nginx-template
@@ -135,3 +140,6 @@ spec:
           emptyDir: {}
         - name: nginx-tmp
           emptyDir: {}
+        - name: nginx-main-config
+          configMap:
+            name: {{ include "ragflow-management-frontend.fullname" . }}-nginx-main
