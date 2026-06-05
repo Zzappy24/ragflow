@@ -6,22 +6,4 @@ metadata:
     {{- include "ragflow-management-frontend.labels" . | nindent 4 }}
 data:
   nginx.conf: |
-    worker_processes auto;
-    pid /var/run/nginx.pid;
-
-    events {
-      worker_connections 1024;
-    }
-
-    http {
-      include /etc/nginx/mime.types;
-      default_type application/octet-stream;
-      sendfile on;
-      keepalive_timeout 65;
-      client_max_body_size 32m;
-
-      gzip on;
-      gzip_types text/plain text/css application/javascript application/json application/xml text/xml;
-
-      include /etc/nginx/conf.d/ragflow.conf;
-    }
+    {{- include "ragflow-management-frontend.nginxMainConfig" . | nindent 4 }}

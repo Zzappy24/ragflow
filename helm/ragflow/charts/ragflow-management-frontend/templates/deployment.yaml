@@ -31,6 +31,7 @@ spec:
 
       securityContext:
         {{- include "ragflow.podSecurityContext" . | nindent 8 }}
+        fsGroup: 997
 
       affinity:
         podAntiAffinity:
@@ -104,6 +105,8 @@ spec:
           {{- end }}
 
           securityContext:
+            runAsUser: 997
+            runAsGroup: 997
             allowPrivilegeEscalation: false
             capabilities:
               drop: ["ALL"]
@@ -119,8 +122,6 @@ spec:
               mountPath: /var/cache/nginx
             - name: nginx-run
               mountPath: /var/run
-            - name: nginx-tmp
-              mountPath: /tmp
             - name: nginx-main-config
               mountPath: /etc/nginx/nginx.conf
               subPath: nginx.conf
@@ -137,8 +138,6 @@ spec:
         - name: nginx-cache
           emptyDir: {}
         - name: nginx-run
-          emptyDir: {}
-        - name: nginx-tmp
           emptyDir: {}
         - name: nginx-main-config
           configMap:

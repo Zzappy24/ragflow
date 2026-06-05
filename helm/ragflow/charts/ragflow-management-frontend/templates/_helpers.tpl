@@ -36,9 +36,10 @@ app.kubernetes.io/instance: {{ .Release.Name }}
 {{- define "ragflow-management-frontend.backendServiceName" -}}
 {{- printf "%s-management-backend" .Release.Name -}}
 {{- end -}}
+
 {{- define "ragflow-management-frontend.nginxMainConfig" -}}
 worker_processes auto;
-pid /tmp/nginx.pid;
+pid /var/run/nginx.pid;
 
 events {
   worker_connections 1024;
@@ -50,12 +51,6 @@ http {
   sendfile on;
   keepalive_timeout 65;
   client_max_body_size 32m;
-
-  client_body_temp_path /tmp/client_body;
-  proxy_temp_path /tmp/proxy;
-  fastcgi_temp_path /tmp/fastcgi;
-  uwsgi_temp_path /tmp/uwsgi;
-  scgi_temp_path /tmp/scgi;
 
   gzip on;
   gzip_types text/plain text/css application/javascript application/json application/xml text/xml;
