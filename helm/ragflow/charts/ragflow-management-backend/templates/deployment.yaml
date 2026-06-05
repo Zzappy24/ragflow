@@ -99,6 +99,12 @@ spec:
               valueFrom: { fieldRef: { fieldPath: status.podIP } }
             - name: PYTHONPATH
               value: "/ragflow"
+            - name: RAGFLOW_API_URL
+              value: "http://{{ .Release.Name }}-api.{{ .Release.Namespace }}.svc.cluster.local"
+            - name: RAGFLOW_BASE_URL
+              value: "https://{{ .Values.global.hostname }}"
+            - name: ADMIN_CORS_ORIGINS
+              value: "https://ragflow-management.{{ trimPrefix "ragflow." .Values.global.hostname }}"
 
           resources:
             {{- toYaml .Values.resources | nindent 12 }}
