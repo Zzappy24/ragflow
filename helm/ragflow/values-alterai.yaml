@@ -33,7 +33,7 @@ ragflow-api:
       requiredDuringSchedulingIgnoredDuringExecution:
         nodeSelectorTerms:
           - matchExpressions:
-              - key: node-role.kubernetes.io/gpt
+              - key: nvidia.com/gpu
                 operator: In
                 values:
                   - "true"
