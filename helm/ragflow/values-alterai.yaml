@@ -37,10 +37,14 @@ ragflow-api:
                 operator: In
                 values:
                   - "true"
+
   tolerations:
     - key: node-role
       operator: Equal
       value: gpu
+      effect: NoSchedule
+    - key: nvidia.com/gpu
+      operator: Exists
       effect: NoSchedule
 
 ragflow-task-executor:
