@@ -129,3 +129,11 @@ ragflow-frontend:
     limits:
       cpu: "500m"
       memory: "512Mi"
+
+vllm:
+  chatBaseUrl: "http://vllm-router-service.vllm.svc.cluster.local/v1"
+  embedBaseUrl: "http://vllm-router-service.vllm.svc.cluster.local/v1"
+  rerankBaseUrl: "http://vllm-router-service.vllm.svc.cluster.local/v1"
+  chatModel: "Qwen/Qwen3.6-27B-FP8"
+  embedModel: "Qwen/Qwen3.6-27B-FP8"
+  rerankModel: "Qwen/Qwen3.6-27B-FP8"
