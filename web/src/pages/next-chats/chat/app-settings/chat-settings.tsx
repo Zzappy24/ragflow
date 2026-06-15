@@ -1,12 +1,10 @@
 import { Button } from '@/components/ui/button';
 import { Form } from '@/components/ui/form';
 import { ScrollArea } from '@/components/ui/scroll-area';
-import { Separator } from '@/components/ui/separator';
 import { DatasetMetadata } from '@/constants/chat';
 import { useSetModalState } from '@/hooks/common-hooks';
 import { useFetchChat, useUpdateChat } from '@/hooks/use-chat-request';
 import { useFindLlmByUuid } from '@/hooks/use-llm-request';
-import { useFetchUserInfo } from '@/hooks/use-user-setting-request';
 import { cn } from '@/lib/utils';
 import {
   removeUselessFieldsFromValues,
@@ -21,7 +19,6 @@ import { useTranslation } from 'react-i18next';
 import { useParams } from 'react-router';
 import { z } from 'zod';
 import ChatBasicSetting from './chat-basic-settings';
-import { ChatModelSettings } from './chat-model-settings';
 import { ChatPromptEngine } from './chat-prompt-engine';
 import { SavingButton } from './saving-button';
 import { useChatSettingSchema } from './use-chat-setting-schema';
@@ -29,8 +26,6 @@ import { useChatSettingSchema } from './use-chat-setting-schema';
 type ChatSettingsProps = { hasSingleChatBox: boolean };
 
 export function ChatSettings({ hasSingleChatBox }: ChatSettingsProps) {
-  const { data: userInfo } = useFetchUserInfo();
-  const isWsAdmin = userInfo?.ws_role === 'ws_admin';
   const formSchema = useChatSettingSchema();
   const { data } = useFetchChat();
   const { updateChat, loading } = useUpdateChat();
@@ -198,14 +193,7 @@ export function ChatSettings({ hasSingleChatBox }: ChatSettingsProps) {
                 <ScrollArea viewportClassName="[&>div]:!block">
                   <section className="p-5 space-y-6 overflow-auto flex-1 min-h-0">
                     <ChatBasicSetting></ChatBasicSetting>
-                    <Separator />
                     <ChatPromptEngine></ChatPromptEngine>
-                    {isWsAdmin && (
-                      <>
-                        <Separator />
-                        <ChatModelSettings></ChatModelSettings>
-                      </>
-                    )}
                   </section>
                 </ScrollArea>
 
