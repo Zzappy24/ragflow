@@ -29,26 +29,28 @@ import (
 var rbacPerm = middleware.RequirePermission
 
 type Router struct {
-	authHandler          *handler.AuthHandler
-	userHandler          *handler.UserHandler
-	tenantHandler        *handler.TenantHandler
-	documentHandler      *handler.DocumentHandler
-	datasetsHandler      *handler.DatasetsHandler
-	systemHandler        *handler.SystemHandler
-	knowledgebaseHandler *handler.KnowledgebaseHandler
-	chunkHandler         *handler.ChunkHandler
-	llmHandler           *handler.LLMHandler
-	chatHandler          *handler.ChatHandler
-	chatSessionHandler   *handler.ChatSessionHandler
-	connectorHandler     *handler.ConnectorHandler
-	searchHandler        *handler.SearchHandler
-	fileHandler          *handler.FileHandler
-	memoryHandler        *handler.MemoryHandler
-	mcpHandler           *handler.MCPHandler
-	skillSearchHandler   *handler.SkillSearchHandler
-	providerHandler           *handler.ProviderHandler
-	agentHandler              *handler.AgentHandler
-	relatedQuestionsHandler   *handler.SearchbotHandler
+	authHandler             *handler.AuthHandler
+	userHandler             *handler.UserHandler
+	tenantHandler           *handler.TenantHandler
+	documentHandler         *handler.DocumentHandler
+	datasetsHandler         *handler.DatasetsHandler
+	systemHandler           *handler.SystemHandler
+	knowledgebaseHandler    *handler.KnowledgebaseHandler
+	chunkHandler            *handler.ChunkHandler
+	llmHandler              *handler.LLMHandler
+	chatHandler             *handler.ChatHandler
+	chatSessionHandler      *handler.ChatSessionHandler
+	connectorHandler        *handler.ConnectorHandler
+	searchHandler           *handler.SearchHandler
+	fileHandler             *handler.FileHandler
+	memoryHandler           *handler.MemoryHandler
+	mcpHandler              *handler.MCPHandler
+	skillSearchHandler      *handler.SkillSearchHandler
+	providerHandler         *handler.ProviderHandler
+	agentHandler            *handler.AgentHandler
+	searchBotHandler      *handler.SearchBotHandler
+	difyRetrievalHandler    *handler.DifyRetrievalHandler
+	pluginHandler           *handler.PluginHandler
 }
 
 // NewRouter create router
@@ -72,29 +74,33 @@ func NewRouter(
 	skillSearchHandler *handler.SkillSearchHandler,
 	providerHandler *handler.ProviderHandler,
 	agentHandler *handler.AgentHandler,
-	relatedQuestionsHandler *handler.SearchbotHandler,
+	searchBotHandler *handler.SearchBotHandler,
+	difyRetrievalHandler *handler.DifyRetrievalHandler,
+	pluginHandler *handler.PluginHandler,
 ) *Router {
 	return &Router{
-		authHandler:          authHandler,
-		userHandler:          userHandler,
-		tenantHandler:        tenantHandler,
-		documentHandler:      documentHandler,
-		datasetsHandler:      datasetsHandler,
-		systemHandler:        systemHandler,
-		knowledgebaseHandler: knowledgebaseHandler,
-		chunkHandler:         chunkHandler,
-		llmHandler:           llmHandler,
-		chatHandler:          chatHandler,
-		chatSessionHandler:   chatSessionHandler,
-		connectorHandler:     connectorHandler,
-		searchHandler:        searchHandler,
-		fileHandler:          fileHandler,
-		memoryHandler:        memoryHandler,
-		mcpHandler:           mcpHandler,
-		skillSearchHandler:   skillSearchHandler,
-		providerHandler:      providerHandler,
-		agentHandler:         agentHandler,
-		relatedQuestionsHandler: relatedQuestionsHandler,
+		authHandler:             authHandler,
+		userHandler:             userHandler,
+		tenantHandler:           tenantHandler,
+		documentHandler:         documentHandler,
+		datasetsHandler:         datasetsHandler,
+		systemHandler:           systemHandler,
+		knowledgebaseHandler:    knowledgebaseHandler,
+		chunkHandler:            chunkHandler,
+		llmHandler:              llmHandler,
+		chatHandler:             chatHandler,
+		chatSessionHandler:      chatSessionHandler,
+		connectorHandler:        connectorHandler,
+		searchHandler:           searchHandler,
+		fileHandler:             fileHandler,
+		memoryHandler:           memoryHandler,
+		mcpHandler:              mcpHandler,
+		skillSearchHandler:      skillSearchHandler,
+		providerHandler:         providerHandler,
+		agentHandler:            agentHandler,
+		searchBotHandler:      searchBotHandler,
+		difyRetrievalHandler:    difyRetrievalHandler,
+		pluginHandler:           pluginHandler,
 	}
 }
 
@@ -220,6 +226,8 @@ func (r *Router) Setup(engine *gin.Engine) {
 			{
 				documents.POST("", rbacPerm(common.PermDocumentCreate), r.documentHandler.CreateDocument)
 				documents.GET("", rbacPerm(common.PermDocumentRead), r.documentHandler.ListDocuments)
+				documents.GET("/artifact/:filename", rbacPerm(common.PermDocumentRead), r.documentHandler.GetDocumentArtifact)
+				documents.GET("/:id/preview", rbacPerm(common.PermDocumentRead), r.documentHandler.GetDocumentPreview)
 				documents.GET("/:id", rbacPerm(common.PermDocumentRead), r.documentHandler.GetDocumentByID)
 				documents.PUT("/:id", rbacPerm(common.PermDocumentCreate), r.documentHandler.UpdateDocument)
 				documents.DELETE("/:id", rbacPerm(common.PermDocumentDelete), r.documentHandler.DeleteDocument)
@@ -235,8 +243,10 @@ func (r *Router) Setup(engine *gin.Engine) {
 				chats.GET("/:chat_id/sessions", rbacPerm(common.PermChatRead), r.chatSessionHandler.ListChatSessions)
 			}
 
-			// Searchbot routes
-			v1.POST("/searchbots/related_questions", rbacPerm(common.PermChatUse), r.relatedQuestionsHandler.Handle)
+			// Searchbot routes — upstream renamed relatedQuestionsHandler → searchBotHandler.Handle
+			// and added /retrieval_test on the same handler.
+			v1.POST("/searchbots/related_questions", rbacPerm(common.PermChatUse), r.searchBotHandler.Handle)
+			v1.POST("/searchbots/retrieval_test", rbacPerm(common.PermDatasetRead), r.searchBotHandler.RetrievalTest)
 
 			// Dataset routes — mirrors restful_apis/dataset_api.py.
 			datasets := v1.Group("/datasets")
@@ -248,8 +258,9 @@ func (r *Router) Setup(engine *gin.Engine) {
 				datasets.DELETE("/:dataset_id/graph", rbacPerm(common.PermDatasetDelete), r.datasetsHandler.DeleteKnowledgeGraph)
 				datasets.POST("", rbacPerm(common.PermDatasetCreate), r.datasetsHandler.CreateDataset)
 				datasets.DELETE("", rbacPerm(common.PermDatasetDelete), r.datasetsHandler.DeleteDatasets)
-				// /datasets/search is a retrieval-test endpoint — reads only.
-				datasets.POST("/search", rbacPerm(common.PermDatasetRead), r.chunkHandler.RetrievalTest)
+				// upstream 2026-06-08 renamed chunkHandler.RetrievalTest → datasetsHandler.SearchDatasets
+				// for the /datasets/search endpoint. Still a read-only retrieval test.
+				datasets.POST("/search", rbacPerm(common.PermDatasetRead), r.datasetsHandler.SearchDatasets)
 				datasets.GET("/metadata/flattened", rbacPerm(common.PermDatasetRead), r.datasetsHandler.ListMetadataFlattened)
 
 				// Dataset ingestion logs (read-only).
@@ -263,6 +274,8 @@ func (r *Router) Setup(engine *gin.Engine) {
 
 				// Listing documents within a dataset belongs to the documents scope.
 				datasets.GET("/:dataset_id/documents", rbacPerm(common.PermDocumentRead), r.documentHandler.ListDocuments)
+				// upstream 2026-06-08 added DownloadDocument on the dataset-scoped path.
+				datasets.GET("/:dataset_id/documents/:document_id", rbacPerm(common.PermDocumentRead), r.documentHandler.DownloadDocument)
 				datasets.DELETE("/:dataset_id/documents", rbacPerm(common.PermDocumentDelete), r.documentHandler.DeleteDocuments)
 
 				// Dataset document chunk — single-chunk read + parse + chunk delete.
@@ -335,10 +348,13 @@ func (r *Router) Setup(engine *gin.Engine) {
 				mcp.GET("/servers", rbacPerm(common.PermMCPConfigure), r.mcpHandler.ListMCPServers)
 				mcp.PUT("/servers/:mcp_id", rbacPerm(common.PermMCPConfigure), r.mcpHandler.UpdateMCPServer)
 				mcp.DELETE("/servers/:mcp_id", rbacPerm(common.PermMCPConfigure), r.mcpHandler.DeleteMCPServer)
+				// upstream 2026-06-08 added bulk import + per-server connectivity test (#15281).
+				mcp.POST("/servers/import", rbacPerm(common.PermMCPConfigure), r.mcpHandler.ImportMCPServers)
+				mcp.POST("/servers/:mcp_id/test", rbacPerm(common.PermMCPConfigure), r.mcpHandler.TestMCPServer)
 			}
 
-			// Skills — Go-only feature (no Python equivalent). The whole subtree
-			// is gated by DATASET_* permissions because a skill space behaves as
+			// Skill search routes — Go-only feature (no Python equivalent).
+			// Gated by DATASET_* permissions because a skill space behaves as
 			// a dataset for the user (it indexes content and feeds retrieval).
 			skills := v1.Group("/skills")
 			{
@@ -414,9 +430,20 @@ func (r *Router) Setup(engine *gin.Engine) {
 			agents := v1.Group("/agents")
 			{
 				agents.GET("", rbacPerm(common.PermAgentRead), r.agentHandler.ListAgents)
+				agents.GET("/templates", rbacPerm(common.PermAgentRead), r.agentHandler.ListTemplates)
 				agents.GET("/:agent_id/versions", rbacPerm(common.PermAgentRead), r.agentHandler.ListAgentVersions)
 				agents.GET("/:agent_id/versions/:version_id", rbacPerm(common.PermAgentRead), r.agentHandler.GetAgentVersion)
 				agents.POST("/:agent_id/upload", rbacPerm(common.PermAgentUpdate), r.agentHandler.UploadAgentFile)
+				agents.PUT("/:agent_id/tags", rbacPerm(common.PermAgentUpdate), r.agentHandler.UpdateAgentTags)
+				agents.GET("/:agent_id/sessions", rbacPerm(common.PermChatRead), r.agentHandler.ListAgentSessions)
+				agents.GET("/:agent_id/sessions/:session_id", rbacPerm(common.PermChatRead), r.agentHandler.GetAgentSession)
+				agents.DELETE("/:agent_id/sessions/:session_id", rbacPerm(common.PermChatDelete), r.agentHandler.DeleteAgentSessionItem)
+			}
+
+			// Plugin routes
+			plugin := v1.Group("/plugin")
+			{
+				plugin.GET("/tools", rbacPerm(common.PermChatUse), r.pluginHandler.ListLLMTools)
 			}
 
 			// Connectors — see legacy /v1/connector above for the rationale
@@ -621,6 +648,14 @@ func (r *Router) Setup(engine *gin.Engine) {
 		}
 
 	}
+
+	// Dify retrieval routes
+	dify := authorized.Group("/api/v1/dify")
+	{
+		dify.POST("/retrieval", r.difyRetrievalHandler.Retrieval)
+		dify.GET("/retrieval", r.difyRetrievalHandler.Retrieval)
+	}
+	apiNoAuth.GET("/dify/retrieval/health", r.difyRetrievalHandler.HealthCheck)
 
 	// Handle undefined routes
 	engine.NoRoute(handler.HandleNoRoute)

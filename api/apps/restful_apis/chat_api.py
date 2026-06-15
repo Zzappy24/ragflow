@@ -465,7 +465,7 @@ async def create():
 @manager.route("/chats", methods=["GET"])  # noqa: F821
 @login_required
 @require_permission(Permission.CHAT_READ)
-def list_chats():
+async def list_chats():
     chat_id = request.args.get("id")
     name = request.args.get("name")
     keywords = request.args.get("keywords", "")
@@ -481,8 +481,13 @@ def list_chats():
         items_per_page = validate_rest_api_page_size(int(request.args.get("page_size", 0)))
 
         if owner_ids:
-            chats, total = DialogService.get_by_tenant_ids(
-                owner_ids, active_tenant_id(), 0, 0, orderby, desc, keywords, **exact_filters
+            # CUSTOM B2B SaaS: keep active_tenant_id() (workspace tenant) instead
+            # of current_user.id — upstream's user_id-as-tenant_id assumption
+            # returns 0 rows on workspace tenants. Adopt thread_pool_exec for
+            # the perf win they introduced.
+            chats, total = await thread_pool_exec(
+                DialogService.get_by_tenant_ids,
+                owner_ids, active_tenant_id(), 0, 0, orderby, desc, keywords, **exact_filters,
             )
             chats = [chat for chat in chats if chat["tenant_id"] in owner_ids]
             total = len(chats)
@@ -490,8 +495,10 @@ def list_chats():
                 start = (page_number - 1) * items_per_page
                 chats = chats[start : start + items_per_page]
         else:
-            chats, total = DialogService.get_by_tenant_ids(
-                [], active_tenant_id(), page_number, items_per_page, orderby, desc, keywords, **exact_filters
+            # CUSTOM B2B SaaS: same workspace tenant scoping as the owner_ids branch.
+            chats, total = await thread_pool_exec(
+                DialogService.get_by_tenant_ids,
+                [], active_tenant_id(), page_number, items_per_page, orderby, desc, keywords, **exact_filters,
             )
 
         return get_json_result(
