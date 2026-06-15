@@ -52,6 +52,8 @@ type Router struct {
 	difyRetrievalHandler *handler.DifyRetrievalHandler
 	pluginHandler        *handler.PluginHandler
 	modelHandler         *handler.ModelHandler
+	fileCommitHandler    *handler.FileCommitHandler
+	adminRuntimeHandler  *handler.AdminRuntimeHandler
 }
 
 // NewRouter create router
@@ -79,6 +81,8 @@ func NewRouter(
 	difyRetrievalHandler *handler.DifyRetrievalHandler,
 	pluginHandler *handler.PluginHandler,
 	modelHandler *handler.ModelHandler,
+	fileCommitHandler *handler.FileCommitHandler,
+	adminRuntimeHandler *handler.AdminRuntimeHandler,
 ) *Router {
 	return &Router{
 		authHandler:          authHandler,
@@ -104,6 +108,8 @@ func NewRouter(
 		difyRetrievalHandler: difyRetrievalHandler,
 		pluginHandler:        pluginHandler,
 		modelHandler:         modelHandler,
+		fileCommitHandler:    fileCommitHandler,
+		adminRuntimeHandler:  adminRuntimeHandler,
 	}
 }
 
@@ -162,6 +168,14 @@ func (r *Router) Setup(engine *gin.Engine) {
 		// Google redirects here after Gmail / Google Drive web OAuth completes.
 		apiNoAuth.GET("/connectors/gmail/oauth/web/callback", r.connectorHandler.GmailWebOAuthCallback)
 		apiNoAuth.GET("/connectors/google-drive/oauth/web/callback", r.connectorHandler.GoogleDriveWebOAuthCallback)
+		// Forgot-password flow (fixes #15282).
+		// Routes are intentionally registered before any auth middleware:
+		// a user who has forgotten their password is, by definition,
+		// unauthenticated.
+		apiNoAuth.POST("/auth/password/forgot/captcha", r.userHandler.ForgotCaptcha)
+		apiNoAuth.POST("/auth/password/forgot/otp", r.userHandler.ForgotSendOTP)
+		apiNoAuth.POST("/auth/password/forgot/otp/verify", r.userHandler.ForgotVerifyOTP)
+		apiNoAuth.POST("/auth/password/reset", r.userHandler.ForgotResetPassword)
 	}
 
 	// Protected routes
@@ -284,10 +298,16 @@ func (r *Router) Setup(engine *gin.Engine) {
 				datasets.GET("/:dataset_id/documents/:document_id", rbacPerm(common.PermDocumentRead), r.documentHandler.DownloadDocument)
 				datasets.DELETE("/:dataset_id/documents", rbacPerm(common.PermDocumentDelete), r.documentHandler.DeleteDocuments)
 
-				// Dataset document chunk — single-chunk read + parse + chunk delete.
+				// Dataset document chunk — single-chunk read + chunk delete.
 				datasets.GET("/:dataset_id/documents/:document_id/chunks/:chunk_id", rbacPerm(common.PermDocumentRead), r.chunkHandler.Get)
-				datasets.POST("/:dataset_id/documents/parse", rbacPerm(common.PermDocumentCreate), r.documentHandler.ParseDocuments)
-				datasets.POST("/:dataset_id/documents/stop", rbacPerm(common.PermDocumentDelete), r.documentHandler.StopParseDocuments)
+				// upstream 2026-06-15 replaced ParseDocuments / StopParseDocuments with the
+				// ingestion task system (StartIngestionTask + ListIngestionTasks +
+				// StopIngestionTasks + RemoveIngestionTasks). POST /documents/parse is
+				// kept as the entry point but now routes to StartIngestionTask.
+				datasets.POST("/:dataset_id/documents/parse", rbacPerm(common.PermDocumentCreate), r.documentHandler.StartIngestionTask)
+				datasets.GET("/ingestion/tasks", rbacPerm(common.PermDocumentRead), r.documentHandler.ListIngestionTasks)
+				datasets.PUT("/ingestion/tasks", rbacPerm(common.PermDocumentDelete), r.documentHandler.StopIngestionTasks)
+				datasets.DELETE("/ingestion/tasks", rbacPerm(common.PermDocumentDelete), r.documentHandler.RemoveIngestionTasks)
 				datasets.DELETE("/:dataset_id/documents/:document_id/chunks", rbacPerm(common.PermDocumentDelete), r.chunkHandler.RemoveChunks)
 				// upstream 2026-06-09 added per-document metadata config PUT.
 				datasets.PUT("/:dataset_id/documents/:document_id/metadata/config", rbacPerm(common.PermDocumentCreate), r.datasetsHandler.UpdateDocumentMetadataConfig)
@@ -313,9 +333,53 @@ func (r *Router) Setup(engine *gin.Engine) {
 				file.GET("", rbacPerm(common.PermDocumentRead), r.fileHandler.ListFiles)
 				file.DELETE("", rbacPerm(common.PermDocumentDelete), r.fileHandler.DeleteFiles)
 				file.POST("/move", rbacPerm(common.PermDocumentCreate), r.fileHandler.MoveFiles)
+				// upstream 2026-06-12 added file → dataset linking + per-file version history (git-like file API).
+				file.POST("/link-to-datasets", rbacPerm(common.PermDocumentCreate), r.fileHandler.LinkToDatasets)
 				file.GET("/:id/ancestors", rbacPerm(common.PermDocumentRead), r.fileHandler.GetFileAncestors)
 				file.GET("/:id/parent", rbacPerm(common.PermDocumentRead), r.fileHandler.GetParentFolder)
 				file.GET("/:id", rbacPerm(common.PermDocumentRead), r.fileHandler.Download)
+				file.GET("/:id/versions", rbacPerm(common.PermDocumentRead), r.fileCommitHandler.GetFileVersionHistory)
+			}
+
+			// upstream 2026-06-11 added git-like file commit API (#15978). Three URL shapes
+			// share the same handler: /folders/:folder_id, /workspace/:folder_id, and
+			// /datasets/:dataset_id (resolved to folder_id via middleware). RBAC: read with
+			// DocumentRead, write with DocumentCreate.
+			commitFolders := v1.Group("/folders")
+			{
+				commitFolders.POST("/:folder_id/commits", rbacPerm(common.PermDocumentCreate), r.fileCommitHandler.CreateCommit)
+				commitFolders.GET("/:folder_id/commits", rbacPerm(common.PermDocumentRead), r.fileCommitHandler.ListCommits)
+				commitFolders.GET("/:folder_id/commits/diff", rbacPerm(common.PermDocumentRead), r.fileCommitHandler.DiffCommits)
+				commitFolders.GET("/:folder_id/commits/:commit_id", rbacPerm(common.PermDocumentRead), r.fileCommitHandler.GetCommit)
+				commitFolders.GET("/:folder_id/commits/:commit_id/files", rbacPerm(common.PermDocumentRead), r.fileCommitHandler.ListCommitFiles)
+				commitFolders.GET("/:folder_id/commits/:commit_id/tree", rbacPerm(common.PermDocumentRead), r.fileCommitHandler.GetCommitTree)
+				commitFolders.GET("/:folder_id/commits/:commit_id/files/:file_id/content", rbacPerm(common.PermDocumentRead), r.fileCommitHandler.GetCommitFileContent)
+				commitFolders.GET("/:folder_id/changes", rbacPerm(common.PermDocumentRead), r.fileCommitHandler.GetUncommittedChanges)
+			}
+
+			commitWorkspace := v1.Group("/workspace")
+			{
+				commitWorkspace.POST("/:folder_id/commits", rbacPerm(common.PermDocumentCreate), r.fileCommitHandler.CreateCommit)
+				commitWorkspace.GET("/:folder_id/commits", rbacPerm(common.PermDocumentRead), r.fileCommitHandler.ListCommits)
+				commitWorkspace.GET("/:folder_id/commits/diff", rbacPerm(common.PermDocumentRead), r.fileCommitHandler.DiffCommits)
+				commitWorkspace.GET("/:folder_id/commits/:commit_id", rbacPerm(common.PermDocumentRead), r.fileCommitHandler.GetCommit)
+				commitWorkspace.GET("/:folder_id/commits/:commit_id/files", rbacPerm(common.PermDocumentRead), r.fileCommitHandler.ListCommitFiles)
+				commitWorkspace.GET("/:folder_id/commits/:commit_id/tree", rbacPerm(common.PermDocumentRead), r.fileCommitHandler.GetCommitTree)
+				commitWorkspace.GET("/:folder_id/commits/:commit_id/files/:file_id/content", rbacPerm(common.PermDocumentRead), r.fileCommitHandler.GetCommitFileContent)
+				commitWorkspace.GET("/:folder_id/changes", rbacPerm(common.PermDocumentRead), r.fileCommitHandler.GetUncommittedChanges)
+			}
+
+			commitDatasets := v1.Group("/datasets/:dataset_id")
+			commitDatasets.Use(handler.CommitFolderResolver(r.fileCommitHandler, "datasets", "dataset_id"))
+			{
+				commitDatasets.POST("/commits", rbacPerm(common.PermDocumentCreate), r.fileCommitHandler.CreateCommit)
+				commitDatasets.GET("/commits", rbacPerm(common.PermDocumentRead), r.fileCommitHandler.ListCommits)
+				commitDatasets.GET("/commits/diff", rbacPerm(common.PermDocumentRead), r.fileCommitHandler.DiffCommits)
+				commitDatasets.GET("/commits/:commit_id", rbacPerm(common.PermDocumentRead), r.fileCommitHandler.GetCommit)
+				commitDatasets.GET("/commits/:commit_id/files", rbacPerm(common.PermDocumentRead), r.fileCommitHandler.ListCommitFiles)
+				commitDatasets.GET("/commits/:commit_id/tree", rbacPerm(common.PermDocumentRead), r.fileCommitHandler.GetCommitTree)
+				commitDatasets.GET("/commits/:commit_id/files/:file_id/content", rbacPerm(common.PermDocumentRead), r.fileCommitHandler.GetCommitFileContent)
+				commitDatasets.GET("/changes", rbacPerm(common.PermDocumentRead), r.fileCommitHandler.GetUncommittedChanges)
 			}
 
 			// Author-scoped document listing.
@@ -337,16 +401,11 @@ func (r *Router) Setup(engine *gin.Engine) {
 				memory.GET("/:memory_id", rbacPerm(common.PermAgentRead), r.memoryHandler.GetMemoryMessages)
 			}
 
-			// TODO: Message routes - Implementation pending - depends on CanvasService, TaskService and embedding engine
-			// message := v1.Group("/messages")
-			// {
-			// 	message.POST("", r.memoryHandler.AddMessage)
-			// 	message.DELETE("/:memory_id/:message_id", r.memoryHandler.ForgetMessage)
-			// 	message.PUT("/:memory_id/:message_id", r.memoryHandler.UpdateMessage)
-			// 	message.GET("/search", r.memoryHandler.SearchMessage)
-			// 	message.GET("", r.memoryHandler.GetMessages)
-			// 	message.GET("/:memory_id/:message_id/content", r.memoryHandler.GetMessageContent)
-			// }
+			// Message routes
+			message := v1.Group("/messages")
+			{
+				message.DELETE("/:memory_message", r.memoryHandler.ForgetMessage)
+			}
 
 			// MCP servers — mirrors restful_apis/mcp_api.py which gates every
 			// route with @require_permission(Permission.MCP_CONFIGURE).
@@ -403,7 +462,13 @@ func (r *Router) Setup(engine *gin.Engine) {
 				provider.GET("/:provider_name/instances/:instance_name", rbacPerm(common.PermChatUse), r.providerHandler.ShowProviderInstance)
 				provider.GET("/:provider_name/instances/:instance_name/balance", rbacPerm(common.PermLLMConfigure), r.providerHandler.ShowInstanceBalance)
 				provider.GET("/:provider_name/instances/:instance_name/connection", rbacPerm(common.PermLLMConfigure), r.providerHandler.CheckInstanceConnection)
-				provider.GET("/:provider_name/connection", rbacPerm(common.PermLLMConfigure), r.providerHandler.CheckConnection)
+				// upstream 2026-06-13 flipped /providers/:name/connection from GET to POST
+				// to match the Python route (api/apps/restful_apis/provider_api.py:359 + the
+				// web front-end posts {api_key, base_url, region, model_info} via
+				// web/src/services/llm-service.ts:45-48 method:'post'). The Go handler body
+				// was already POST-shaped (ShouldBindJSON against CheckConnectionRequest);
+				// the only missing piece was the routing method.
+				provider.POST("/:provider_name/connection", rbacPerm(common.PermLLMConfigure), r.providerHandler.CheckConnection)
 				provider.GET("/:provider_name/instances/:instance_name/tasks", rbacPerm(common.PermLLMConfigure), r.providerHandler.ListTasks)
 				provider.GET("/:provider_name/instances/:instance_name/tasks/:task_id", rbacPerm(common.PermLLMConfigure), r.providerHandler.ShowTask)
 				provider.PUT("/:provider_name/instances/:instance_name", rbacPerm(common.PermLLMConfigure), r.providerHandler.AlterProviderInstance)
@@ -430,8 +495,14 @@ func (r *Router) Setup(engine *gin.Engine) {
 			// (the chat picker needs it); writing is LLM_CONFIGURE (ws_admin).
 			model := v1.Group("/models")
 			{
-				model.GET("/", rbacPerm(common.PermChatUse), r.tenantHandler.GetModels)
+				// upstream 2026-06-13: GET /models now returns tenant added models
+				// via providerHandler.ListTenantAddedModels (mirrors Python
+				// models_api_service.list_tenant_added_models). The /default
+				// endpoints back the agent page's useFetchDefaultModels hook.
+				model.GET("/", rbacPerm(common.PermChatUse), r.providerHandler.ListTenantAddedModels)
 				model.PATCH("/", rbacPerm(common.PermLLMConfigure), r.tenantHandler.SetModels)
+				model.GET("/default", rbacPerm(common.PermChatUse), r.tenantHandler.GetDefaultModels)
+				model.PATCH("/default", rbacPerm(common.PermLLMConfigure), r.tenantHandler.SetDefaultModels)
 			}
 
 			// upstream 2026-06-09 added a global /all-models listing for the unified
@@ -444,20 +515,38 @@ func (r *Router) Setup(engine *gin.Engine) {
 			// Agent routes — mirror Python's agent_api.py (PermAgentRead for read).
 			agents := v1.Group("/agents")
 			{
+				// CUSTOM B2B SaaS: don't use RegisterAgentRoutes (helper added in
+				// upstream 2026-06-15 #15952) because it applies no rbacPerm — would
+				// open every agent endpoint to any authenticated user. Re-declare
+				// explicitly with the right perm per route. New routes from #15952:
+				// /tags, POST/PUT/DELETE on /:canvas_id, /run, /publish, versions DELETE,
+				// sessions POST/DELETE.
 				agents.GET("", rbacPerm(common.PermAgentRead), r.agentHandler.ListAgents)
-				// upstream 2026-06-09 added /prompts + /test_db_connection.
-				agents.GET("/prompts", rbacPerm(common.PermAgentRead), r.agentHandler.GetPrompts)
-				agents.GET("/templates", rbacPerm(common.PermAgentRead), r.agentHandler.ListTemplates)
+				agents.POST("", rbacPerm(common.PermAgentCreate), r.agentHandler.CreateAgent)
+				agents.GET("/templates", rbacPerm(common.PermAgentRead), r.agentHandler.ListAgentTemplates)
+				agents.GET("/prompts", rbacPerm(common.PermAgentRead), r.agentHandler.Prompts)
+				agents.GET("/tags", rbacPerm(common.PermAgentRead), r.agentHandler.ListAgentTags)
 				agents.POST("/test_db_connection", rbacPerm(common.PermAgentUpdate), r.agentHandler.TestDBConnection)
-				agents.GET("/:agent_id/versions", rbacPerm(common.PermAgentRead), r.agentHandler.ListAgentVersions)
-				agents.GET("/:agent_id/versions/:version_id", rbacPerm(common.PermAgentRead), r.agentHandler.GetAgentVersion)
-				agents.POST("/:agent_id/upload", rbacPerm(common.PermAgentUpdate), r.agentHandler.UploadAgentFile)
-				agents.PUT("/:agent_id/tags", rbacPerm(common.PermAgentUpdate), r.agentHandler.UpdateAgentTags)
-				agents.GET("/:agent_id/sessions", rbacPerm(common.PermChatRead), r.agentHandler.ListAgentSessions)
-				agents.GET("/:agent_id/sessions/:session_id", rbacPerm(common.PermChatRead), r.agentHandler.GetAgentSession)
-				agents.DELETE("/:agent_id/sessions/:session_id", rbacPerm(common.PermChatDelete), r.agentHandler.DeleteAgentSessionItem)
-				// upstream 2026-06-09 added DELETE all sessions of an agent.
-				agents.DELETE("/:agent_id/sessions", rbacPerm(common.PermChatDelete), r.agentHandler.DeleteAgentSessions)
+				// Canvas-level CRUD (upstream #15952).
+				agents.GET("/:canvas_id", rbacPerm(common.PermAgentRead), r.agentHandler.GetAgent)
+				agents.PUT("/:canvas_id", rbacPerm(common.PermAgentUpdate), r.agentHandler.UpdateAgent)
+				agents.DELETE("/:canvas_id", rbacPerm(common.PermAgentDelete), r.agentHandler.DeleteAgent)
+				agents.POST("/:canvas_id/run", rbacPerm(common.PermChatUse), r.agentHandler.RunAgent)
+				agents.DELETE("/:canvas_id/run", rbacPerm(common.PermChatUse), r.agentHandler.CancelAgent)
+				agents.POST("/:canvas_id/publish", rbacPerm(common.PermAgentUpdate), r.agentHandler.PublishAgent)
+				// upstream 2026-06-15 removed agentHandler.UploadAgentFile entirely as part of #15952.
+				// Frontend now uses the generic /files upload then attaches the file via canvas update.
+				agents.PUT("/:canvas_id/tags", rbacPerm(common.PermAgentUpdate), r.agentHandler.UpdateAgentTags)
+				// Versions.
+				agents.GET("/:canvas_id/versions", rbacPerm(common.PermAgentRead), r.agentHandler.ListVersions)
+				agents.GET("/:canvas_id/versions/:version_id", rbacPerm(common.PermAgentRead), r.agentHandler.GetVersion)
+				agents.DELETE("/:canvas_id/versions/:version_id", rbacPerm(common.PermAgentDelete), r.agentHandler.DeleteVersion)
+				// Sessions.
+				agents.GET("/:canvas_id/sessions", rbacPerm(common.PermChatRead), r.agentHandler.ListAgentSessions)
+				agents.POST("/:canvas_id/sessions", rbacPerm(common.PermChatUse), r.agentHandler.CreateAgentSession)
+				agents.GET("/:canvas_id/sessions/:session_id", rbacPerm(common.PermChatRead), r.agentHandler.GetAgentSession)
+				agents.DELETE("/:canvas_id/sessions", rbacPerm(common.PermChatDelete), r.agentHandler.DeleteAgentSession)
+				agents.DELETE("/:canvas_id/sessions/:session_id", rbacPerm(common.PermChatDelete), r.agentHandler.DeleteAgentSession)
 			}
 
 			// Plugin routes
@@ -465,6 +554,15 @@ func (r *Router) Setup(engine *gin.Engine) {
 			{
 				plugin.GET("/tools", rbacPerm(common.PermChatUse), r.pluginHandler.ListLLMTools)
 			}
+
+			// Admin routes — Phase 6 per-tenant canvas runtime override.
+			// RegisterAdminRuntimeRoutes lives in admin_routes.go; a nil
+			// handler is tolerated and yields a no-op registration.
+			// upstream 2026-06-15 added this. We don't gate it with rbacPerm at the
+			// group level — the helper itself decides; per-route audit needed at
+			// next pass if it gets used by our admin panel.
+			admin := v1.Group("/admin")
+			RegisterAdminRuntimeRoutes(admin, r.adminRuntimeHandler)
 
 			// Connectors — see legacy /v1/connector above for the rationale
 			// (DATASOURCE_CONFIGURE = ws_admin only because credentials live here).

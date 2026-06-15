@@ -39,6 +39,26 @@ from api.db.services.tenant_model_service import TenantModelService
 
 logger = logging.getLogger(__name__)
 
+# Mirror upstream `add_model_to_instance` convention: tenant_model.model_name
+# holds the bare model name (e.g. "gpt-oss-120b"), NOT the legacy
+# `tenant_llm.llm_name` form that appends a factory suffix ("___OpenAI-API",
+# "___VLLM", …) — the suffix is a tenant_llm-only quirk that the chat
+# dropdown strips and the new lookup path (get_model_config_from_provider_
+# instance) doesn't expect.
+_FACTORY_SUFFIX = {
+    "OpenAI-API-Compatible": "___OpenAI-API",
+    "VLLM": "___VLLM",
+    "LocalAI": "___LocalAI",
+    "HuggingFace": "___HuggingFace",
+}
+
+
+def _bare_model_name(factory: str, llm_name: str) -> str:
+    suffix = _FACTORY_SUFFIX.get(factory, "")
+    if suffix and llm_name.endswith(suffix):
+        return llm_name[: -len(suffix)]
+    return llm_name
+
 
 def _gen_id() -> str:
     return uuid.uuid1().hex
@@ -139,11 +159,15 @@ def sync_tenant_llm_to_new_tables(tenant_id: str, llm_factory: str | None = None
         instance = _ensure_instance(provider.id, api_key, extra_json)
 
         # Active/inactive: tenant_llm.status == "1" → active, else inactive.
+        # The model_name written here is the BARE name (suffix stripped) to
+        # match upstream's add_model_to_instance convention. tenant_llm keeps
+        # the suffixed form for legacy compat (get_api_key knows the fallback).
         desired_model_keys = set()
         for row in rows:
             status = "active" if (row.status or "1") == "1" else "inactive"
-            _upsert_model(provider.id, instance.id, row.llm_name, row.model_type, status)
-            desired_model_keys.add((row.llm_name, row.model_type))
+            bare_name = _bare_model_name(factory, row.llm_name)
+            _upsert_model(provider.id, instance.id, bare_name, row.model_type, status)
+            desired_model_keys.add((bare_name, row.model_type))
 
         # Prune tenant_model rows that no longer exist in tenant_llm for
         # this (provider, instance). Otherwise deleted-from-admin models

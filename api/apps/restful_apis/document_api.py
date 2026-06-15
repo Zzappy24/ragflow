@@ -43,6 +43,7 @@ from api.db.services.task_service import TaskService, cancel_all_task_of
 from api.utils.api_utils import construct_json_result, get_data_error_result, get_error_data_result, get_result, get_json_result, \
     server_error_response, add_tenant_id_to_kwargs, get_request_json, get_error_argument_result, check_duplicate_ids
 from api.utils.pagination_utils import validate_rest_api_page_size
+from api.utils.tenant_context import maybe_active_tenant_id
 from api.utils.validation_utils import (
     UpdateDocumentReq, format_validation_error_message, validate_and_parse_json_request, DeleteDocumentReq,
 )
@@ -1700,7 +1701,17 @@ async def stop_parse_documents(tenant_id, dataset_id):
                     continue
 
                 cancel_all_task_of(doc_id)
-                DocumentService.update_by_id(doc_id, {"run": str(TaskStatus.CANCEL.value)})
+                DocumentService.update_by_id(
+                    doc_id,
+                    {
+                        "run": str(TaskStatus.CANCEL.value),
+                        "progress": 0,
+                        "chunk_num": 0,
+                    },
+                )
+                index_name = search.index_name(tenant_id)
+                if settings.docStoreConn.index_exist(index_name, doc.kb_id):
+                    settings.docStoreConn.delete({"doc_id": doc.id}, index_name, doc.kb_id)
                 success_count += 1
 
             result = {"success_count": success_count}
@@ -1998,7 +2009,13 @@ async def get(doc_id):
     enumeration.
     """
     try:
-        if not DocumentService.accessible(doc_id, current_user.id):
+        # CUSTOM B2B SaaS — use workspace tenant when present so members of a
+        # workspace can read docs owned by the workspace tenant (kb.permission
+        # is often "me" on docs created by the workspace owner; upstream's
+        # accessible(user_id) short-circuits to False in that case). Fall back
+        # to current_user.id for legacy/no-workspace requests.
+        tenant_or_user_id = maybe_active_tenant_id() or current_user.id
+        if not DocumentService.accessible(doc_id, tenant_or_user_id):
             return get_data_error_result(message="Document not found!")
 
         e, doc = DocumentService.get_by_id(doc_id)
