@@ -1462,8 +1462,12 @@ async def agent_chat_completion(tenant_id, agent_id=None):
             "id": session_id,
             "dialog_id": cvs.id,
             "user_id": user_id,
+            # CUSTOM B2B SaaS: session_owner_id captures the workspace user
+            # (resolved via X-Workspace-Id). Upstream's user_id is the
+            # authenticated principal which for API-key callers is the
+            # workspace synthetic — wrong for audit / retrieval scoping.
             "exp_user_id": session_owner_id,
-            "name": req.get("name", ""),
+            "name": req.get("name") or (query[:250] if query else "") or "",
             "message": [
                 {
                     "role": "user",

@@ -29,28 +29,29 @@ import (
 var rbacPerm = middleware.RequirePermission
 
 type Router struct {
-	authHandler             *handler.AuthHandler
-	userHandler             *handler.UserHandler
-	tenantHandler           *handler.TenantHandler
-	documentHandler         *handler.DocumentHandler
-	datasetsHandler         *handler.DatasetsHandler
-	systemHandler           *handler.SystemHandler
-	knowledgebaseHandler    *handler.KnowledgebaseHandler
-	chunkHandler            *handler.ChunkHandler
-	llmHandler              *handler.LLMHandler
-	chatHandler             *handler.ChatHandler
-	chatSessionHandler      *handler.ChatSessionHandler
-	connectorHandler        *handler.ConnectorHandler
-	searchHandler           *handler.SearchHandler
-	fileHandler             *handler.FileHandler
-	memoryHandler           *handler.MemoryHandler
-	mcpHandler              *handler.MCPHandler
-	skillSearchHandler      *handler.SkillSearchHandler
-	providerHandler         *handler.ProviderHandler
-	agentHandler            *handler.AgentHandler
-	searchBotHandler      *handler.SearchBotHandler
-	difyRetrievalHandler    *handler.DifyRetrievalHandler
-	pluginHandler           *handler.PluginHandler
+	authHandler          *handler.AuthHandler
+	userHandler          *handler.UserHandler
+	tenantHandler        *handler.TenantHandler
+	documentHandler      *handler.DocumentHandler
+	datasetsHandler      *handler.DatasetsHandler
+	systemHandler        *handler.SystemHandler
+	knowledgebaseHandler *handler.KnowledgebaseHandler
+	chunkHandler         *handler.ChunkHandler
+	llmHandler           *handler.LLMHandler
+	chatHandler          *handler.ChatHandler
+	chatSessionHandler   *handler.ChatSessionHandler
+	connectorHandler     *handler.ConnectorHandler
+	searchHandler        *handler.SearchHandler
+	fileHandler          *handler.FileHandler
+	memoryHandler        *handler.MemoryHandler
+	mcpHandler           *handler.MCPHandler
+	skillSearchHandler   *handler.SkillSearchHandler
+	providerHandler      *handler.ProviderHandler
+	agentHandler         *handler.AgentHandler
+	searchBotHandler     *handler.SearchBotHandler
+	difyRetrievalHandler *handler.DifyRetrievalHandler
+	pluginHandler        *handler.PluginHandler
+	modelHandler         *handler.ModelHandler
 }
 
 // NewRouter create router
@@ -77,30 +78,32 @@ func NewRouter(
 	searchBotHandler *handler.SearchBotHandler,
 	difyRetrievalHandler *handler.DifyRetrievalHandler,
 	pluginHandler *handler.PluginHandler,
+	modelHandler *handler.ModelHandler,
 ) *Router {
 	return &Router{
-		authHandler:             authHandler,
-		userHandler:             userHandler,
-		tenantHandler:           tenantHandler,
-		documentHandler:         documentHandler,
-		datasetsHandler:         datasetsHandler,
-		systemHandler:           systemHandler,
-		knowledgebaseHandler:    knowledgebaseHandler,
-		chunkHandler:            chunkHandler,
-		llmHandler:              llmHandler,
-		chatHandler:             chatHandler,
-		chatSessionHandler:      chatSessionHandler,
-		connectorHandler:        connectorHandler,
-		searchHandler:           searchHandler,
-		fileHandler:             fileHandler,
-		memoryHandler:           memoryHandler,
-		mcpHandler:              mcpHandler,
-		skillSearchHandler:      skillSearchHandler,
-		providerHandler:         providerHandler,
-		agentHandler:            agentHandler,
-		searchBotHandler:      searchBotHandler,
-		difyRetrievalHandler:    difyRetrievalHandler,
-		pluginHandler:           pluginHandler,
+		authHandler:          authHandler,
+		userHandler:          userHandler,
+		tenantHandler:        tenantHandler,
+		documentHandler:      documentHandler,
+		datasetsHandler:      datasetsHandler,
+		systemHandler:        systemHandler,
+		knowledgebaseHandler: knowledgebaseHandler,
+		chunkHandler:         chunkHandler,
+		llmHandler:           llmHandler,
+		chatHandler:          chatHandler,
+		chatSessionHandler:   chatSessionHandler,
+		connectorHandler:     connectorHandler,
+		searchHandler:        searchHandler,
+		fileHandler:          fileHandler,
+		memoryHandler:        memoryHandler,
+		mcpHandler:           mcpHandler,
+		skillSearchHandler:   skillSearchHandler,
+		providerHandler:      providerHandler,
+		agentHandler:         agentHandler,
+		searchBotHandler:     searchBotHandler,
+		difyRetrievalHandler: difyRetrievalHandler,
+		pluginHandler:        pluginHandler,
+		modelHandler:         modelHandler,
 	}
 }
 
@@ -244,9 +247,10 @@ func (r *Router) Setup(engine *gin.Engine) {
 			}
 
 			// Searchbot routes — upstream renamed relatedQuestionsHandler → searchBotHandler.Handle
-			// and added /retrieval_test on the same handler.
+			// and added /retrieval_test + /ask on the same handler.
 			v1.POST("/searchbots/related_questions", rbacPerm(common.PermChatUse), r.searchBotHandler.Handle)
 			v1.POST("/searchbots/retrieval_test", rbacPerm(common.PermDatasetRead), r.searchBotHandler.RetrievalTest)
+			v1.POST("/searchbots/ask", rbacPerm(common.PermChatUse), r.searchBotHandler.Ask)
 
 			// Dataset routes — mirrors restful_apis/dataset_api.py.
 			datasets := v1.Group("/datasets")
@@ -262,6 +266,8 @@ func (r *Router) Setup(engine *gin.Engine) {
 				// for the /datasets/search endpoint. Still a read-only retrieval test.
 				datasets.POST("/search", rbacPerm(common.PermDatasetRead), r.datasetsHandler.SearchDatasets)
 				datasets.GET("/metadata/flattened", rbacPerm(common.PermDatasetRead), r.datasetsHandler.ListMetadataFlattened)
+				// upstream 2026-06-09 added dataset-scoped metadata summary endpoint.
+				datasets.GET("/:dataset_id/metadata/summary", rbacPerm(common.PermDatasetRead), r.documentHandler.MetadataSummaryByDataset)
 
 				// Dataset ingestion logs (read-only).
 				datasets.GET("/:dataset_id/ingestions/summary", rbacPerm(common.PermDatasetRead), r.datasetsHandler.GetIngestionSummary)
@@ -283,6 +289,8 @@ func (r *Router) Setup(engine *gin.Engine) {
 				datasets.POST("/:dataset_id/documents/parse", rbacPerm(common.PermDocumentCreate), r.documentHandler.ParseDocuments)
 				datasets.POST("/:dataset_id/documents/stop", rbacPerm(common.PermDocumentDelete), r.documentHandler.StopParseDocuments)
 				datasets.DELETE("/:dataset_id/documents/:document_id/chunks", rbacPerm(common.PermDocumentDelete), r.chunkHandler.RemoveChunks)
+				// upstream 2026-06-09 added per-document metadata config PUT.
+				datasets.PUT("/:dataset_id/documents/:document_id/metadata/config", rbacPerm(common.PermDocumentCreate), r.datasetsHandler.UpdateDocumentMetadataConfig)
 			}
 
 			// Search applications — mirrors restful_apis/search_api.py exactly.
@@ -426,11 +434,21 @@ func (r *Router) Setup(engine *gin.Engine) {
 				model.PATCH("/", rbacPerm(common.PermLLMConfigure), r.tenantHandler.SetModels)
 			}
 
+			// upstream 2026-06-09 added a global /all-models listing for the unified
+			// model-provider modal. Read-only listing, gated by chat_use.
+			allModels := v1.Group("/all-models")
+			{
+				allModels.GET("", rbacPerm(common.PermChatUse), r.modelHandler.ListAllModels)
+			}
+
 			// Agent routes — mirror Python's agent_api.py (PermAgentRead for read).
 			agents := v1.Group("/agents")
 			{
 				agents.GET("", rbacPerm(common.PermAgentRead), r.agentHandler.ListAgents)
+				// upstream 2026-06-09 added /prompts + /test_db_connection.
+				agents.GET("/prompts", rbacPerm(common.PermAgentRead), r.agentHandler.GetPrompts)
 				agents.GET("/templates", rbacPerm(common.PermAgentRead), r.agentHandler.ListTemplates)
+				agents.POST("/test_db_connection", rbacPerm(common.PermAgentUpdate), r.agentHandler.TestDBConnection)
 				agents.GET("/:agent_id/versions", rbacPerm(common.PermAgentRead), r.agentHandler.ListAgentVersions)
 				agents.GET("/:agent_id/versions/:version_id", rbacPerm(common.PermAgentRead), r.agentHandler.GetAgentVersion)
 				agents.POST("/:agent_id/upload", rbacPerm(common.PermAgentUpdate), r.agentHandler.UploadAgentFile)
@@ -438,6 +456,8 @@ func (r *Router) Setup(engine *gin.Engine) {
 				agents.GET("/:agent_id/sessions", rbacPerm(common.PermChatRead), r.agentHandler.ListAgentSessions)
 				agents.GET("/:agent_id/sessions/:session_id", rbacPerm(common.PermChatRead), r.agentHandler.GetAgentSession)
 				agents.DELETE("/:agent_id/sessions/:session_id", rbacPerm(common.PermChatDelete), r.agentHandler.DeleteAgentSessionItem)
+				// upstream 2026-06-09 added DELETE all sessions of an agent.
+				agents.DELETE("/:agent_id/sessions", rbacPerm(common.PermChatDelete), r.agentHandler.DeleteAgentSessions)
 			}
 
 			// Plugin routes
