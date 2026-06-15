@@ -13,6 +13,7 @@ import { Routes } from '@/routes';
 import { TFunction } from 'i18next';
 import {
   LucideKeyRound,
+  LucideLogOut,
   LucideServer,
   LucideUnplug,
   LucideUser,
@@ -44,7 +45,9 @@ const menuItems = (t: TFunction, isAdmin: boolean) => {
   ];
   // CUSTOM B2B SaaS — Model configuration is managed exclusively via the admin
   // panel; the native Model route is intentionally excluded for all roles.
-  // See CLAUDE.md "Custom B2B SaaS Multi-Tenant Layer" for merge warnings.
+  // Same for Team and the chat-channels feature (#15850) — surfaced via
+  // admin panel when we wire it up. See CLAUDE.md "Custom B2B SaaS Multi-Tenant
+  // Layer" for merge warnings.
   if (isAdmin) {
     items.push(
       {
@@ -84,48 +87,43 @@ export function SideBar() {
   const { logout } = useLogout();
 
   return (
-    <aside className="w-[303px] bg-bg-base flex flex-col">
+    <aside className="shrink-0 w-16 md:w-[303px] bg-bg-base flex flex-col overflow-hidden">
       <header>
-        <h1 className="px-6 flex gap-2.5 items-center font-normal">
+        <h1 className="px-2 md:px-6 flex gap-2.5 items-center justify-center md:justify-start font-normal">
           <RAGFlowAvatar
             avatar={userInfo?.avatar}
             name={userInfo?.nickname}
             isPerson
           />
 
-          <p className="text-sm text-text-primary">{userInfo?.email}</p>
+          <p className="hidden md:block text-sm text-text-primary truncate">
+            {userInfo?.email}
+          </p>
         </h1>
       </header>
 
       <nav className="flex-1 overflow-auto mt-4 py-1">
-        <ul className="px-6 flex flex-col gap-5">
+        <ul className="px-2 md:px-6 flex flex-col gap-2 md:gap-5 items-center md:items-stretch">
           {menuItems(t, isAdmin).map((item) => {
             const { key, icon, label, ...rest } = item;
 
             return (
-              <li key={key}>
+              <li key={key} className="w-full md:w-auto">
                 <Button
                   {...rest}
                   block
                   variant="ghost"
+                  aria-label={label}
                   className={cn(
-                    'justify-start gap-2.5 px-3 relative h-10 text-base',
+                    'relative h-10 text-base max-md:size-10 max-md:p-0 max-md:justify-center justify-start gap-2.5 px-2 md:px-3',
                     activeItemKey === key && 'bg-bg-card text-text-primary',
                   )}
                   onClick={handleMenuClick(key)}
                 >
-                  <section className="flex items-center gap-2.5">
+                  <span className="flex items-center gap-2.5 max-md:gap-0">
                     {icon}
-                    <span>{label}</span>
-                  </section>
-                  {/* {item.key === Routes.System && (
-                    <div className="mr-2 px-2 bg-accent-primary-5 text-accent-primary rounded-md">
-                      {version}
-                    </div>
-                  )} */}
-                  {/* {active && (
-                    <div className="absolute right-0 w-[5px] h-[66px] bg-primary rounded-l-xl shadow-[0_0_5.94px_#7561ff,0_0_11.88px_#7561ff,0_0_41.58px_#7561ff,0_0_83.16px_#7561ff,0_0_142.56px_#7561ff,0_0_249.48px_#7561ff]" />
-                  )} */}
+                    <span className="hidden md:inline">{label}</span>
+                  </span>
                 </Button>
               </li>
             );
@@ -133,15 +131,23 @@ export function SideBar() {
         </ul>
       </nav>
 
-      <footer className="p-6 mt-auto">
-        <div className="flex items-center gap-2 mb-6 justify-between">
+      <footer className="p-2 md:p-6 mt-auto">
+        <div className="hidden md:flex items-center gap-2 mb-6 justify-between">
           <span className="text-xs text-accent-primary">{version}</span>
 
           <ThemeSwitch />
         </div>
 
-        <Button block size="lg" variant="transparent" onClick={() => logout()}>
-          {t('setting.logout')}
+        <Button
+          block
+          size="lg"
+          variant="transparent"
+          aria-label={t('setting.logout')}
+          className="max-md:size-10 max-md:p-0 max-md:mx-auto max-md:justify-center"
+          onClick={() => logout()}
+        >
+          <LucideLogOut className="size-[1em] md:hidden" />
+          <span className="hidden md:inline">{t('setting.logout')}</span>
         </Button>
       </footer>
     </aside>

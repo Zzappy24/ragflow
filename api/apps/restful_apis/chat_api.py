@@ -274,9 +274,9 @@ def _normalize_completion_messages(req):
 
 
 # Kept synchronous on purpose — all 3 callers in this file invoke it without
-# `await`. Upstream switched the signature to `async def` but the body has no
-# awaitable calls, so the sync version is functionally equivalent and avoids
-# updating every call site.
+# `await`. Upstream's body just calls `get_model_config_from_provider_instance`
+# (no I/O) and wraps it in `thread_pool_exec` — but the wrapping is gratuitous
+# since the call is CPU-bound, so we skip it and call the function directly.
 def _validate_llm_id(llm_id, tenant_id, llm_setting=None):
     if not llm_id:
         return None
@@ -289,37 +289,33 @@ def _validate_llm_id(llm_id, tenant_id, llm_setting=None):
     else:
         model_type = "chat"
 
-    # Restore the llm_name/llm_factory split that upstream's async refactor
-    # dropped — our sync code path still uses TenantLLMService.query to
-    # validate the LLM exists in our TenantLLM table.
-    llm_name, llm_factory = TenantLLMService.split_model_name_and_factory(llm_id)
-    if not TenantLLMService.query(
-        tenant_id=tenant_id,
-        llm_name=llm_name,
-        llm_factory=llm_factory,
-        model_type=model_type,
-    ):
+    try:
+        get_model_config_from_provider_instance(
+            tenant_id=tenant_id,
+            model_name=llm_id,
+            model_type=model_type,
+        )
+    except Exception as e:
+        logging.error(f"Fail to get model config for {llm_id}: {e}")
         return f"`llm_id` {llm_id} doesn't exist"
-
     return None
 
 def _validate_rerank_id(rerank_id, tenant_id):
     if not rerank_id:
         return None
-    # Use the canonical split helper so llm_factory is set correctly
-    # (upstream's refactor moved this logic into get_model_config_from_provider_instance,
-    # but our sync code path still calls TenantLLMService.query directly).
-    llm_name, llm_factory = TenantLLMService.split_model_name_and_factory(rerank_id)
+    llm_name = rerank_id.split("@", 1)[0]
     if llm_name in _DEFAULT_RERANK_MODELS:
         return None
-    if TenantLLMService.query(
-        tenant_id=tenant_id,
-        llm_name=llm_name,
-        llm_factory=llm_factory,
-        model_type="rerank",
-    ):
-        return None
-    return f"`rerank_id` {rerank_id} doesn't exist"
+    try:
+        get_model_config_from_provider_instance(
+            tenant_id=tenant_id,
+            model_name=rerank_id,
+            model_type="rerank",
+        )
+    except Exception as e:
+        logging.error(f"Fail to get model config for {rerank_id}: {e}")
+        return f"`rerank_id` {rerank_id} doesn't exist"
+    return None
 
 
 # def _validate_prompt_config(prompt_config):
@@ -465,7 +461,7 @@ async def create():
 @manager.route("/chats", methods=["GET"])  # noqa: F821
 @login_required
 @require_permission(Permission.CHAT_READ)
-def list_chats():
+async def list_chats():
     chat_id = request.args.get("id")
     name = request.args.get("name")
     keywords = request.args.get("keywords", "")
@@ -481,8 +477,13 @@ def list_chats():
         items_per_page = validate_rest_api_page_size(int(request.args.get("page_size", 0)))
 
         if owner_ids:
-            chats, total = DialogService.get_by_tenant_ids(
-                owner_ids, active_tenant_id(), 0, 0, orderby, desc, keywords, **exact_filters
+            # CUSTOM B2B SaaS: keep active_tenant_id() (workspace tenant) instead
+            # of current_user.id — upstream's user_id-as-tenant_id assumption
+            # returns 0 rows on workspace tenants. Adopt thread_pool_exec for
+            # the perf win they introduced.
+            chats, total = await thread_pool_exec(
+                DialogService.get_by_tenant_ids,
+                owner_ids, active_tenant_id(), 0, 0, orderby, desc, keywords, **exact_filters,
             )
             chats = [chat for chat in chats if chat["tenant_id"] in owner_ids]
             total = len(chats)
@@ -490,8 +491,10 @@ def list_chats():
                 start = (page_number - 1) * items_per_page
                 chats = chats[start : start + items_per_page]
         else:
-            chats, total = DialogService.get_by_tenant_ids(
-                [], active_tenant_id(), page_number, items_per_page, orderby, desc, keywords, **exact_filters
+            # CUSTOM B2B SaaS: same workspace tenant scoping as the owner_ids branch.
+            chats, total = await thread_pool_exec(
+                DialogService.get_by_tenant_ids,
+                [], active_tenant_id(), page_number, items_per_page, orderby, desc, keywords, **exact_filters,
             )
 
         return get_json_result(
@@ -1348,7 +1351,7 @@ async def session_completion(chat_id_in_arg=""):
             """Yield SSE-formatted chunks from the async chat generator."""
             nonlocal dia, msg, req, conv
             try:
-                async for ans in async_chat(dia, msg, True, **req):
+                async for ans in async_chat(dia, msg, True, session_id=session_id, **req):
                     ans = _format_answer(ans)
                     payload = _sanitize_json_floats({"code": 0, "message": "", "data": ans})
                     yield "data:" + json.dumps(payload, ensure_ascii=False) + "\n\n"
@@ -1368,7 +1371,7 @@ async def session_completion(chat_id_in_arg=""):
             return resp
 
         answer = None
-        async for ans in async_chat(dia, msg, False, **req):
+        async for ans in async_chat(dia, msg, False, session_id=session_id, **req):
             answer = _format_answer(ans)
             if conv is not None:
                 ConversationService.update_by_id(conv.id, conv.to_dict())

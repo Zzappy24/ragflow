@@ -89,6 +89,12 @@ def list_searches():
     owner_ids = request.args.getlist("owner_ids")
 
     try:
+        # CUSTOM B2B SaaS: upstream reverted their own owner_ids authorization
+        # in #15698 because `get_joined_tenants_by_user_id(tenant_id)` returns
+        # empty for workspace tenants — see memory feedback_upstream_user_id_
+        # tenant_id_antipattern. Our version calls it with `current_user.id`
+        # (the real user) which is correct, and adds active_tenant_id() to the
+        # authorized set so workspace-scoped requests still pass.
         tenants = TenantService.get_joined_tenants_by_user_id(current_user.id)
         authorized_owner_ids = {member["tenant_id"] for member in tenants}
         authorized_owner_ids.add(current_user.id)

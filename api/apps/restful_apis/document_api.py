@@ -39,10 +39,11 @@ from api.db.services.file2document_service import File2DocumentService
 from api.db.services.file_service import FileService
 from api.db.services.knowledgebase_service import KnowledgebaseService
 from api.common.check_team_permission import check_kb_team_permission
-from api.db.services.task_service import TaskService, cancel_all_task_of, has_canceled
+from api.db.services.task_service import TaskService, cancel_all_task_of
 from api.utils.api_utils import construct_json_result, get_data_error_result, get_error_data_result, get_result, get_json_result, \
     server_error_response, add_tenant_id_to_kwargs, get_request_json, get_error_argument_result, check_duplicate_ids
 from api.utils.pagination_utils import validate_rest_api_page_size
+from api.utils.tenant_context import maybe_active_tenant_id
 from api.utils.validation_utils import (
     UpdateDocumentReq, format_validation_error_message, validate_and_parse_json_request, DeleteDocumentReq,
 )
@@ -1470,30 +1471,17 @@ def _run_sync(user_id:str, req):
         if not e:
             return RetCode.DATA_ERROR, "Document not found!"
 
-        if str(req["run"]) == TaskStatus.RUNNING.value:
-            tasks = list(TaskService.query(doc_id=doc_id))
-            has_active_task = any((task.progress or 0) < 1 and not has_canceled(task.id) for task in tasks)
-            if str(doc.run) in [TaskStatus.RUNNING.value, TaskStatus.SCHEDULE.value] or has_active_task:
-                return RetCode.DATA_ERROR, "Document is already running"
-
-        should_cancel = False
         if str(req["run"]) == TaskStatus.CANCEL.value:
             tasks = list(TaskService.query(doc_id=doc_id))
             has_unfinished_task = any((task.progress or 0) < 1 for task in tasks)
             if str(doc.run) in [TaskStatus.RUNNING.value, TaskStatus.CANCEL.value] or has_unfinished_task:
-                should_cancel = True
+                cancel_all_task_of(doc_id)
             else:
                 return RetCode.DATA_ERROR, "Cannot cancel a task that is not in RUNNING status"
         if all([rerun_with_delete, str(doc.run) == TaskStatus.DONE.value]):
             DocumentService.clear_chunk_num_when_rerun(doc_id)
 
-        affected_rows = DocumentService.update_by_id_if_update_time(doc_id, doc.update_time, info)
-        if not affected_rows:
-            return RetCode.DATA_ERROR, "Document is already running"
-
-        if str(req["run"]) == TaskStatus.CANCEL.value and should_cancel:
-            cancel_all_task_of(doc_id)
-
+        DocumentService.update_by_id(doc_id, info)
         if req.get("delete", False):
             TaskService.filter_delete([Task.doc_id == doc_id])
             if settings.docStoreConn.index_exist(search.index_name(doc_tenant_id), doc.kb_id):
@@ -1713,7 +1701,17 @@ async def stop_parse_documents(tenant_id, dataset_id):
                     continue
 
                 cancel_all_task_of(doc_id)
-                DocumentService.update_by_id(doc_id, {"run": str(TaskStatus.CANCEL.value)})
+                DocumentService.update_by_id(
+                    doc_id,
+                    {
+                        "run": str(TaskStatus.CANCEL.value),
+                        "progress": 0,
+                        "chunk_num": 0,
+                    },
+                )
+                index_name = search.index_name(tenant_id)
+                if settings.docStoreConn.index_exist(index_name, doc.kb_id):
+                    settings.docStoreConn.delete({"doc_id": doc.id}, index_name, doc.kb_id)
                 success_count += 1
 
             result = {"success_count": success_count}
@@ -2011,7 +2009,13 @@ async def get(doc_id):
     enumeration.
     """
     try:
-        if not DocumentService.accessible(doc_id, current_user.id):
+        # CUSTOM B2B SaaS — use workspace tenant when present so members of a
+        # workspace can read docs owned by the workspace tenant (kb.permission
+        # is often "me" on docs created by the workspace owner; upstream's
+        # accessible(user_id) short-circuits to False in that case). Fall back
+        # to current_user.id for legacy/no-workspace requests.
+        tenant_or_user_id = maybe_active_tenant_id() or current_user.id
+        if not DocumentService.accessible(doc_id, tenant_or_user_id):
             return get_data_error_result(message="Document not found!")
 
         e, doc = DocumentService.get_by_id(doc_id)
@@ -2034,6 +2038,16 @@ async def get(doc_id):
         return response
     except Exception as e:
         return server_error_response(e)
+
+
+def _mimetype_for_document(doc) -> str:
+    match = re.search(r"\.([^.]+)$", (doc.name or "").lower())
+    if not match:
+        return "application/octet-stream"
+    ext = match.group(1)
+    fallback_prefix = "image" if doc.type == FileType.VISUAL.value else "application"
+    return CONTENT_TYPE_MAP.get(ext, f"{fallback_prefix}/{ext}")
+
 
 @manager.route("/datasets/<dataset_id>/documents/<document_id>", methods=["GET"])  # noqa: F821
 @login_required
@@ -2090,7 +2104,7 @@ async def download(dataset_id, document_id):
         file,
         as_attachment=True,
         attachment_filename=doc[0].name,
-        mimetype="application/octet-stream",  # Set a default MIME type
+        mimetype=_mimetype_for_document(doc[0]),
     )
 
 @manager.route("/documents/<document_id>", methods=["GET"])  # noqa: F821
@@ -2148,5 +2162,5 @@ async def download_document(document_id):
         file,
         as_attachment=True,
         attachment_filename=doc[0].name,
-        mimetype="application/octet-stream",  # Set a default MIME type
+        mimetype=_mimetype_for_document(doc[0]),
     )

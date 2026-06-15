@@ -40,11 +40,12 @@ except ImportError:  # pragma: no cover - optional dependency
     QuartBadRequest = None
 
 from peewee import OperationalError
+from quart import g
 
 from common.constants import ActiveEnum, LLMType
-from api.db.db_models import APIToken
 from api.utils.json_encode import CustomJSONEncoder
 from common.mcp_tool_call_conn import MCPToolCallSession, close_multiple_mcp_toolcall_sessions
+from api.db.db_models import APIToken
 from api.db.services.tenant_llm_service import LLMFactoriesService
 from common.connection_utils import timeout
 from common.constants import RetCode
@@ -296,6 +297,7 @@ def apikey_required(func):
         return func(*args, **kwargs)
 
     return decorated_function
+
 
 
 def build_error_result(code=RetCode.FORBIDDEN, message="success"):

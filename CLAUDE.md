@@ -335,7 +335,7 @@ REAL_JWT=$(grep "^ADMIN_JWT_SECRET=" .env.local | cut -d= -f2-)
 export RAGFLOW_TEST_LOCAL_AUTH=1 RSA_PASSPHRASE=Welcome
 export ADMIN_JWT_SECRET="$REAL_JWT"
 export VIEWER_EMAIL=viewer.internal@cyllene.com EDITOR_EMAIL=editor.internal@cyllene.com
-export HOST_ADDRESS=http://127.0.0.1:9380 ZHIPU_AI_API_KEY=dummy PYTHONPATH=.
+export HOST_ADDRESS=http://127.0.0.1:9380 ZHIPU_AI_API_KEY=dummy SILICONFLOW_API_KEY=dummy PYTHONPATH=.
 # 3. Run each dir SEPARATELY — combining triggers Python module shadowing
 #    (notably `infinity` SDK gets shadowed → 30+ collection errors).
 uv run python -m pytest test/multitenant \
