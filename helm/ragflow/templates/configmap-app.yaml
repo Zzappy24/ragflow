@@ -38,7 +38,7 @@ data:
   # REDIS_PASSWORD comes from ragflow-app-secrets (Vault)
 
   # --- MinIO (minio-operator) ----------------------------------------------
-  MINIO_HOST: "minio.{{ .Release.Namespace }}.svc.cluster.local:9000"
+  MINIO_HOST: {{ .Values.minio.host | quote }}
   MINIO_USE_SSL: "false"
   # MINIO_USER + MINIO_PASSWORD come from ragflow-app-secrets
 
@@ -90,7 +90,7 @@ data:
     minio:
       user: ${MINIO_USER}
       password: ${MINIO_PASSWORD}
-      host: minio.{{ .Release.Namespace }}.svc.cluster.local:9000
+      host: ${MINIO_HOST}
       bucket: ragflow-storage
       prefix_path: ''
     redis:
