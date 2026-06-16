@@ -90,7 +90,7 @@ spec:
           command: ["/bin/bash", "-lc"]
           args:
             - |
-              exec python rag/svr/task_executor.py "{{ .Values.workerNamePrefix }}_${POD_NAME}"
+              exec python rag/svr/task_executor.py -t common -i "${POD_NAME}"
 
           # /metrics is exposed on 9381 (set in env via TASK_EXECUTOR_METRICS_PORT)
           # so Prometheus can scrape per-pod counters.
