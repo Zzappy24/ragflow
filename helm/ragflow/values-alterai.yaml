@@ -98,7 +98,7 @@ redis:
 
 minio:
   enabled: true
-  host: "minio-hl.{{ .Release.Namespace }}.svc.cluster.local:9000"
+  host: "minio-hl.rag-new2.svc.cluster.local:9000"
   servers: 1
   volumesPerServer: 1
   size: "200Gi"
