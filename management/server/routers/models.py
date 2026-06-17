@@ -75,8 +75,24 @@ def list_workspace_providers(ws_id: str, user_id: str = Depends(get_current_user
     require_ws_admin(ws_id, user_id)
     tenant_id = _get_ws_tenant(ws_id)
 
-    from api.db.services.tenant_llm_service import TenantLLMService
-    llms = TenantLLMService.get_my_llms(tenant_id)
+    # CUSTOM B2B SaaS — query tenant_llm directly without the INNER JOIN on
+    # llm_factories that upstream's `get_my_llms()` does. Upstream stopped
+    # populating llm_factories after the tenant_model_provider migration
+    # (init_llm_factory() is commented in api/db/init_data.py), so the JOIN
+    # would silently filter out every row when llm_factories is empty.
+    # We don't need LLMFactories.logo/tags here — the admin panel
+    # doesn't render them.
+    from api.db.db_models import TenantLLM, DB
+    with DB.connection_context():
+        rows = list(
+            TenantLLM.select(
+                TenantLLM.id, TenantLLM.llm_factory, TenantLLM.model_type,
+                TenantLLM.llm_name, TenantLLM.api_base, TenantLLM.max_tokens,
+                TenantLLM.used_tokens, TenantLLM.status,
+            )
+            .where(TenantLLM.tenant_id == tenant_id, ~TenantLLM.api_key.is_null())
+            .dicts()
+        )
     return [
         WsLlmProviderResponse(
             llm_factory=r.get("llm_factory", ""),
@@ -87,7 +103,7 @@ def list_workspace_providers(ws_id: str, user_id: str = Depends(get_current_user
             used_tokens=r.get("used_tokens", 0),
             status=r.get("status", "1"),
         )
-        for r in llms
+        for r in rows
     ]
 
 
