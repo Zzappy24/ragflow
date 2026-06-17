@@ -35,6 +35,7 @@ from quart_schema import QuartSchema
 from common import settings
 from api.utils.api_utils import server_error_response, get_json_result
 from api.constants import API_VERSION
+from common.exceptions import ModelException
 from common.misc_utils import get_uuid
 
 settings.init_settings()
@@ -129,116 +130,195 @@ async def set_security_headers(response):
 
 from functools import wraps
 from typing import ParamSpec, TypeVar
-from collections.abc import Awaitable, Callable
+from collections.abc import Awaitable, Callable, Iterable
 from werkzeug.local import LocalProxy
 
 T = TypeVar("T")
 P = ParamSpec("P")
 
+AUTH_JWT = "JWT"
+AUTH_API = "API"
+AUTH_BETA = "BETA"
+DEFAULT_AUTH_TYPES = (AUTH_JWT, AUTH_API)
 
-def _load_user():
-    # CUSTOM PERF: per-request cache. Without this, current_user = LocalProxy(_load_user)
-    # re-invokes _load_user on every attribute access (e.g. current_user.id +
-    # current_user.email = 2 user-table queries). Profiling showed _load_user
-    # running 3x per authenticated request on hot endpoints (~30% of total time).
-    # The marker g._user_resolved gives us "fetched once per request" semantics;
-    # subsequent accesses return the cached g.user (which may be None if auth failed).
-    if getattr(g, "_user_resolved", False):
-        return g.user
-    g._user_resolved = True
 
-    jwt = Serializer(secret_key=settings.get_secret_key())
-    authorization = request.headers.get("Authorization")
-    g.user = None
-    if not authorization:
+def _normalize_auth_types(auth_types=None):
+    if auth_types is None:
+        return set(DEFAULT_AUTH_TYPES)
+    if isinstance(auth_types, str):
+        return {auth_types.upper()}
+    if isinstance(auth_types, Iterable):
+        return {str(auth_type).upper() for auth_type in auth_types}
+    return {str(auth_types).upper()}
+
+
+def _load_user_from_session():
+    """Resolve the current user from the session cookie set by ``login_user()``.
+
+    OAuth/OIDC callbacks call ``login_user(user)`` which writes ``_user_id``
+    into the session. The frontend's response interceptor wipes the
+    Authorization header from localStorage on the first 401, so post-redirect
+    requests can arrive with no header at all — we still want to honour the
+    server-side session in that window.
+
+    The same access-token validity rules used by the JWT path are applied
+    here so that tokens revoked by ``logout`` (which rewrites the column to
+    ``INVALID_<hex>``) or shortened by data corruption can't keep a stale
+    session authenticated.
+    """
+    user_id = session.get("_user_id")
+    if not user_id:
+        return None
+    try:
+        users = UserService.query(id=user_id, status=StatusEnum.VALID.value)
+    except Exception:
+        logging.exception("load_user from session failed")
+        return None
+    if not users:
+        return None
+    user = users[0]
+    access_token = str(user.access_token or "").strip()
+    if not access_token or len(access_token) < 32 or access_token.startswith("INVALID_"):
+        return None
+    logging.debug("Authenticated request via session fallback for user_id=%s", user_id)
+    g.auth_type = AUTH_JWT
+    g.user = user
+    return user
+
+
+def _load_user(auth_types=None):
+    # CUSTOM PERF: per-request negative cache. Upstream's positive cache below
+    # (`if getattr(g, "user", None)`) only short-circuits AFTER successful
+    # auth. Without `_user_resolved`, every `current_user` access on an
+    # unauthenticated request re-runs the full JWT/Beta/API token chain.
+    # Profiling showed 3× re-resolution per authenticated request (~30% of
+    # total time) on hot endpoints. Cache the failure too.
+    if getattr(g, "_user_resolved", False) and not getattr(g, "user", None):
         return None
 
+    explicit_auth_types = auth_types is not None
+    auth_types = _normalize_auth_types(auth_types)
+    if getattr(g, "user", None) and (not explicit_auth_types or getattr(g, "auth_type", None) in auth_types):
+        return g.user
+
+    g._user_resolved = True
+
+    # No Authorization header, try to load user from session cookie if JWT auth is allowed
+    authorization = request.headers.get("Authorization")
+    if not authorization:
+        return _load_user_from_session() if AUTH_JWT in auth_types else None
+
     # Extract auth_token based on whether Authorization starts with "bearer" (case-insensitive)
-    if authorization.lower().startswith("bearer "):
+    if authorization[:7].lower() == "bearer ":
         parts = authorization.split(maxsplit=1)
         if len(parts) < 2:
             logging.warning("Authorization header has invalid bearer format")
-            return None
+            return _load_user_from_session() if AUTH_JWT in auth_types else None
         auth_token = parts[1]
     else:
         auth_token = authorization
 
+    g.user = None
+    g.auth_type = None
+    g.auth_error_message = None
+
+    # Try Beta token
+    if AUTH_BETA in auth_types:
+        try:
+            objs = APIToken.query(beta=auth_token)
+            if objs:
+                user = UserService.query(id=objs[0].tenant_id, status=StatusEnum.VALID.value)
+                if user:
+                    g.auth_type = AUTH_BETA
+                    g.user = user[0]
+                    return user[0]
+            g.auth_error_message = 'Authentication error: API key is invalid! '
+        except Exception as e_beta:
+            logging.warning(f"load_user from beta token got exception {e_beta}")
+            g.auth_error_message = 'Authentication error: API key is invalid!'
+
     # Try JWT decoding
-    try:
-        access_token = str(jwt.loads(auth_token))
+    if AUTH_JWT in auth_types:
+        try:
+            jwt = Serializer(secret_key=settings.get_secret_key())
+            access_token = str(jwt.loads(auth_token))
 
-        if not access_token or not access_token.strip():
-            logging.warning("Authentication attempt with empty access token")
-            return None
+            if not access_token or not access_token.strip():
+                logging.warning("Authentication attempt with empty access token")
+                return _load_user_from_session()
 
-        if len(access_token.strip()) < 32:
-            logging.warning(f"Authentication attempt with invalid token format: {len(access_token)} chars")
-            return None
+            if len(access_token.strip()) < 32:
+                logging.warning(f"Authentication attempt with invalid token format: {len(access_token)} chars")
+                return _load_user_from_session()
 
-        user = UserService.query(access_token=access_token, status=StatusEnum.VALID.value)
-        if user:
-            if not user[0].access_token or not user[0].access_token.strip():
-                logging.warning(f"User {user[0].email} has empty access_token in database")
-                return None
-            g.user = user[0]
-            return user[0]
-        return None
-    except Exception as e_jwt:
-        logging.warning(f"load_user from jwt got exception {e_jwt}")
-
-    # JWT decode failed, try as api_token
-    try:
-        objs = APIToken.query(token=auth_token)
-        if objs:
-            # CUSTOM B2B SaaS — workspace tokens have tenant_id = workspace
-            # tenant_id, NOT a user_id. Upstream's `UserService.query(id=tenant_id)`
-            # then finds only the synthetic `ws-*@internal` user, which has no
-            # ws_member rows and consequently fails every @require_permission
-            # check. We resolve to the human creator stored in ApiKeyScope first
-            # so the RBAC layer sees the real owner. Falls back to upstream
-            # behavior for legacy/unscoped tokens.
-            try:
-                from api.db.services.workspace_service import ApiKeyScopeService
-                scope = ApiKeyScopeService.get_by_token(auth_token)
-                if scope and scope.created_by:
-                    user = UserService.query(id=scope.created_by, status=StatusEnum.VALID.value)
-                    if user and user[0].access_token and user[0].access_token.strip():
-                        g.user = user[0]
-                        # Inject the workspace context so add_tenant_id_to_kwargs
-                        # resolves to the workspace tenant (not the user's
-                        # personal tenant). Mirrors what the X-Workspace-Id
-                        # middleware does for browser/JWT requests.
-                        if scope.workspace_id:
-                            g._ws_header = scope.workspace_id
-                            # Pre-resolve the workspace tenant_id so that
-                            # `active_tenant_id()` returns the workspace tenant
-                            # rather than the user's personal one.
-                            g.active_tenant_id = objs[0].tenant_id
-                        return user[0]
-            except Exception as e_scope:
-                logging.warning(f"load_user: ApiKeyScope resolution failed: {e_scope}")
-
-            # Fallback: legacy unscoped token → resolve via tenant_id (upstream)
-            user = UserService.query(id=objs[0].tenant_id, status=StatusEnum.VALID.value)
+            user = UserService.query(access_token=access_token, status=StatusEnum.VALID.value)
             if user:
                 if not user[0].access_token or not user[0].access_token.strip():
                     logging.warning(f"User {user[0].email} has empty access_token in database")
-                    return None
+                    return _load_user_from_session()
+                g.auth_type = AUTH_JWT
                 g.user = user[0]
                 return user[0]
-            logging.warning(f"load_user: No user found for tenant_id={objs[0].tenant_id} from APIToken")
-        else:
-            logging.warning(f"load_user: No APIToken found for token={auth_token[:10]}...")
-    except Exception as e_api_token:
-        logging.warning(f"load_user from api token got exception {e_api_token}")
+            return _load_user_from_session()
+        except Exception as e_jwt:
+            logging.warning(f"load_user from jwt got exception {e_jwt}")
 
-    return None
+    # JWT decode failed, try as api_token
+    if AUTH_API in auth_types:
+        try:
+            objs = APIToken.query(token=auth_token)
+            if objs:
+                # CUSTOM B2B SaaS — workspace tokens have tenant_id = workspace
+                # tenant_id, NOT a user_id. Upstream's `UserService.query(id=tenant_id)`
+                # then finds only the synthetic `ws-*@internal` user, which has no
+                # ws_member rows and consequently fails every @require_permission
+                # check. We resolve to the human creator stored in ApiKeyScope first
+                # so the RBAC layer sees the real owner. Falls back to upstream
+                # behavior for legacy/unscoped tokens.
+                try:
+                    from api.db.services.workspace_service import ApiKeyScopeService
+                    scope = ApiKeyScopeService.get_by_token(auth_token)
+                    if scope and scope.created_by:
+                        user = UserService.query(id=scope.created_by, status=StatusEnum.VALID.value)
+                        if user and user[0].access_token and user[0].access_token.strip():
+                            g.auth_type = AUTH_API
+                            g.user = user[0]
+                            # Inject the workspace context so add_tenant_id_to_kwargs
+                            # resolves to the workspace tenant (not the user's
+                            # personal tenant). Mirrors what the X-Workspace-Id
+                            # middleware does for browser/JWT requests.
+                            if scope.workspace_id:
+                                g._ws_header = scope.workspace_id
+                                # Pre-resolve the workspace tenant_id so that
+                                # `active_tenant_id()` returns the workspace tenant
+                                # rather than the user's personal one.
+                                g.active_tenant_id = objs[0].tenant_id
+                            return user[0]
+                except Exception as e_scope:
+                    logging.warning(f"load_user: ApiKeyScope resolution failed: {e_scope}")
+
+                # Fallback: legacy unscoped token → resolve via tenant_id (upstream)
+                user = UserService.query(id=objs[0].tenant_id, status=StatusEnum.VALID.value)
+                if user:
+                    if not user[0].access_token or not user[0].access_token.strip():
+                        logging.warning(f"User {user[0].email} has empty access_token in database")
+                        return _load_user_from_session() if AUTH_JWT in auth_types else None
+                    g.auth_type = AUTH_API
+                    g.user = user[0]
+                    return user[0]
+                logging.warning(f"load_user: No user found for tenant_id={objs[0].tenant_id} from APIToken")
+            else:
+                logging.warning(f"load_user: No APIToken found for token={auth_token[:10]}...")
+        except Exception as e_api_token:
+            logging.warning(f"load_user from api token got exception {e_api_token}")
+
+    return _load_user_from_session() if AUTH_JWT in auth_types else None
 
 
 current_user = LocalProxy(_load_user)
 
 
-def login_required(func: Callable[P, Awaitable[T]]) -> Callable[P, Awaitable[T]]:
+def login_required(func: Callable[P, Awaitable[T]] = None, auth_types=None) -> Callable[P, Awaitable[T]]:
     """A decorator to restrict route access to authenticated users.
 
     This should be used to wrap a route handler (or view function) to
@@ -258,27 +338,38 @@ def login_required(func: Callable[P, Awaitable[T]]) -> Callable[P, Awaitable[T]]
 
     """
 
-    @wraps(func)
-    async def wrapper(*args: P.args, **kwargs: P.kwargs) -> T:
-        timing_enabled = os.getenv("RAGFLOW_API_TIMING")
-        t_start = time.perf_counter() if timing_enabled else None
-        user = current_user
-        if timing_enabled:
-            logging.info(
-                "api_timing login_required auth_ms=%.2f path=%s",
-                (time.perf_counter() - t_start) * 1000,
-                request.path,
-            )
-        if not user:  # or not session.get("_user_id"):
-            raise QuartAuthUnauthorized()
-        try:
-            from api.utils.api_utils import _track_active_user
-            _track_active_user(user.id, getattr(user, "email", "") or "")
-        except Exception:
-            pass
-        return await current_app.ensure_async(func)(*args, **kwargs)
+    def decorator(func: Callable[P, Awaitable[T]]) -> Callable[P, Awaitable[T]]:
+        @wraps(func)
+        async def wrapper(*args: P.args, **kwargs: P.kwargs) -> T:
+            timing_enabled = os.getenv("RAGFLOW_API_TIMING")
+            t_start = time.perf_counter() if timing_enabled else None
+            user = _load_user(auth_types)
+            if timing_enabled:
+                logging.info(
+                    "api_timing login_required auth_ms=%.2f path=%s",
+                    (time.perf_counter() - t_start) * 1000,
+                    request.path,
+                )
+            if not user:  # or not session.get("_user_id"):
+                if _normalize_auth_types(auth_types) == {AUTH_BETA}:
+                    return get_json_result(
+                        code=RetCode.DATA_ERROR,
+                        message=getattr(g, "auth_error_message", None) or "Authorization is not valid!",
+                    )
+                raise QuartAuthUnauthorized()
+            # CUSTOM: track active users (admin panel "active users" counter).
+            try:
+                from api.utils.api_utils import _track_active_user
+                _track_active_user(user.id, getattr(user, "email", "") or "")
+            except Exception:
+                pass
+            return await current_app.ensure_async(func)(*args, **kwargs)
 
-    return wrapper
+        return wrapper
+
+    if func is None:
+        return decorator
+    return decorator(func)
 
 
 def login_user(user, remember=False, duration=None, force=False, fresh=True):
@@ -368,8 +459,11 @@ def register_page(page_path):
     sys.modules[module_name] = page
     spec.loader.exec_module(page)
     page_name = getattr(page, "page_name", page_name)
-    sdk_path = "\\sdk\\" if sys.platform.startswith("win") else "/sdk/"
     restful_api_path = "\\restful_apis\\" if sys.platform.startswith("win") else "/restful_apis/"
+    # CUSTOM B2B SaaS: SDK pages also belong under /api/{API_VERSION}. Upstream
+    # only checks restful_api_path; auto-merge dropped our sdk_path definition.
+    # Restore it so SDK blueprints register at /api/v1/* like restful ones.
+    sdk_path = "\\sdk\\" if sys.platform.startswith("win") else "/sdk/"
     url_prefix = (
         f"/api/{API_VERSION}" if sdk_path in path or restful_api_path in path else f"/{API_VERSION}/{page_name}"
     )
@@ -423,6 +517,12 @@ async def unauthorized_quart_auth(error):
 async def unauthorized_werkzeug(error):
     logging.warning("Unauthorized request (werkzeug)")
     return get_json_result(code=error.code, message=error.description), RetCode.UNAUTHORIZED
+
+
+@app.errorhandler(ModelException)
+async def handle_model_exception(error):
+    logging.warning("Forbidden request")
+    return get_json_result(code=RetCode.BAD_REQUEST, message=repr(error)), 200
 
 @app.teardown_request
 def _db_close(exception):

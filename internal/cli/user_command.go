@@ -18,7 +18,6 @@ package cli
 
 import (
 	"bufio"
-	"context"
 	"encoding/base64"
 	"encoding/json"
 	"errors"
@@ -29,59 +28,32 @@ import (
 	"os"
 	"os/exec"
 	"path/filepath"
-	ce "ragflow/internal/cli/filesystem"
+	"ragflow/internal/common"
+	"ragflow/internal/ingestion"
+	"ragflow/internal/ingestion/parser"
+	"ragflow/internal/utility"
 	"strings"
 	"time"
 )
 
-// PingServer pings the server to check if it's alive
-// Returns benchmark result map if iterations > 1, otherwise prints status
-func (c *RAGFlowClient) PingServer(cmd *Command) (ResponseIf, error) {
-	// Get iterations from command params (for benchmark)
-	iterations := 1
-	if val, ok := cmd.Params["iterations"].(int); ok && val > 1 {
-		iterations = val
-	}
-
-	if iterations > 1 {
-		// Benchmark mode: multiple iterations
-		return c.HTTPClient.RequestWithIterations("GET", "/system/ping", "web", nil, nil, iterations)
-	}
-
-	// Single mode
-	resp, err := c.HTTPClient.Request("GET", "/system/ping", "web", nil, nil)
-	if err != nil {
-		fmt.Printf("Error: %v\n", err)
-		fmt.Println("Server is down")
-		return nil, err
-	}
-
-	if resp.StatusCode != 200 {
-		return nil, fmt.Errorf("failed to ping: HTTP %d, body: %s", resp.StatusCode, string(resp.Body))
-	}
-
-	var result SimpleResponse
-	result.Message = string(resp.Body)
-	result.Code = 0
-	return &result, nil
-}
-
 // Show server version to show RAGFlow server version
 // Returns benchmark result map if iterations > 1, otherwise prints status
-func (c *RAGFlowClient) ShowServerVersion(cmd *Command) (ResponseIf, error) {
+func (c *CLI) ShowServerVersion(cmd *Command) (ResponseIf, error) {
 	// Get iterations from command params (for benchmark)
 	iterations := 1
 	if val, ok := cmd.Params["iterations"].(int); ok && val > 1 {
 		iterations = val
 	}
 
+	httpClient := c.APIServerClientMap[c.Config.APIClientConfig.CurrentAPIServer]
+
 	if iterations > 1 {
 		// Benchmark mode: multiple iterations
-		return c.HTTPClient.RequestWithIterations("GET", "/system/version", "web", nil, nil, iterations)
+		return httpClient.RequestWithIterations("GET", "/system/version", "web", nil, nil, iterations)
 	}
 
 	// Single mode
-	resp, err := c.HTTPClient.Request("GET", "/system/version", "web", nil, nil)
+	resp, err := httpClient.Request("GET", "/system/version", "web", nil, nil)
 	if err != nil {
 		return nil, fmt.Errorf("failed to show version: %w", err)
 	}
@@ -100,9 +72,9 @@ func (c *RAGFlowClient) ShowServerVersion(cmd *Command) (ResponseIf, error) {
 	return &result, nil
 }
 
-func (c *RAGFlowClient) ListConfigs(cmd *Command) (ResponseIf, error) {
-	if c.ServerType != "user" {
-		return nil, fmt.Errorf("this command is only allowed in ADMIN mode")
+func (c *CLI) ListConfigs(cmd *Command) (ResponseIf, error) {
+	if c.Config.CLIMode != APIMode {
+		return nil, fmt.Errorf("this command is only allowed in USER mode")
 	}
 	// Get iterations from command params (for benchmark)
 	iterations := 1
@@ -110,13 +82,15 @@ func (c *RAGFlowClient) ListConfigs(cmd *Command) (ResponseIf, error) {
 		iterations = val
 	}
 
+	httpClient := c.APIServerClientMap[c.Config.APIClientConfig.CurrentAPIServer]
+
 	if iterations > 1 {
 		// Benchmark mode: multiple iterations
-		return c.HTTPClient.RequestWithIterations("GET", "/system/configs", "web", nil, nil, iterations)
+		return httpClient.RequestWithIterations("GET", "/system/configs", "web", nil, nil, iterations)
 	}
 
 	// Single mode
-	resp, err := c.HTTPClient.Request("GET", "/system/configs", "web", nil, nil)
+	resp, err := httpClient.Request("GET", "/system/configs", "web", nil, nil)
 	if err != nil {
 		return nil, fmt.Errorf("failed to list configs: %w", err)
 	}
@@ -252,9 +226,9 @@ func GetHost(config *map[string]interface{}, serverType, address, port string) s
 	return result
 }
 
-func (c *RAGFlowClient) SetLogLevel(cmd *Command) (ResponseIf, error) {
-	if c.ServerType != "user" {
-		return nil, fmt.Errorf("this command is only allowed in ADMIN mode")
+func (c *CLI) SetLogLevel(cmd *Command) (ResponseIf, error) {
+	if c.Config.CLIMode != APIMode {
+		return nil, fmt.Errorf("this command is only allowed in USER mode")
 	}
 
 	if logLevel, ok := cmd.Params["level"].(string); ok {
@@ -262,7 +236,8 @@ func (c *RAGFlowClient) SetLogLevel(cmd *Command) (ResponseIf, error) {
 			"level": logLevel,
 		}
 
-		resp, err := c.HTTPClient.Request("PUT", "/system/log", "admin", nil, payload)
+		httpClient := c.APIServerClientMap[c.Config.APIClientConfig.CurrentAPIServer]
+		resp, err := httpClient.Request("PUT", "/system/log", "admin", nil, payload)
 		if err != nil {
 			return nil, fmt.Errorf("failed to change log level: %w", err)
 		}
@@ -283,9 +258,9 @@ func (c *RAGFlowClient) SetLogLevel(cmd *Command) (ResponseIf, error) {
 	return nil, fmt.Errorf("no log level")
 }
 
-func (c *RAGFlowClient) RegisterUser(cmd *Command) (ResponseIf, error) {
-	if c.ServerType != "user" {
-		return nil, fmt.Errorf("this command is only allowed in ADMIN mode")
+func (c *CLI) RegisterUser(cmd *Command) (ResponseIf, error) {
+	if c.Config.CLIMode != APIMode {
+		return nil, fmt.Errorf("this command is only allowed in USER mode")
 	}
 
 	// Check for benchmark iterations
@@ -325,7 +300,8 @@ func (c *RAGFlowClient) RegisterUser(cmd *Command) (ResponseIf, error) {
 		"nickname": nickname,
 	}
 
-	resp, err := c.HTTPClient.Request("POST", "/users", "web", nil, payload)
+	httpClient := c.APIServerClientMap[c.Config.APIClientConfig.CurrentAPIServer]
+	resp, err := httpClient.Request("POST", "/users", "web", nil, payload)
 	if err != nil {
 		return nil, fmt.Errorf("failed to register user: %w", err)
 	}
@@ -349,8 +325,8 @@ func (c *RAGFlowClient) RegisterUser(cmd *Command) (ResponseIf, error) {
 
 // ListDatasets lists datasets for current user (user mode)
 // Returns (result_map, error) - result_map is non-nil for benchmark mode
-func (c *RAGFlowClient) ListDatasets(cmd *Command) (ResponseIf, error) {
-	if c.ServerType != "user" {
+func (c *CLI) ListDatasets(cmd *Command) (ResponseIf, error) {
+	if c.Config.CLIMode != APIMode {
 		return nil, fmt.Errorf("this command is only allowed in USER mode")
 	}
 
@@ -360,27 +336,29 @@ func (c *RAGFlowClient) ListDatasets(cmd *Command) (ResponseIf, error) {
 		iterations = val
 	}
 
+	httpClient := c.APIServerClientMap[c.Config.APIClientConfig.CurrentAPIServer]
+
 	// Determine auth kind based on whether API token is being used
-	if c.HTTPClient.LoginToken == "" && !c.HTTPClient.useAPIToken {
+	if httpClient.LoginToken == nil && !c.APIServerClientMap[c.Config.APIClientConfig.CurrentAPIServer].useAPIToken {
 		return nil, fmt.Errorf("no authorization")
 	}
 
 	authKind := "web"
-	if c.HTTPClient.useAPIToken {
+	if httpClient.useAPIToken {
 		authKind = "api"
 	}
 
-	if c.HTTPClient.LoginToken != "" {
+	if httpClient.LoginToken != nil {
 		authKind = "web"
 	}
 
 	if iterations > 1 {
 		// Benchmark mode - return raw result for benchmark stats
-		return c.HTTPClient.RequestWithIterations("GET", "/datasets", authKind, nil, nil, iterations)
+		return httpClient.RequestWithIterations("GET", "/datasets", authKind, nil, nil, iterations)
 	}
 
 	// Normal mode
-	resp, err := c.HTTPClient.Request("GET", "/datasets", authKind, nil, nil)
+	resp, err := httpClient.Request("GET", "/datasets", authKind, nil, nil)
 	if err != nil {
 		return nil, fmt.Errorf("failed to list datasets: %w", err)
 	}
@@ -403,8 +381,8 @@ func (c *RAGFlowClient) ListDatasets(cmd *Command) (ResponseIf, error) {
 }
 
 // ListDatasetDocumentUserCommand lists dataset documents
-func (c *RAGFlowClient) ListDatasetDocumentUserCommand(cmd *Command) (ResponseIf, error) {
-	if c.ServerType != "user" {
+func (c *CLI) ListDatasetDocumentUserCommand(cmd *Command) (ResponseIf, error) {
+	if c.Config.CLIMode != APIMode {
 		return nil, fmt.Errorf("this command is only allowed in USER mode")
 	}
 
@@ -414,8 +392,9 @@ func (c *RAGFlowClient) ListDatasetDocumentUserCommand(cmd *Command) (ResponseIf
 		iterations = val
 	}
 
+	httpClient := c.APIServerClientMap[c.Config.APIClientConfig.CurrentAPIServer]
 	// Determine auth kind based on whether API token is being used
-	if c.HTTPClient.LoginToken == "" && !c.HTTPClient.useAPIToken {
+	if httpClient.LoginToken == nil && !httpClient.useAPIToken {
 		return nil, fmt.Errorf("no authorization")
 	}
 
@@ -432,11 +411,11 @@ func (c *RAGFlowClient) ListDatasetDocumentUserCommand(cmd *Command) (ResponseIf
 
 	if iterations > 1 {
 		// Benchmark mode - return raw result for benchmark stats
-		return c.HTTPClient.RequestWithIterations("GET", url, "web", nil, nil, iterations)
+		return httpClient.RequestWithIterations("GET", url, "web", nil, nil, iterations)
 	}
 
 	// Normal mode
-	resp, err := c.HTTPClient.Request("GET", url, "web", nil, nil)
+	resp, err := httpClient.Request("GET", url, "web", nil, nil)
 	if err != nil {
 		return nil, fmt.Errorf("failed to list documents: %w", err)
 	}
@@ -459,8 +438,10 @@ func (c *RAGFlowClient) ListDatasetDocumentUserCommand(cmd *Command) (ResponseIf
 }
 
 // getDatasetID gets dataset ID by name
-func (c *RAGFlowClient) getDatasetID(datasetName string) (string, error) {
-	resp, err := c.HTTPClient.Request("GET", "/datasets", "web", nil, nil)
+func (c *CLI) getDatasetID(datasetName string) (string, error) {
+
+	httpClient := c.APIServerClientMap[c.Config.APIClientConfig.CurrentAPIServer]
+	resp, err := httpClient.Request("GET", "/datasets", "web", nil, nil)
 	if err != nil {
 		return "", fmt.Errorf("failed to list datasets: %w", err)
 	}
@@ -498,6 +479,53 @@ func (c *RAGFlowClient) getDatasetID(datasetName string) (string, error) {
 	return "", fmt.Errorf("dataset '%s' not found", datasetName)
 }
 
+// GetMetadata gets metadata for one or more datasets
+func (c *CLI) GetMetadata(cmd *Command) (ResponseIf, error) {
+	if c.Config.CLIMode != APIMode {
+		return nil, fmt.Errorf("this command is only allowed in USER mode")
+	}
+
+	datasetNames, ok := cmd.Params["dataset_names"].([]string)
+	if !ok || len(datasetNames) == 0 {
+		return nil, fmt.Errorf("dataset_names not provided")
+	}
+
+	// Convert dataset names to IDs
+	datasetIDs := make([]string, 0, len(datasetNames))
+	for _, name := range datasetNames {
+		id, err := c.getDatasetID(name)
+		if err != nil {
+			return nil, err
+		}
+		datasetIDs = append(datasetIDs, id)
+	}
+
+	// Build comma-separated dataset_ids for query param
+	datasetIDsStr := strings.Join(datasetIDs, ",")
+
+	httpClient := c.APIServerClientMap[c.Config.APIClientConfig.CurrentAPIServer]
+	resp, err := httpClient.Request("GET", "/datasets/metadata/flattened?dataset_ids="+datasetIDsStr, "web", nil, nil)
+	if err != nil {
+		return nil, fmt.Errorf("failed to list metadata: %w", err)
+	}
+
+	if resp.StatusCode != 200 {
+		return nil, fmt.Errorf("failed to list metadata: HTTP %d, body: %s", resp.StatusCode, string(resp.Body))
+	}
+
+	var result MetadataResponse
+	if err = json.Unmarshal(resp.Body, &result); err != nil {
+		return nil, fmt.Errorf("list metadata failed: invalid JSON (%w)", err)
+	}
+
+	if result.Code != 0 {
+		return nil, fmt.Errorf("%s", result.Message)
+	}
+	result.Duration = resp.Duration
+
+	return &result, nil
+}
+
 // formatEmptyArray converts empty arrays to "[]" string
 func formatEmptyArray(v interface{}) string {
 	if v == nil {
@@ -522,8 +550,8 @@ func formatEmptyArray(v interface{}) string {
 
 // SearchOnDatasets searches for chunks in specified datasets
 // Returns (result_map, error) - result_map is non-nil for benchmark mode
-func (c *RAGFlowClient) SearchOnDatasets(cmd *Command) (ResponseIf, error) {
-	if c.ServerType != "user" {
+func (c *CLI) SearchOnDatasets(cmd *Command) (ResponseIf, error) {
+	if c.Config.CLIMode != APIMode {
 		return nil, fmt.Errorf("this command is only allowed in USER mode")
 	}
 
@@ -562,13 +590,76 @@ func (c *RAGFlowClient) SearchOnDatasets(cmd *Command) (ResponseIf, error) {
 		"vector_similarity_weight": 0.3,
 	}
 
+	// Add optional parameters from command
+	if val, ok := cmd.Params["top_k"]; ok {
+		payload["top_k"] = val
+	}
+	if val, ok := cmd.Params["similarity_threshold"]; ok {
+		payload["similarity_threshold"] = val
+	}
+	if val, ok := cmd.Params["vector_similarity_weight"]; ok {
+		payload["vector_similarity_weight"] = val
+	}
+	if val, ok := cmd.Params["keyword"]; ok {
+		payload["keyword"] = val
+	}
+	if val, ok := cmd.Params["use_kg"]; ok {
+		payload["use_kg"] = val
+	}
+	if val, ok := cmd.Params["rerank_id"]; ok {
+		payload["rerank_id"] = val
+	}
+	if val, ok := cmd.Params["tenant_rerank_id"]; ok {
+		payload["tenant_rerank_id"] = val
+	}
+	if val, ok := cmd.Params["page_size"]; ok {
+		payload["page_size"] = val
+	}
+	if val, ok := cmd.Params["page"]; ok {
+		payload["page"] = val
+	}
+	if val, ok := cmd.Params["search_id"]; ok {
+		if s, ok := val.(string); ok {
+			payload["search_id"] = s
+		}
+	}
+	if val, ok := cmd.Params["cross_languages"]; ok {
+		if list, ok := val.([]string); ok {
+			payload["cross_languages"] = list
+		}
+	}
+	if val, ok := cmd.Params["doc_ids"]; ok {
+		if list, ok := val.([]string); ok {
+			payload["doc_ids"] = list
+		}
+	}
+	if val, ok := cmd.Params["meta_data_filter"]; ok {
+		// Accept either a raw JSON string from the CLI or a pre-decoded
+		// map[string]interface{} (future-proofing for callers that
+		// construct the command programmatically). The string form is
+		// the public CLI surface; the map form is for unit tests.
+		switch v := val.(type) {
+		case string:
+			var decoded map[string]interface{}
+			if err := json.Unmarshal([]byte(v), &decoded); err != nil {
+				return nil, fmt.Errorf("invalid meta_data_filter JSON: %w", err)
+			}
+			payload["meta_data_filter"] = decoded
+		case map[string]interface{}:
+			payload["meta_data_filter"] = v
+		default:
+			return nil, fmt.Errorf("meta_data_filter must be JSON string or object")
+		}
+	}
+
+	httpClient := c.APIServerClientMap[c.Config.APIClientConfig.CurrentAPIServer]
 	if iterations > 1 {
 		// Benchmark mode - return raw result for benchmark stats
-		return c.HTTPClient.RequestWithIterations("POST", "/datasets/search", "web", nil, payload, iterations)
+		return httpClient.RequestWithIterations("POST", "/datasets/search", "web", nil, payload, iterations)
 	}
 
 	// Normal mode
-	resp, err := c.HTTPClient.Request("POST", "/datasets/search", "web", nil, payload)
+	resp, err := httpClient.Request("POST", "/datasets/search", "web", nil, payload)
 	if err != nil {
 		return nil, fmt.Errorf("failed to search on datasets: %w", err)
 	}
@@ -638,12 +729,13 @@ func (c *RAGFlowClient) SearchOnDatasets(cmd *Command) (ResponseIf, error) {
 }
 
 // CreateToken creates a new API token
-func (c *RAGFlowClient) CreateToken(cmd *Command) (ResponseIf, error) {
-	if c.ServerType != "user" {
+func (c *CLI) CreateToken(cmd *Command) (ResponseIf, error) {
+	if c.Config.CLIMode != APIMode {
 		return nil, fmt.Errorf("this command is only allowed in USER mode")
 	}
 
-	resp, err := c.HTTPClient.Request("POST", "/system/tokens", "web", nil, nil)
+	httpClient := c.APIServerClientMap[c.Config.APIClientConfig.CurrentAPIServer]
+	resp, err := httpClient.Request("POST", "/system/tokens", "web", nil, nil)
 	if err != nil {
 		return nil, fmt.Errorf("failed to create token: %w", err)
 	}
@@ -669,12 +761,13 @@ func (c *RAGFlowClient) CreateToken(cmd *Command) (ResponseIf, error) {
 }
 
 // ListTokens lists all API tokens for the current user
-func (c *RAGFlowClient) ListTokens(cmd *Command) (ResponseIf, error) {
-	if c.ServerType != "user" {
+func (c *CLI) ListTokens(cmd *Command) (ResponseIf, error) {
+	if c.Config.CLIMode != APIMode {
 		return nil, fmt.Errorf("this command is only allowed in USER mode")
 	}
 
-	resp, err := c.HTTPClient.Request("GET", "/system/tokens", "web", nil, nil)
+	httpClient := c.APIServerClientMap[c.Config.APIClientConfig.CurrentAPIServer]
+	resp, err := httpClient.Request("GET", "/system/tokens", "web", nil, nil)
 	if err != nil {
 		return nil, fmt.Errorf("failed to list tokens: %w", err)
 	}
@@ -696,8 +789,8 @@ func (c *RAGFlowClient) ListTokens(cmd *Command) (ResponseIf, error) {
 }
 
 // DropToken deletes an API token
-func (c *RAGFlowClient) DropToken(cmd *Command) (ResponseIf, error) {
-	if c.ServerType != "user" {
+func (c *CLI) DropToken(cmd *Command) (ResponseIf, error) {
+	if c.Config.CLIMode != APIMode {
 		return nil, fmt.Errorf("this command is only allowed in USER mode")
 	}
 
@@ -706,7 +799,7 @@ func (c *RAGFlowClient) DropToken(cmd *Command) (ResponseIf, error) {
 		return nil, fmt.Errorf("token not provided")
 	}
 
-	resp, err := c.HTTPClient.Request("DELETE", fmt.Sprintf("/system/tokens/%s", token), "web", nil, nil)
+	resp, err := c.APIServerClientMap[c.Config.APIClientConfig.CurrentAPIServer].Request("DELETE", fmt.Sprintf("/system/tokens/%s", token), "web", nil, nil)
 	if err != nil {
 		return nil, fmt.Errorf("failed to drop token: %w", err)
 	}
@@ -728,8 +821,8 @@ func (c *RAGFlowClient) DropToken(cmd *Command) (ResponseIf, error) {
 }
 
 // SetToken sets the API token after validating it
-func (c *RAGFlowClient) SetToken(cmd *Command) (ResponseIf, error) {
-	if c.ServerType != "user" {
+func (c *CLI) SetToken(cmd *Command) (ResponseIf, error) {
+	if c.Config.CLIMode != APIMode {
 		return nil, fmt.Errorf("this command is only allowed in USER mode")
 	}
 
@@ -739,41 +832,41 @@ func (c *RAGFlowClient) SetToken(cmd *Command) (ResponseIf, error) {
 	}
 
 	// Save current token to restore if validation fails
-	savedToken := c.HTTPClient.APIToken
-	savedUseAPIToken := c.HTTPClient.useAPIToken
+	savedToken := c.APIServerClientMap[c.Config.APIClientConfig.CurrentAPIServer].APIToken
+	savedUseAPIToken := c.APIServerClientMap[c.Config.APIClientConfig.CurrentAPIServer].useAPIToken
 
 	// Set the new token temporarily for validation
-	c.HTTPClient.APIToken = token
-	c.HTTPClient.useAPIToken = true
+	c.APIServerClientMap[c.Config.APIClientConfig.CurrentAPIServer].APIToken = &token
+	c.APIServerClientMap[c.Config.APIClientConfig.CurrentAPIServer].useAPIToken = true
 
 	// Validate token by calling list tokens API
-	resp, err := c.HTTPClient.Request("GET", "/tokens", "api", nil, nil)
+	resp, err := c.APIServerClientMap[c.Config.APIClientConfig.CurrentAPIServer].Request("GET", "/tokens", "api", nil, nil)
 	if err != nil {
 		// Restore original token on error
-		c.HTTPClient.APIToken = savedToken
-		c.HTTPClient.useAPIToken = savedUseAPIToken
+		c.APIServerClientMap[c.Config.APIClientConfig.CurrentAPIServer].APIToken = savedToken
+		c.APIServerClientMap[c.Config.APIClientConfig.CurrentAPIServer].useAPIToken = savedUseAPIToken
 		return nil, fmt.Errorf("failed to validate token: %w", err)
 	}
 
 	if resp.StatusCode != 200 {
 		// Restore original token on error
-		c.HTTPClient.APIToken = savedToken
-		c.HTTPClient.useAPIToken = savedUseAPIToken
+		c.APIServerClientMap[c.Config.APIClientConfig.CurrentAPIServer].APIToken = savedToken
+		c.APIServerClientMap[c.Config.APIClientConfig.CurrentAPIServer].useAPIToken = savedUseAPIToken
 		return nil, fmt.Errorf("token validation failed: HTTP %d, body: %s", resp.StatusCode, string(resp.Body))
 	}
 
 	var result CommonResponse
 	if err = json.Unmarshal(resp.Body, &result); err != nil {
 		// Restore original token on error
-		c.HTTPClient.APIToken = savedToken
-		c.HTTPClient.useAPIToken = savedUseAPIToken
+		c.APIServerClientMap[c.Config.APIClientConfig.CurrentAPIServer].APIToken = savedToken
+		c.APIServerClientMap[c.Config.APIClientConfig.CurrentAPIServer].useAPIToken = savedUseAPIToken
 		return nil, fmt.Errorf("token validation failed: invalid JSON (%w)", err)
 	}
 
 	if result.Code != 0 {
 		// Restore original token on error
-		c.HTTPClient.APIToken = savedToken
-		c.HTTPClient.useAPIToken = savedUseAPIToken
+		c.APIServerClientMap[c.Config.APIClientConfig.CurrentAPIServer].APIToken = savedToken
+		c.APIServerClientMap[c.Config.APIClientConfig.CurrentAPIServer].useAPIToken = savedUseAPIToken
 		return nil, fmt.Errorf("token validation failed: %s", result.Message)
 	}
 
@@ -786,23 +879,23 @@ func (c *RAGFlowClient) SetToken(cmd *Command) (ResponseIf, error) {
 }
 
 // ShowToken displays the current API token
-func (c *RAGFlowClient) ShowToken(cmd *Command) (ResponseIf, error) {
-	if c.ServerType != "user" {
+func (c *CLI) ShowToken(cmd *Command) (ResponseIf, error) {
+	if c.Config.CLIMode != APIMode {
 		return nil, fmt.Errorf("this command is only allowed in USER mode")
 	}
 
-	if c.HTTPClient.APIToken == "" {
+	if c.APIServerClientMap[c.Config.APIClientConfig.CurrentAPIServer].APIToken == nil {
 		return nil, fmt.Errorf("no API token is currently set")
 	}
 
-	//fmt.Printf("Token: %s\n", c.HTTPClient.APIToken)
+	//fmt.Printf("Token: %s\n", c.APIServerClientMap[c.Config.APIClientConfig.CurrentAPIServer].APIToken)
 
 	var result CommonResponse
 	result.Code = 0
 	result.Message = ""
 	result.Data = []map[string]interface{}{
 		{
-			"token": c.HTTPClient.APIToken,
+			"token": c.APIServerClientMap[c.Config.APIClientConfig.CurrentAPIServer].APIToken,
 		},
 	}
 	result.Duration = 0
@@ -810,17 +903,17 @@ func (c *RAGFlowClient) ShowToken(cmd *Command) (ResponseIf, error) {
 }
 
 // UnsetToken removes the current API token
-func (c *RAGFlowClient) UnsetToken(cmd *Command) (ResponseIf, error) {
-	if c.ServerType != "user" {
+func (c *CLI) UnsetToken(cmd *Command) (ResponseIf, error) {
+	if c.Config.CLIMode != APIMode {
 		return nil, fmt.Errorf("this command is only allowed in USER mode")
 	}
 
-	if c.HTTPClient.APIToken == "" {
+	if c.APIServerClientMap[c.Config.APIClientConfig.CurrentAPIServer].APIToken == nil {
 		return nil, fmt.Errorf("no API token is currently set")
 	}
 
-	c.HTTPClient.APIToken = ""
-	c.HTTPClient.useAPIToken = false
+	c.APIServerClientMap[c.Config.APIClientConfig.CurrentAPIServer].APIToken = nil
+	c.APIServerClientMap[c.Config.APIClientConfig.CurrentAPIServer].useAPIToken = false
 
 	var result SimpleResponse
 	result.Code = 0
@@ -829,9 +922,9 @@ func (c *RAGFlowClient) UnsetToken(cmd *Command) (ResponseIf, error) {
 	return &result, nil
 }
 
-// CreateDataset creates a table for a dataset
-func (c *RAGFlowClient) CreateDataset(cmd *Command) (ResponseIf, error) {
-	if c.ServerType != "user" {
+// CreateChunkStore creates a chunk store in doc engine
+func (c *CLI) CreateChunkStore(cmd *Command) (ResponseIf, error) {
+	if c.Config.CLIMode != APIMode {
 		return nil, fmt.Errorf("this command is only allowed in USER mode")
 	}
 
@@ -856,13 +949,13 @@ func (c *RAGFlowClient) CreateDataset(cmd *Command) (ResponseIf, error) {
 		"vector_size": vectorSize,
 	}
 
-	resp, err := c.HTTPClient.Request("POST", "/kb/doc_engine_table", "web", nil, payload)
+	resp, err := c.APIServerClientMap[c.Config.APIClientConfig.CurrentAPIServer].Request("POST", "/tenant/chunk_store", "web", nil, payload)
 	if err != nil {
-		return nil, fmt.Errorf("failed to create table: %w", err)
+		return nil, fmt.Errorf("failed to create chunk store: %w", err)
 	}
 
 	if resp.StatusCode != 200 {
-		return nil, fmt.Errorf("failed to create table: HTTP %d, body: %s", resp.StatusCode, string(resp.Body))
+		return nil, fmt.Errorf("failed to create chunk store: HTTP %d, body: %s", resp.StatusCode, string(resp.Body))
 	}
 
 	resJSON, err := resp.JSON()
@@ -878,74 +971,17 @@ func (c *RAGFlowClient) CreateDataset(cmd *Command) (ResponseIf, error) {
 	var result SimpleResponse
 	result.Code = int(code)
 	if result.Code == 0 {
-		result.Message = fmt.Sprintf("Success to create table for dataset: %s", datasetName)
+		result.Message = fmt.Sprintf("Success to create chunk store for dataset: %s", datasetName)
 	} else {
-		result.Message = fmt.Sprintf("Failed to create table: %v", resJSON)
+		result.Message = fmt.Sprintf("Failed to create chunk store: %v", resJSON)
 	}
 	result.Duration = 0
 	return &result, nil
 }
 
-// CreateDatasetInDocEngine creates a table for a dataset in doc engine
-func (c *RAGFlowClient) CreateDatasetInDocEngine(cmd *Command) (ResponseIf, error) {
-	if c.ServerType != "user" {
-		return nil, fmt.Errorf("this command is only allowed in USER mode")
-	}
-
-	datasetName, ok := cmd.Params["dataset_name"].(string)
-	if !ok {
-		return nil, fmt.Errorf("dataset_name not provided")
-	}
-
-	vectorSize, ok := cmd.Params["vector_size"].(int)
-	if !ok {
-		return nil, fmt.Errorf("vector_size not provided")
-	}
-
-	// Get dataset ID by name
-	datasetID, err := c.getDatasetID(datasetName)
-	if err != nil {
-		return nil, err
-	}
-
-	payload := map[string]interface{}{
-		"kb_id":       datasetID,
-		"vector_size": vectorSize,
-	}
-
-	resp, err := c.HTTPClient.Request("POST", "/kb/doc_engine_table", "web", nil, payload)
-	if err != nil {
-		return nil, fmt.Errorf("failed to create table: %w", err)
-	}
-
-	if resp.StatusCode != 200 {
-		return nil, fmt.Errorf("failed to create table: HTTP %d, body: %s", resp.StatusCode, string(resp.Body))
-	}
-
-	resJSON, err := resp.JSON()
-	if err != nil {
-		return nil, fmt.Errorf("invalid JSON response: %w", err)
-	}
-
-	code, ok := resJSON["code"].(float64)
-	if !ok {
-		return nil, fmt.Errorf("invalid response format: code is not a number")
-	}
-
-	var result SimpleResponse
-	result.Code = int(code)
-	if result.Code == 0 {
-		result.Message = fmt.Sprintf("Success to create table for dataset: %s", datasetName)
-	} else {
-		result.Message = fmt.Sprintf("Failed to create table: %v", resJSON)
-	}
-	result.Duration = 0
-	return &result, nil
-}
-
-// DropDatasetInDocEngine drops a table for a dataset in doc engine
-func (c *RAGFlowClient) DropDatasetInDocEngine(cmd *Command) (ResponseIf, error) {
-	if c.ServerType != "user" {
+// DropChunkStore drops a chunk store in doc engine
+func (c *CLI) DropChunkStore(cmd *Command) (ResponseIf, error) {
+	if c.Config.CLIMode != APIMode {
 		return nil, fmt.Errorf("this command is only allowed in USER mode")
 	}
 
@@ -964,7 +1000,7 @@ func (c *RAGFlowClient) DropDatasetInDocEngine(cmd *Command) (ResponseIf, error)
 		"kb_id": datasetID,
 	}
 
-	resp, err := c.HTTPClient.Request("DELETE", "/kb/doc_engine_table", "web", nil, payload)
+	resp, err := c.APIServerClientMap[c.Config.APIClientConfig.CurrentAPIServer].Request("DELETE", "/tenant/chunk_store", "web", nil, payload)
 	if err != nil {
 		return nil, fmt.Errorf("failed to drop dataset: %w", err)
 	}
@@ -986,27 +1022,27 @@ func (c *RAGFlowClient) DropDatasetInDocEngine(cmd *Command) (ResponseIf, error)
 	var result SimpleResponse
 	result.Code = int(code)
 	if result.Code == 0 {
-		result.Message = fmt.Sprintf("Success to drop table for dataset: %s", datasetName)
+		result.Message = fmt.Sprintf("Success to drop chunk store for dataset: %s", datasetName)
 	} else {
-		result.Message = fmt.Sprintf("Failed to drop table for dataset: %s: %v", datasetName, resJSON)
+		result.Message = fmt.Sprintf("Failed to drop chunk store for dataset: %s: %v", datasetName, resJSON)
 	}
 	result.Duration = 0
 	return &result, nil
 }
 
-// CreateMetadataInDocEngine creates the document metadata table for the tenant
-func (c *RAGFlowClient) CreateMetadataInDocEngine(cmd *Command) (ResponseIf, error) {
-	if c.ServerType != "user" {
+// CreateMetadataStore creates the document metadata store for the tenant
+func (c *CLI) CreateMetadataStore(cmd *Command) (ResponseIf, error) {
+	if c.Config.CLIMode != APIMode {
 		return nil, fmt.Errorf("this command is only allowed in USER mode")
 	}
 
-	resp, err := c.HTTPClient.Request("POST", "/tenant/doc_engine_metadata_table", "web", nil, nil)
+	resp, err := c.APIServerClientMap[c.Config.APIClientConfig.CurrentAPIServer].Request("POST", "/tenant/metadata_store", "web", nil, nil)
 	if err != nil {
-		return nil, fmt.Errorf("failed to create metadata table: %w", err)
+		return nil, fmt.Errorf("failed to create metadata store: %w", err)
 	}
 
 	if resp.StatusCode != 200 {
-		return nil, fmt.Errorf("failed to create metadata table: HTTP %d, body: %s", resp.StatusCode, string(resp.Body))
+		return nil, fmt.Errorf("failed to create metadata store: HTTP %d, body: %s", resp.StatusCode, string(resp.Body))
 	}
 
 	resJSON, err := resp.JSON()
@@ -1022,27 +1058,27 @@ func (c *RAGFlowClient) CreateMetadataInDocEngine(cmd *Command) (ResponseIf, err
 	var result SimpleResponse
 	result.Code = int(code)
 	if result.Code == 0 {
-		result.Message = "Success to create metadata table"
+		result.Message = "Success to create metadata store"
 	} else {
-		result.Message = fmt.Sprintf("Failed to create metadata table: %v", resJSON)
+		result.Message = fmt.Sprintf("Failed to create metadata store: %v", resJSON)
 	}
 	result.Duration = 0
 	return &result, nil
 }
 
-// DropMetadataInDocEngine drops the document metadata table for the tenant
-func (c *RAGFlowClient) DropMetadataInDocEngine(cmd *Command) (ResponseIf, error) {
-	if c.ServerType != "user" {
+// DropMetadataStore drops the document metadata store for the tenant
+func (c *CLI) DropMetadataStore(cmd *Command) (ResponseIf, error) {
+	if c.Config.CLIMode != APIMode {
 		return nil, fmt.Errorf("this command is only allowed in USER mode")
 	}
 
-	resp, err := c.HTTPClient.Request("DELETE", "/tenant/doc_engine_metadata_table", "web", nil, nil)
+	resp, err := c.APIServerClientMap[c.Config.APIClientConfig.CurrentAPIServer].Request("DELETE", "/tenant/metadata_store", "web", nil, nil)
 	if err != nil {
-		return nil, fmt.Errorf("failed to drop metadata table: %w", err)
+		return nil, fmt.Errorf("failed to drop metadata store: %w", err)
 	}
 
 	if resp.StatusCode != 200 {
-		return nil, fmt.Errorf("failed to drop metadata table: HTTP %d, body: %s", resp.StatusCode, string(resp.Body))
+		return nil, fmt.Errorf("failed to drop metadata store: HTTP %d, body: %s", resp.StatusCode, string(resp.Body))
 	}
 
 	resJSON, err := resp.JSON()
@@ -1058,9 +1094,9 @@ func (c *RAGFlowClient) DropMetadataInDocEngine(cmd *Command) (ResponseIf, error
 	var result SimpleResponse
 	result.Code = int(code)
 	if result.Code == 0 {
-		result.Message = "Success to drop metadata table"
+		result.Message = "Success to drop metadata store"
 	} else {
-		result.Message = fmt.Sprintf("Failed to drop metadata table: %v", resJSON)
+		result.Message = fmt.Sprintf("Failed to drop metadata store: %v", resJSON)
 	}
 	result.Duration = 0
 	return &result, nil
@@ -1069,8 +1105,8 @@ func (c *RAGFlowClient) DropMetadataInDocEngine(cmd *Command) (ResponseIf, error
 // AddProvider creates a new model provider
 // ADD PROVIDER <name>
 // ADD PROVIDER <name> <api_key>
-func (c *RAGFlowClient) AddProvider(cmd *Command) (ResponseIf, error) {
-	if c.ServerType != "user" {
+func (c *CLI) AddProvider(cmd *Command) (ResponseIf, error) {
+	if c.Config.CLIMode != APIMode {
 		return nil, fmt.Errorf("this command is only allowed in USER mode")
 	}
 
@@ -1084,7 +1120,7 @@ func (c *RAGFlowClient) AddProvider(cmd *Command) (ResponseIf, error) {
 		"provider_name": providerName,
 	}
 
-	resp, err := c.HTTPClient.Request("PUT", "/providers", "web", nil, payload)
+	resp, err := c.APIServerClientMap[c.Config.APIClientConfig.CurrentAPIServer].Request("PUT", "/providers", "web", nil, payload)
 	if err != nil {
 		return nil, fmt.Errorf("failed to add provider: %w", err)
 	}
@@ -1108,12 +1144,12 @@ func (c *RAGFlowClient) AddProvider(cmd *Command) (ResponseIf, error) {
 
 // ListProviders lists all providers
 // LIST PROVIDERS
-func (c *RAGFlowClient) ListProviders(cmd *Command) (ResponseIf, error) {
-	if c.ServerType != "user" {
+func (c *CLI) ListProviders(cmd *Command) (ResponseIf, error) {
+	if c.Config.CLIMode != APIMode {
 		return nil, fmt.Errorf("this command is only allowed in USER mode")
 	}
 
-	resp, err := c.HTTPClient.Request("GET", "/providers", "web", nil, nil)
+	resp, err := c.APIServerClientMap[c.Config.APIClientConfig.CurrentAPIServer].Request("GET", "/providers", "web", nil, nil)
 	if err != nil {
 		return nil, fmt.Errorf("failed to list providers: %w", err)
 	}
@@ -1137,8 +1173,8 @@ func (c *RAGFlowClient) ListProviders(cmd *Command) (ResponseIf, error) {
 
 // DeleteProvider deletes a provider
 // DELETE PROVIDER <name>
-func (c *RAGFlowClient) DeleteProvider(cmd *Command) (ResponseIf, error) {
-	if c.ServerType != "user" {
+func (c *CLI) DeleteProvider(cmd *Command) (ResponseIf, error) {
+	if c.Config.CLIMode != APIMode {
 		return nil, fmt.Errorf("this command is only allowed in USER mode")
 	}
 
@@ -1154,7 +1190,7 @@ func (c *RAGFlowClient) DeleteProvider(cmd *Command) (ResponseIf, error) {
 		"llm_factory": providerName,
 	}
 
-	resp, err := c.HTTPClient.Request("DELETE", url, "web", nil, payload)
+	resp, err := c.APIServerClientMap[c.Config.APIClientConfig.CurrentAPIServer].Request("DELETE", url, "web", nil, payload)
 	if err != nil {
 		return nil, fmt.Errorf("failed to delete provider: %w", err)
 	}
@@ -1177,9 +1213,9 @@ func (c *RAGFlowClient) DeleteProvider(cmd *Command) (ResponseIf, error) {
 }
 
 // CreateProviderInstance creates a new provider instance
-// CREATE PROVIDER <name> INSTANCE <instance_name> <api_key>
-func (c *RAGFlowClient) CreateProviderInstance(cmd *Command) (ResponseIf, error) {
-	if c.ServerType != "user" {
+// CREATE PROVIDER <name> INSTANCE <instance_name> KEY <api_key> URL <base_url> REGION <region>
+func (c *CLI) CreateProviderInstance(cmd *Command) (ResponseIf, error) {
+	if c.Config.CLIMode != APIMode {
 		return nil, fmt.Errorf("this command is only allowed in USER mode")
 	}
 
@@ -1217,7 +1253,7 @@ func (c *RAGFlowClient) CreateProviderInstance(cmd *Command) (ResponseIf, error)
 		"region":        region,
 	}
 
-	resp, err := c.HTTPClient.Request("POST", url, "web", nil, payload)
+	resp, err := c.APIServerClientMap[c.Config.APIClientConfig.CurrentAPIServer].Request("POST", url, "web", nil, payload)
 	if err != nil {
 		return nil, fmt.Errorf("failed to create provider instance: %w", err)
 	}
@@ -1241,8 +1277,8 @@ func (c *RAGFlowClient) CreateProviderInstance(cmd *Command) (ResponseIf, error)
 
 // ListProviderInstances lists all instances of a provider
 // LIST INSTANCES FROM PROVIDER <name>
-func (c *RAGFlowClient) ListProviderInstances(cmd *Command) (ResponseIf, error) {
-	if c.ServerType != "user" {
+func (c *CLI) ListProviderInstances(cmd *Command) (ResponseIf, error) {
+	if c.Config.CLIMode != APIMode {
 		return nil, fmt.Errorf("this command is only allowed in USER mode")
 	}
 
@@ -1253,7 +1289,7 @@ func (c *RAGFlowClient) ListProviderInstances(cmd *Command) (ResponseIf, error) 
 
 	url := fmt.Sprintf("/providers/%s/instances", providerName)
 
-	resp, err := c.HTTPClient.Request("GET", url, "web", nil, nil)
+	resp, err := c.APIServerClientMap[c.Config.APIClientConfig.CurrentAPIServer].Request("GET", url, "web", nil, nil)
 	if err != nil {
 		return nil, fmt.Errorf("failed to list instances: %w", err)
 	}
@@ -1277,8 +1313,8 @@ func (c *RAGFlowClient) ListProviderInstances(cmd *Command) (ResponseIf, error) 
 
 // ShowProviderInstance shows details of a specific instance
 // SHOW INSTANCE <name> FROM PROVIDER <name>
-func (c *RAGFlowClient) ShowProviderInstance(cmd *Command) (ResponseIf, error) {
-	if c.ServerType != "user" {
+func (c *CLI) ShowProviderInstance(cmd *Command) (ResponseIf, error) {
+	if c.Config.CLIMode != APIMode {
 		return nil, fmt.Errorf("this command is only allowed in USER mode")
 	}
 
@@ -1294,7 +1330,7 @@ func (c *RAGFlowClient) ShowProviderInstance(cmd *Command) (ResponseIf, error) {
 
 	url := fmt.Sprintf("/providers/%s/instances/%s", providerName, instanceName)
 
-	resp, err := c.HTTPClient.Request("GET", url, "web", nil, nil)
+	resp, err := c.APIServerClientMap[c.Config.APIClientConfig.CurrentAPIServer].Request("GET", url, "web", nil, nil)
 	if err != nil {
 		return nil, fmt.Errorf("failed to show instance: %w", err)
 	}
@@ -1318,8 +1354,8 @@ func (c *RAGFlowClient) ShowProviderInstance(cmd *Command) (ResponseIf, error) {
 
 // ShowInstanceBalance shows balance of a specific instance
 // SHOW BALANCE FROM PROVIDER <provider_name> <instance_name>
-func (c *RAGFlowClient) ShowInstanceBalance(cmd *Command) (ResponseIf, error) {
-	if c.ServerType != "user" {
+func (c *CLI) ShowInstanceBalance(cmd *Command) (ResponseIf, error) {
+	if c.Config.CLIMode != APIMode {
 		return nil, fmt.Errorf("this command is only allowed in USER mode")
 	}
 
@@ -1335,7 +1371,7 @@ func (c *RAGFlowClient) ShowInstanceBalance(cmd *Command) (ResponseIf, error) {
 
 	url := fmt.Sprintf("/providers/%s/instances/%s/balance", providerName, instanceName)
 
-	resp, err := c.HTTPClient.Request("GET", url, "web", nil, nil)
+	resp, err := c.APIServerClientMap[c.Config.APIClientConfig.CurrentAPIServer].Request("GET", url, "web", nil, nil)
 	if err != nil {
 		return nil, fmt.Errorf("failed to show instance: %w", err)
 	}
@@ -1359,8 +1395,8 @@ func (c *RAGFlowClient) ShowInstanceBalance(cmd *Command) (ResponseIf, error) {
 
 // AlterProviderInstance renames a provider instance
 // ALTER INSTANCE <name> NAME <new_name> FROM PROVIDER <name>
-func (c *RAGFlowClient) AlterProviderInstance(cmd *Command) (ResponseIf, error) {
-	if c.ServerType != "user" {
+func (c *CLI) AlterProviderInstance(cmd *Command) (ResponseIf, error) {
+	if c.Config.CLIMode != APIMode {
 		return nil, fmt.Errorf("this command is only allowed in USER mode")
 	}
 
@@ -1385,7 +1421,7 @@ func (c *RAGFlowClient) AlterProviderInstance(cmd *Command) (ResponseIf, error) 
 		"llm_name": newName,
 	}
 
-	resp, err := c.HTTPClient.Request("PUT", url, "web", nil, payload)
+	resp, err := c.APIServerClientMap[c.Config.APIClientConfig.CurrentAPIServer].Request("PUT", url, "web", nil, payload)
 	if err != nil {
 		return nil, fmt.Errorf("failed to alter instance: %w", err)
 	}
@@ -1409,8 +1445,8 @@ func (c *RAGFlowClient) AlterProviderInstance(cmd *Command) (ResponseIf, error) 
 
 // DropProviderInstance deletes a provider instance
 // DROP INSTANCE <name> FROM PROVIDER <name>
-func (c *RAGFlowClient) DropProviderInstance(cmd *Command) (ResponseIf, error) {
-	if c.ServerType != "user" {
+func (c *CLI) DropProviderInstance(cmd *Command) (ResponseIf, error) {
+	if c.Config.CLIMode != APIMode {
 		return nil, fmt.Errorf("this command is only allowed in USER mode")
 	}
 
@@ -1430,7 +1466,7 @@ func (c *RAGFlowClient) DropProviderInstance(cmd *Command) (ResponseIf, error) {
 
 	url := fmt.Sprintf("/providers/%s/instances", providerName)
 
-	resp, err := c.HTTPClient.Request("DELETE", url, "web", nil, payload)
+	resp, err := c.APIServerClientMap[c.Config.APIClientConfig.CurrentAPIServer].Request("DELETE", url, "web", nil, payload)
 	if err != nil {
 		return nil, fmt.Errorf("failed to drop instance: %w", err)
 	}
@@ -1452,10 +1488,10 @@ func (c *RAGFlowClient) DropProviderInstance(cmd *Command) (ResponseIf, error) {
 	return &result, nil
 }
 
-// DropInstanceModel deletes a provider instance, only works for local deployed model
-// DROP MODEL <name> FROM <provider_name> <instance_name>
-func (c *RAGFlowClient) DropInstanceModel(cmd *Command) (ResponseIf, error) {
-	if c.ServerType != "user" {
+// DROP MODEL <name1 name2 name3> FROM <provider_name> <instance_name>
+// Remove MODEL <name1 name2 name3> FROM <provider_name> <instance_name>
+func (c *CLI) DropInstanceModel(cmd *Command) (ResponseIf, error) {
+	if c.Config.CLIMode != APIMode {
 		return nil, fmt.Errorf("this command is only allowed in USER mode")
 	}
 
@@ -1469,18 +1505,18 @@ func (c *RAGFlowClient) DropInstanceModel(cmd *Command) (ResponseIf, error) {
 		return nil, fmt.Errorf("provider name not provided")
 	}
 
-	modelName, ok := cmd.Params["model_name"].(string)
+	modelNames, ok := cmd.Params["model_names"].([]string)
 	if !ok {
 		return nil, fmt.Errorf("model name not provided")
 	}
 
 	payload := map[string]interface{}{
-		"models": []string{modelName},
+		"models": modelNames,
 	}
 
 	url := fmt.Sprintf("/providers/%s/instances/%s/models", providerName, instanceName)
 
-	resp, err := c.HTTPClient.Request("DELETE", url, "web", nil, payload)
+	resp, err := c.APIServerClientMap[c.Config.APIClientConfig.CurrentAPIServer].Request("DELETE", url, "web", nil, payload)
 	if err != nil {
 		return nil, fmt.Errorf("failed to drop instance: %w", err)
 	}
@@ -1502,8 +1538,8 @@ func (c *RAGFlowClient) DropInstanceModel(cmd *Command) (ResponseIf, error) {
 	return &result, nil
 }
 
-func (c *RAGFlowClient) ListInstanceModels(cmd *Command) (ResponseIf, error) {
-	if c.ServerType != "user" {
+func (c *CLI) ListInstanceModels(cmd *Command) (ResponseIf, error) {
+	if c.Config.CLIMode != APIMode {
 		return nil, fmt.Errorf("this command is only allowed in USER mode")
 	}
 	providerName, ok := cmd.Params["provider_name"].(string)
@@ -1518,7 +1554,7 @@ func (c *RAGFlowClient) ListInstanceModels(cmd *Command) (ResponseIf, error) {
 	var endPoint string
 	endPoint = fmt.Sprintf("/providers/%s/instances/%s/models", providerName, instanceName)
 
-	resp, err := c.HTTPClient.Request("GET", endPoint, "web", nil, nil)
+	resp, err := c.APIServerClientMap[c.Config.APIClientConfig.CurrentAPIServer].Request("GET", endPoint, "web", nil, nil)
 	if err != nil {
 		return nil, fmt.Errorf("failed to list instance models: %w", err)
 	}
@@ -1539,8 +1575,8 @@ func (c *RAGFlowClient) ListInstanceModels(cmd *Command) (ResponseIf, error) {
 	return &result, nil
 }
 
-func (c *RAGFlowClient) EnableOrDisableModel(cmd *Command, status string) (ResponseIf, error) {
-	if c.ServerType != "user" {
+func (c *CLI) EnableOrDisableModel(cmd *Command, status string) (ResponseIf, error) {
+	if c.Config.CLIMode != APIMode {
 		return nil, fmt.Errorf("this command is only allowed in USER mode")
 	}
 
@@ -1565,7 +1601,7 @@ func (c *RAGFlowClient) EnableOrDisableModel(cmd *Command, status string) (Respo
 		"status": status,
 	}
 
-	resp, err := c.HTTPClient.Request("PATCH", url, "web", nil, payload)
+	resp, err := c.APIServerClientMap[c.Config.APIClientConfig.CurrentAPIServer].Request("PATCH", url, "web", nil, payload)
 	if err != nil {
 		return nil, fmt.Errorf("failed to enable/disable model: %w", err)
 	}
@@ -1591,29 +1627,40 @@ func isValidURL(str string) bool {
 	return u.Scheme != "" && u.Host != ""
 }
 
-func (c *RAGFlowClient) ChatToModel(cmd *Command) (ResponseIf, error) {
-	if c.ServerType != "user" {
+func (c *CLI) ChatToModel(cmd *Command) (ResponseIf, error) {
+	if c.Config.CLIMode != APIMode {
 		return nil, fmt.Errorf("this command is only allowed in USER mode")
 	}
 
 	var providerName, instanceName, modelName string
+	var err error
 
-	// Check if composite_model_name is provided in command
-	if compositeModelName, ok := cmd.Params["composite_model_name"].(string); ok && compositeModelName != "" {
-		names := strings.Split(compositeModelName, "@")
-		if len(names) != 3 {
-			return nil, fmt.Errorf("model name must be in format 'model@instance@provider'")
+	compositeModelName, ok := cmd.Params["composite_model_name"].(string)
+	if ok {
+		modelName, instanceName, providerName, err = common.ExtractCompositeName(compositeModelName)
+		if err != nil {
+			return nil, err
 		}
-		providerName = names[2]
-		instanceName = names[1]
-		modelName = names[0]
-	} else if c.CurrentModel != nil {
+	}
+
+	modelID, ok := cmd.Params["model_id"].(string)
+	if !ok {
+		modelID = ""
+	}
+
+	if modelID == "" && compositeModelName == "" {
+		if c.CurrentModel == nil {
+			return nil, fmt.Errorf("model name or ID not provided and no current model set. Use 'use model' command first")
+		}
+
 		// Use current model if set
-		providerName = c.CurrentModel.Provider
-		instanceName = c.CurrentModel.Instance
-		modelName = c.CurrentModel.Model
-	} else {
-		return nil, fmt.Errorf("model name not provided and no current model set. Use 'use model' command first")
+		if c.CurrentModel.ModelID != "" {
+			modelID = c.CurrentModel.ModelID
+		} else {
+			providerName = c.CurrentModel.Provider
+			instanceName = c.CurrentModel.Instance
+			modelName = c.CurrentModel.Model
+		}
 	}
 
 	formattedMessages := []map[string]interface{}{}
@@ -1738,12 +1785,16 @@ func (c *RAGFlowClient) ChatToModel(cmd *Command) (ResponseIf, error) {
 	url := "/chat/completions"
 
 	payload := map[string]interface{}{
-		"provider_name": providerName,
-		"instance_name": instanceName,
-		"model_name":    modelName,
-		"messages":      formattedMessages,
-		"stream":        stream,
-		"thinking":      thinking,
+		"messages": formattedMessages,
+		"stream":   stream,
+		"thinking": thinking,
+	}
+	if modelID == "" {
+		payload["provider_name"] = providerName
+		payload["instance_name"] = instanceName
+		payload["model_name"] = modelName
+	} else {
+		payload["model_id"] = modelID
 	}
 
 	if thinking {
@@ -1754,7 +1805,7 @@ func (c *RAGFlowClient) ChatToModel(cmd *Command) (ResponseIf, error) {
 	if stream {
 		// Call stream http api
 		startTime := time.Now()
-		reader, err := c.HTTPClient.RequestStream("POST", url, "web", nil, payload)
+		reader, err := c.APIServerClientMap[c.Config.APIClientConfig.CurrentAPIServer].RequestStream("POST", url, "web", nil, payload)
 		if err != nil {
 			return nil, fmt.Errorf("failed to chat model: %w", err)
 		}
@@ -1823,18 +1874,18 @@ func (c *RAGFlowClient) ChatToModel(cmd *Command) (ResponseIf, error) {
 		return result, nil
 	}
 
-	resp, err := c.HTTPClient.Request("POST", url, "web", nil, payload)
+	resp, err := c.APIServerClientMap[c.Config.APIClientConfig.CurrentAPIServer].Request("POST", url, "web", nil, payload)
 	if err != nil {
 		return nil, formatRequestError("Chat request", err)
 	}
 
 	if resp.StatusCode != 200 {
-		return nil, fmt.Errorf("failed to list instance models: HTTP %d, body: %s", resp.StatusCode, string(resp.Body))
+		return nil, fmt.Errorf("failed to chat model: HTTP %d, body: %s", resp.StatusCode, string(resp.Body))
 	}
 
 	var result NonStreamResponse
 	if err = json.Unmarshal(resp.Body, &result); err != nil {
-		return nil, fmt.Errorf("failed to list instance models: invalid JSON (%w)", err)
+		return nil, fmt.Errorf("failed to chat model: invalid JSON (%w)", err)
 	}
 
 	if result.Code != 0 {
@@ -1844,33 +1895,45 @@ func (c *RAGFlowClient) ChatToModel(cmd *Command) (ResponseIf, error) {
 	return &result, nil
 }
 
-func (c *RAGFlowClient) EmbedUserText(cmd *Command) (ResponseIf, error) {
-	if c.HTTPClient.APIToken == "" && c.HTTPClient.LoginToken == "" {
+func (c *CLI) EmbedUserText(cmd *Command) (ResponseIf, error) {
+	if c.APIServerClientMap[c.Config.APIClientConfig.CurrentAPIServer].APIToken == nil && c.APIServerClientMap[c.Config.APIClientConfig.CurrentAPIServer].LoginToken == nil {
 		return nil, fmt.Errorf("API token not set. Please login first")
 	}
 
-	if c.ServerType != "user" {
+	if c.Config.CLIMode != APIMode {
 		return nil, fmt.Errorf("this command is only allowed in USER mode")
 	}
 
 	var providerName, instanceName, modelName string
+	var err error
 
 	// Check if composite_model_name is provided in command
-	if compositeModelName, ok := cmd.Params["composite_model_name"].(string); ok && compositeModelName != "" {
-		names := strings.Split(compositeModelName, "@")
-		if len(names) != 3 {
-			return nil, fmt.Errorf("model name must be in format 'model@instance@provider'")
+	compositeModelName, ok := cmd.Params["composite_model_name"].(string)
+	if ok {
+		modelName, instanceName, providerName, err = common.ExtractCompositeName(compositeModelName)
+		if err != nil {
+			return nil, err
 		}
-		providerName = names[2]
-		instanceName = names[1]
-		modelName = names[0]
-	} else if c.CurrentModel != nil {
+	}
+
+	modelID, ok := cmd.Params["model_id"].(string)
+	if !ok {
+		modelID = ""
+	}
+
+	if modelID == "" && compositeModelName == "" {
+		if c.CurrentModel == nil {
+			return nil, fmt.Errorf("model name or ID not provided and no current model set. Use 'use model' command first")
+		}
+
 		// Use current model if set
-		providerName = c.CurrentModel.Provider
-		instanceName = c.CurrentModel.Instance
-		modelName = c.CurrentModel.Model
-	} else {
-		return nil, fmt.Errorf("model name not provided and no current model set. Use 'use model' command first")
+		if c.CurrentModel.ModelID != "" {
+			modelID = c.CurrentModel.ModelID
+		} else {
+			providerName = c.CurrentModel.Provider
+			instanceName = c.CurrentModel.Instance
+			modelName = c.CurrentModel.Model
+		}
 	}
 
 	texts, ok := cmd.Params["texts"].([]string)
@@ -1884,16 +1947,20 @@ func (c *RAGFlowClient) EmbedUserText(cmd *Command) (ResponseIf, error) {
 	}
 
 	payload := map[string]interface{}{
-		"provider_name": providerName,
-		"instance_name": instanceName,
-		"model_name":    modelName,
-		"texts":         texts,
-		"dimension":     dimension,
+		"texts":     texts,
+		"dimension": dimension,
+	}
+	if modelID == "" {
+		payload["provider_name"] = providerName
+		payload["instance_name"] = instanceName
+		payload["model_name"] = modelName
+	} else {
+		payload["model_id"] = modelID
 	}
 
 	url := "/embeddings"
 
-	resp, err := c.HTTPClient.Request("POST", url, "web", nil, payload)
+	resp, err := c.APIServerClientMap[c.Config.APIClientConfig.CurrentAPIServer].Request("POST", url, "web", nil, payload)
 	if err != nil {
 		return nil, fmt.Errorf("failed to embed text: %w", err)
 	}
@@ -1911,33 +1978,45 @@ func (c *RAGFlowClient) EmbedUserText(cmd *Command) (ResponseIf, error) {
 	return &result, nil
 }
 
-func (c *RAGFlowClient) RerankUserDocument(cmd *Command) (ResponseIf, error) {
-	if c.HTTPClient.APIToken == "" && c.HTTPClient.LoginToken == "" {
+func (c *CLI) RerankUserDocument(cmd *Command) (ResponseIf, error) {
+	if c.APIServerClientMap[c.Config.APIClientConfig.CurrentAPIServer].APIToken == nil && c.APIServerClientMap[c.Config.APIClientConfig.CurrentAPIServer].LoginToken == nil {
 		return nil, fmt.Errorf("API token not set. Please login first")
 	}
 
-	if c.ServerType != "user" {
+	if c.Config.CLIMode != APIMode {
 		return nil, fmt.Errorf("this command is only allowed in USER mode")
 	}
 
 	var providerName, instanceName, modelName string
+	var err error
 
 	// Check if composite_model_name is provided in command
-	if compositeModelName, ok := cmd.Params["composite_model_name"].(string); ok && compositeModelName != "" {
-		names := strings.Split(compositeModelName, "@")
-		if len(names) != 3 {
-			return nil, fmt.Errorf("model name must be in format 'model@instance@provider'")
+	compositeModelName, ok := cmd.Params["composite_model_name"].(string)
+	if ok {
+		modelName, instanceName, providerName, err = common.ExtractCompositeName(compositeModelName)
+		if err != nil {
+			return nil, err
 		}
-		providerName = names[2]
-		instanceName = names[1]
-		modelName = names[0]
-	} else if c.CurrentModel != nil {
+	}
+
+	modelID, ok := cmd.Params["model_id"].(string)
+	if !ok {
+		modelID = ""
+	}
+
+	if modelID == "" && compositeModelName == "" {
+		if c.CurrentModel == nil {
+			return nil, fmt.Errorf("model name or ID not provided and no current model set. Use 'use model' command first")
+		}
+
 		// Use current model if set
-		providerName = c.CurrentModel.Provider
-		instanceName = c.CurrentModel.Instance
-		modelName = c.CurrentModel.Model
-	} else {
-		return nil, fmt.Errorf("model name not provided and no current model set. Use 'use model' command first")
+		if c.CurrentModel.ModelID != "" {
+			modelID = c.CurrentModel.ModelID
+		} else {
+			providerName = c.CurrentModel.Provider
+			instanceName = c.CurrentModel.Instance
+			modelName = c.CurrentModel.Model
+		}
 	}
 
 	query, ok := cmd.Params["query"].(string)
@@ -1956,17 +2035,21 @@ func (c *RAGFlowClient) RerankUserDocument(cmd *Command) (ResponseIf, error) {
 	}
 
 	payload := map[string]interface{}{
-		"provider_name": providerName,
-		"instance_name": instanceName,
-		"model_name":    modelName,
-		"query":         query,
-		"documents":     documents,
-		"top_n":         topN,
+		"query":     query,
+		"documents": documents,
+		"top_n":     topN,
+	}
+	if modelID == "" {
+		payload["provider_name"] = providerName
+		payload["instance_name"] = instanceName
+		payload["model_name"] = modelName
+	} else {
+		payload["model_id"] = modelID
 	}
 
 	url := "/rerank"
 
-	resp, err := c.HTTPClient.Request("POST", url, "web", nil, payload)
+	resp, err := c.APIServerClientMap[c.Config.APIClientConfig.CurrentAPIServer].Request("POST", url, "web", nil, payload)
 	if err != nil {
 		return nil, fmt.Errorf("failed to rerank document: %w", err)
 	}
@@ -1984,33 +2067,45 @@ func (c *RAGFlowClient) RerankUserDocument(cmd *Command) (ResponseIf, error) {
 	return &result, nil
 }
 
-func (c *RAGFlowClient) TTSUserCommand(cmd *Command) (ResponseIf, error) {
-	if c.HTTPClient.APIToken == "" && c.HTTPClient.LoginToken == "" {
+func (c *CLI) TTSUserCommand(cmd *Command) (ResponseIf, error) {
+	if c.APIServerClientMap[c.Config.APIClientConfig.CurrentAPIServer].APIToken == nil && c.APIServerClientMap[c.Config.APIClientConfig.CurrentAPIServer].LoginToken == nil {
 		return nil, fmt.Errorf("API token not set. Please login first")
 	}
 
-	if c.ServerType != "user" {
+	if c.Config.CLIMode != APIMode {
 		return nil, fmt.Errorf("this command is only allowed in USER mode")
 	}
 
 	var providerName, instanceName, modelName string
+	var err error
 
 	// Check if composite_model_name is provided in command
-	if compositeModelName, ok := cmd.Params["composite_model_name"].(string); ok && compositeModelName != "" {
-		names := strings.Split(compositeModelName, "@")
-		if len(names) != 3 {
-			return nil, fmt.Errorf("model name must be in format 'model@instance@provider'")
+	compositeModelName, ok := cmd.Params["composite_model_name"].(string)
+	if ok {
+		modelName, instanceName, providerName, err = common.ExtractCompositeName(compositeModelName)
+		if err != nil {
+			return nil, err
 		}
-		providerName = names[2]
-		instanceName = names[1]
-		modelName = names[0]
-	} else if c.CurrentModel != nil {
+	}
+
+	modelID, ok := cmd.Params["model_id"].(string)
+	if !ok {
+		modelID = ""
+	}
+
+	if modelID == "" && compositeModelName == "" {
+		if c.CurrentModel == nil {
+			return nil, fmt.Errorf("model name or ID not provided and no current model set. Use 'use model' command first")
+		}
+
 		// Use current model if set
-		providerName = c.CurrentModel.Provider
-		instanceName = c.CurrentModel.Instance
-		modelName = c.CurrentModel.Model
-	} else {
-		return nil, fmt.Errorf("model name not provided and no current model set. Use 'use model' command first")
+		if c.CurrentModel.ModelID != "" {
+			modelID = c.CurrentModel.ModelID
+		} else {
+			providerName = c.CurrentModel.Provider
+			instanceName = c.CurrentModel.Instance
+			modelName = c.CurrentModel.Model
+		}
 	}
 
 	text, ok := cmd.Params["text"].(string)
@@ -2024,10 +2119,14 @@ func (c *RAGFlowClient) TTSUserCommand(cmd *Command) (ResponseIf, error) {
 	//}
 
 	payload := map[string]interface{}{
-		"provider_name": providerName,
-		"instance_name": instanceName,
-		"model_name":    modelName,
-		"text":          text,
+		"text": text,
+	}
+	if modelID == "" {
+		payload["provider_name"] = providerName
+		payload["instance_name"] = instanceName
+		payload["model_name"] = modelName
+	} else {
+		payload["model_id"] = modelID
 	}
 
 	ttsConfigPayload := make(map[string]interface{})
@@ -2078,7 +2177,7 @@ func (c *RAGFlowClient) TTSUserCommand(cmd *Command) (ResponseIf, error) {
 
 	url := "/audio/speech"
 
-	resp, err := c.HTTPClient.Request("POST", url, "web", nil, payload)
+	resp, err := c.APIServerClientMap[c.Config.APIClientConfig.CurrentAPIServer].Request("POST", url, "web", nil, payload)
 	if err != nil {
 		return nil, fmt.Errorf("failed to TTS document: %w", err)
 	}
@@ -2176,33 +2275,45 @@ func (c *RAGFlowClient) TTSUserCommand(cmd *Command) (ResponseIf, error) {
 	return &result, nil
 }
 
-func (c *RAGFlowClient) ASRUserCommand(cmd *Command) (ResponseIf, error) {
-	if c.HTTPClient.APIToken == "" && c.HTTPClient.LoginToken == "" {
+func (c *CLI) ASRUserCommand(cmd *Command) (ResponseIf, error) {
+	if c.APIServerClientMap[c.Config.APIClientConfig.CurrentAPIServer].APIToken == nil && c.APIServerClientMap[c.Config.APIClientConfig.CurrentAPIServer].LoginToken == nil {
 		return nil, fmt.Errorf("API token not set. Please login first")
 	}
 
-	if c.ServerType != "user" {
+	if c.Config.CLIMode != APIMode {
 		return nil, fmt.Errorf("this command is only allowed in USER mode")
 	}
 
 	var providerName, instanceName, modelName string
+	var err error
 
 	// Check if composite_model_name is provided in command
-	if compositeModelName, ok := cmd.Params["composite_model_name"].(string); ok && compositeModelName != "" {
-		names := strings.Split(compositeModelName, "@")
-		if len(names) != 3 {
-			return nil, fmt.Errorf("model name must be in format 'model@instance@provider'")
+	compositeModelName, ok := cmd.Params["composite_model_name"].(string)
+	if ok {
+		modelName, instanceName, providerName, err = common.ExtractCompositeName(compositeModelName)
+		if err != nil {
+			return nil, err
 		}
-		providerName = names[2]
-		instanceName = names[1]
-		modelName = names[0]
-	} else if c.CurrentModel != nil {
+	}
+
+	modelID, ok := cmd.Params["model_id"].(string)
+	if !ok {
+		modelID = ""
+	}
+
+	if modelID == "" && compositeModelName == "" {
+		if c.CurrentModel == nil {
+			return nil, fmt.Errorf("model name or ID not provided and no current model set. Use 'use model' command first")
+		}
+
 		// Use current model if set
-		providerName = c.CurrentModel.Provider
-		instanceName = c.CurrentModel.Instance
-		modelName = c.CurrentModel.Model
-	} else {
-		return nil, fmt.Errorf("model name not provided and no current model set. Use 'use model' command first")
+		if c.CurrentModel.ModelID != "" {
+			modelID = c.CurrentModel.ModelID
+		} else {
+			providerName = c.CurrentModel.Provider
+			instanceName = c.CurrentModel.Instance
+			modelName = c.CurrentModel.Model
+		}
 	}
 
 	audioFile, ok := cmd.Params["audio_file"].(string)
@@ -2211,10 +2322,15 @@ func (c *RAGFlowClient) ASRUserCommand(cmd *Command) (ResponseIf, error) {
 	}
 
 	payload := map[string]interface{}{
-		"provider_name": providerName,
-		"instance_name": instanceName,
-		"model_name":    modelName,
-		"file":          audioFile,
+		"file": audioFile,
+	}
+
+	if modelID == "" {
+		payload["provider_name"] = providerName
+		payload["instance_name"] = instanceName
+		payload["model_name"] = modelName
+	} else {
+		payload["model_id"] = modelID
 	}
 
 	asrConfigPayload := make(map[string]interface{})
@@ -2232,7 +2348,7 @@ func (c *RAGFlowClient) ASRUserCommand(cmd *Command) (ResponseIf, error) {
 
 	url := "/audio/transcriptions"
 
-	resp, err := c.HTTPClient.Request("POST", url, "web", nil, payload)
+	resp, err := c.APIServerClientMap[c.Config.APIClientConfig.CurrentAPIServer].Request("POST", url, "web", nil, payload)
 	if err != nil {
 		return nil, fmt.Errorf("failed to ASR document: %w", err)
 	}
@@ -2263,38 +2379,48 @@ func (c *RAGFlowClient) ASRUserCommand(cmd *Command) (ResponseIf, error) {
 	return &result, nil
 }
 
-func (c *RAGFlowClient) OCRUserCommand(cmd *Command) (ResponseIf, error) {
-	if c.HTTPClient.APIToken == "" && c.HTTPClient.LoginToken == "" {
+func (c *CLI) OCRUserCommand(cmd *Command) (ResponseIf, error) {
+	if c.APIServerClientMap[c.Config.APIClientConfig.CurrentAPIServer].APIToken == nil && c.APIServerClientMap[c.Config.APIClientConfig.CurrentAPIServer].LoginToken == nil {
 		return nil, fmt.Errorf("API token not set. Please login first")
 	}
 
-	if c.ServerType != "user" {
+	if c.Config.CLIMode != APIMode {
 		return nil, fmt.Errorf("this command is only allowed in USER mode")
 	}
 
 	var providerName, instanceName, modelName string
+	var err error
 
 	// Check if composite_model_name is provided in command
-	if compositeModelName, ok := cmd.Params["composite_model_name"].(string); ok && compositeModelName != "" {
-		names := strings.Split(compositeModelName, "@")
-		if len(names) != 3 {
-			return nil, fmt.Errorf("model name must be in format 'model@instance@provider'")
+	compositeModelName, ok := cmd.Params["composite_model_name"].(string)
+	if ok {
+		modelName, instanceName, providerName, err = common.ExtractCompositeName(compositeModelName)
+		if err != nil {
+			return nil, err
 		}
-		providerName = names[2]
-		instanceName = names[1]
-		modelName = names[0]
-	} else if c.CurrentModel != nil {
-		// Use current model if set
-		providerName = c.CurrentModel.Provider
-		instanceName = c.CurrentModel.Instance
-		modelName = c.CurrentModel.Model
-	} else {
-		return nil, fmt.Errorf("model name not provided and no current model set. Use 'use model' command first")
 	}
 
+	modelID, ok := cmd.Params["model_id"].(string)
+	if !ok {
+		modelID = ""
+	}
+
+	if modelID == "" && compositeModelName == "" {
+		if c.CurrentModel == nil {
+			return nil, fmt.Errorf("model name or ID not provided and no current model set. Use 'use model' command first")
+		}
+
+		// Use current model if set
+		if c.CurrentModel.ModelID != "" {
+			modelID = c.CurrentModel.ModelID
+		} else {
+			providerName = c.CurrentModel.Provider
+			instanceName = c.CurrentModel.Instance
+			modelName = c.CurrentModel.Model
+		}
+	}
 	var filename string
 	var fileURL string
-	var ok bool
 	var fileContent []byte
 
 	filename, ok = cmd.Params["file"].(string)
@@ -2312,10 +2438,14 @@ func (c *RAGFlowClient) OCRUserCommand(cmd *Command) (ResponseIf, error) {
 		}
 	}
 
-	payload := map[string]interface{}{
-		"provider_name": providerName,
-		"instance_name": instanceName,
-		"model_name":    modelName,
+	payload := map[string]interface{}{}
+
+	if modelID == "" {
+		payload["provider_name"] = providerName
+		payload["instance_name"] = instanceName
+		payload["model_name"] = modelName
+	} else {
+		payload["model_id"] = modelID
 	}
 
 	if fileContent != nil {
@@ -2326,7 +2456,7 @@ func (c *RAGFlowClient) OCRUserCommand(cmd *Command) (ResponseIf, error) {
 
 	url := "/file/ocr"
 
-	resp, err := c.HTTPClient.Request("POST", url, "web", nil, payload)
+	resp, err := c.APIServerClientMap[c.Config.APIClientConfig.CurrentAPIServer].Request("POST", url, "web", nil, payload)
 	if err != nil {
 		return nil, fmt.Errorf("failed to OCR document: %w", err)
 	}
@@ -2345,38 +2475,49 @@ func (c *RAGFlowClient) OCRUserCommand(cmd *Command) (ResponseIf, error) {
 	return &result, nil
 }
 
-func (c *RAGFlowClient) ParseFileUserCommand(cmd *Command) (ResponseIf, error) {
-	if c.HTTPClient.APIToken == "" && c.HTTPClient.LoginToken == "" {
+func (c *CLI) ParseFileUserCommand(cmd *Command) (ResponseIf, error) {
+	if c.APIServerClientMap[c.Config.APIClientConfig.CurrentAPIServer].APIToken == nil && c.APIServerClientMap[c.Config.APIClientConfig.CurrentAPIServer].LoginToken == nil {
 		return nil, fmt.Errorf("API token not set. Please login first")
 	}
 
-	if c.ServerType != "user" {
+	if c.Config.CLIMode != APIMode {
 		return nil, fmt.Errorf("this command is only allowed in USER mode")
 	}
 
 	var providerName, instanceName, modelName string
+	var err error
 
 	// Check if composite_model_name is provided in command
-	if compositeModelName, ok := cmd.Params["composite_model_name"].(string); ok && compositeModelName != "" {
-		names := strings.Split(compositeModelName, "@")
-		if len(names) != 3 {
-			return nil, fmt.Errorf("model name must be in format 'model@instance@provider'")
+	compositeModelName, ok := cmd.Params["composite_model_name"].(string)
+	if ok {
+		modelName, instanceName, providerName, err = common.ExtractCompositeName(compositeModelName)
+		if err != nil {
+			return nil, err
 		}
-		providerName = names[2]
-		instanceName = names[1]
-		modelName = names[0]
-	} else if c.CurrentModel != nil {
+	}
+
+	modelID, ok := cmd.Params["model_id"].(string)
+	if !ok {
+		modelID = ""
+	}
+
+	if modelID == "" && compositeModelName == "" {
+		if c.CurrentModel == nil {
+			return nil, fmt.Errorf("model name or ID not provided and no current model set. Use 'use model' command first")
+		}
+
 		// Use current model if set
-		providerName = c.CurrentModel.Provider
-		instanceName = c.CurrentModel.Instance
-		modelName = c.CurrentModel.Model
-	} else {
-		return nil, fmt.Errorf("model name not provided and no current model set. Use 'use model' command first")
+		if c.CurrentModel.ModelID != "" {
+			modelID = c.CurrentModel.ModelID
+		} else {
+			providerName = c.CurrentModel.Provider
+			instanceName = c.CurrentModel.Instance
+			modelName = c.CurrentModel.Model
+		}
 	}
 
 	var filename string
 	var fileURL string
-	var ok bool
 	var fileContent []byte
 
 	filename, ok = cmd.Params["file"].(string)
@@ -2399,10 +2540,14 @@ func (c *RAGFlowClient) ParseFileUserCommand(cmd *Command) (ResponseIf, error) {
 		}
 	}
 
-	payload := map[string]interface{}{
-		"provider_name": providerName,
-		"instance_name": instanceName,
-		"model_name":    modelName,
+	payload := map[string]interface{}{}
+
+	if modelID == "" {
+		payload["provider_name"] = providerName
+		payload["instance_name"] = instanceName
+		payload["model_name"] = modelName
+	} else {
+		payload["model_id"] = modelID
 	}
 
 	if fileContent != nil {
@@ -2413,7 +2558,7 @@ func (c *RAGFlowClient) ParseFileUserCommand(cmd *Command) (ResponseIf, error) {
 
 	url := "/file/parse"
 
-	resp, err := c.HTTPClient.Request("POST", url, "web", nil, payload)
+	resp, err := c.APIServerClientMap[c.Config.APIClientConfig.CurrentAPIServer].Request("POST", url, "web", nil, payload)
 	if err != nil {
 		return nil, fmt.Errorf("failed to PARSE document: %w", err)
 	}
@@ -2432,12 +2577,12 @@ func (c *RAGFlowClient) ParseFileUserCommand(cmd *Command) (ResponseIf, error) {
 	return &result, nil
 }
 
-func (c *RAGFlowClient) ListTasksUserCommand(cmd *Command) (ResponseIf, error) {
-	if c.HTTPClient.APIToken == "" && c.HTTPClient.LoginToken == "" {
+func (c *CLI) ListTasksUserCommand(cmd *Command) (ResponseIf, error) {
+	if c.APIServerClientMap[c.Config.APIClientConfig.CurrentAPIServer].APIToken == nil && c.APIServerClientMap[c.Config.APIClientConfig.CurrentAPIServer].LoginToken == nil {
 		return nil, fmt.Errorf("API token not set. Please login first")
 	}
 
-	if c.ServerType != "user" {
+	if c.Config.CLIMode != APIMode {
 		return nil, fmt.Errorf("this command is only allowed in USER mode")
 	}
 
@@ -2457,7 +2602,7 @@ func (c *RAGFlowClient) ListTasksUserCommand(cmd *Command) (ResponseIf, error) {
 
 	url := fmt.Sprintf("/providers/%s/instances/%s/tasks", providerName, instanceName)
 
-	resp, err := c.HTTPClient.Request("GET", url, "web", nil, nil)
+	resp, err := c.APIServerClientMap[c.Config.APIClientConfig.CurrentAPIServer].Request("GET", url, "web", nil, nil)
 	if err != nil {
 		return nil, fmt.Errorf("failed to list tasks: %w", err)
 	}
@@ -2475,12 +2620,12 @@ func (c *RAGFlowClient) ListTasksUserCommand(cmd *Command) (ResponseIf, error) {
 	return &result, nil
 }
 
-func (c *RAGFlowClient) ShowTaskUserCommand(cmd *Command) (ResponseIf, error) {
-	if c.HTTPClient.APIToken == "" && c.HTTPClient.LoginToken == "" {
+func (c *CLI) ShowTaskUserCommand(cmd *Command) (ResponseIf, error) {
+	if c.APIServerClientMap[c.Config.APIClientConfig.CurrentAPIServer].APIToken == nil && c.APIServerClientMap[c.Config.APIClientConfig.CurrentAPIServer].LoginToken == nil {
 		return nil, fmt.Errorf("API token not set. Please login first")
 	}
 
-	if c.ServerType != "user" {
+	if c.Config.CLIMode != APIMode {
 		return nil, fmt.Errorf("this command is only allowed in USER mode")
 	}
 
@@ -2505,7 +2650,7 @@ func (c *RAGFlowClient) ShowTaskUserCommand(cmd *Command) (ResponseIf, error) {
 
 	url := fmt.Sprintf("/providers/%s/instances/%s/tasks/%s", providerName, instanceName, taskID)
 
-	resp, err := c.HTTPClient.Request("GET", url, "web", nil, nil)
+	resp, err := c.APIServerClientMap[c.Config.APIClientConfig.CurrentAPIServer].Request("GET", url, "web", nil, nil)
 	if err != nil {
 		return nil, fmt.Errorf("failed to get task: %w", err)
 	}
@@ -2523,12 +2668,12 @@ func (c *RAGFlowClient) ShowTaskUserCommand(cmd *Command) (ResponseIf, error) {
 	return &result, nil
 }
 
-func (c *RAGFlowClient) CheckProviderConnection(cmd *Command) (ResponseIf, error) {
-	if c.HTTPClient.APIToken == "" && c.HTTPClient.LoginToken == "" {
+func (c *CLI) CheckProviderConnection(cmd *Command) (ResponseIf, error) {
+	if c.APIServerClientMap[c.Config.APIClientConfig.CurrentAPIServer].APIToken == nil && c.APIServerClientMap[c.Config.APIClientConfig.CurrentAPIServer].LoginToken == nil {
 		return nil, fmt.Errorf("API token not set. Please login first")
 	}
 
-	if c.ServerType != "user" {
+	if c.Config.CLIMode != APIMode {
 		return nil, fmt.Errorf("this command is only allowed in USER mode")
 	}
 
@@ -2544,7 +2689,7 @@ func (c *RAGFlowClient) CheckProviderConnection(cmd *Command) (ResponseIf, error
 
 	url := fmt.Sprintf("/providers/%s/instances/%s/connection", providerName, instanceName)
 
-	resp, err := c.HTTPClient.Request("GET", url, "web", nil, nil)
+	resp, err := c.APIServerClientMap[c.Config.APIClientConfig.CurrentAPIServer].Request("GET", url, "web", nil, nil)
 	if err != nil {
 		return nil, fmt.Errorf("failed to check provider connection: %w", err)
 	}
@@ -2562,29 +2707,97 @@ func (c *RAGFlowClient) CheckProviderConnection(cmd *Command) (ResponseIf, error
 	return &result, nil
 }
 
-// UseModel sets the current model for chat
-func (c *RAGFlowClient) UseModel(cmd *Command) (ResponseIf, error) {
-	if c.HTTPClient.APIToken == "" && c.HTTPClient.LoginToken == "" {
+func (c *CLI) CheckProviderWithKey(cmd *Command) (ResponseIf, error) {
+	if c.APIServerClientMap[c.Config.APIClientConfig.CurrentAPIServer].APIToken == nil && c.APIServerClientMap[c.Config.APIClientConfig.CurrentAPIServer].LoginToken == nil {
 		return nil, fmt.Errorf("API token not set. Please login first")
 	}
-	if c.ServerType != "user" {
+	if c.Config.CLIMode != APIMode {
 		return nil, fmt.Errorf("this command is only allowed in USER mode")
 	}
 
-	compositeModelName, ok := cmd.Params["composite_model_name"].(string)
-	if !ok || compositeModelName == "" {
-		return nil, fmt.Errorf("model identifier not provided")
+	providerName, ok := cmd.Params["provider_name"].(string)
+	if !ok || providerName == "" {
+		return nil, fmt.Errorf("provider name not provided")
+	}
+	region, ok := cmd.Params["region"].(string)
+	if !ok || region == "" {
+		return nil, fmt.Errorf("region not provided")
+	}
+	apiKey, ok := cmd.Params["api_key"].(string)
+	if !ok {
+		return nil, fmt.Errorf("api_key not provided")
+	}
+	baseURL, _ := cmd.Params["base_url"].(string)
+
+	var apiKeyValue interface{}
+	if apiKey != "" {
+		apiKeyValue = apiKey
+	} else {
+		apiKeyValue = nil
 	}
 
-	names := strings.Split(compositeModelName, "@")
-	if len(names) != 3 {
-		return nil, fmt.Errorf("model identifier must be in format 'model@instance@provider'")
+	url := fmt.Sprintf("/providers/%s/connection", providerName)
+
+	payload := map[string]interface{}{
+		"region":  region,
+		"api_key": apiKeyValue,
+	}
+	if baseURL != "" {
+		payload["base_url"] = baseURL
+	}
+
+	resp, err := c.APIServerClientMap[c.Config.APIClientConfig.CurrentAPIServer].Request("GET", url, "api", nil, payload)
+	if err != nil {
+		return nil, fmt.Errorf("failed to check provider connection with key: %w", err)
+	}
+	if resp.StatusCode != 200 {
+		return nil, fmt.Errorf("failed to check provider connection: HTTP %d, body: %s", resp.StatusCode, string(resp.Body))
+	}
+
+	var result SimpleResponse
+	if err = json.Unmarshal(resp.Body, &result); err != nil {
+		return nil, fmt.Errorf("check provider connection failed: invalid JSON (%w)", err)
+	}
+	if result.Code != 0 {
+		return nil, fmt.Errorf("%s", result.Message)
+	}
+	result.Duration = resp.Duration
+	return &result, nil
+}
+
+// UseModel sets the current model for chat
+func (c *CLI) UseModel(cmd *Command) (ResponseIf, error) {
+	if c.APIServerClientMap[c.Config.APIClientConfig.CurrentAPIServer].APIToken == nil && c.APIServerClientMap[c.Config.APIClientConfig.CurrentAPIServer].LoginToken == nil {
+		return nil, fmt.Errorf("API token not set. Please login first")
+	}
+	if c.Config.CLIMode != APIMode {
+		return nil, fmt.Errorf("this command is only allowed in USER mode")
+	}
+
+	var modelName, instanceName, providerName string
+	var err error
+	compositeModelName, ok := cmd.Params["composite_model_name"].(string)
+	if ok {
+		modelName, instanceName, providerName, err = common.ExtractCompositeName(compositeModelName)
+		if err != nil {
+			return nil, err
+		}
+	}
+
+	modelID, ok := cmd.Params["model_id"].(string)
+	if !ok {
+		modelID = ""
+	}
+
+	if modelID == "" && compositeModelName == "" {
+		return nil, fmt.Errorf("model name or ID not provided and no current model set. Use 'use model' command first")
 	}
 
 	c.CurrentModel = &CurrentModel{
-		Provider: names[2],
-		Instance: names[1],
-		Model:    names[0],
+		Provider: providerName,
+		Instance: instanceName,
+		Model:    modelName,
+		ModelID:  modelID,
 	}
 
 	var result SimpleResponse
@@ -2593,34 +2806,12 @@ func (c *RAGFlowClient) UseModel(cmd *Command) (ResponseIf, error) {
 	return &result, nil
 }
 
-// ShowCurrentModel displays the current model configuration
-func (c *RAGFlowClient) ShowCurrentModel(cmd *Command) (ResponseIf, error) {
-	if c.ServerType != "user" {
-		return nil, fmt.Errorf("this command is only allowed in USER mode")
-	}
-
-	if c.CurrentModel == nil {
-		return nil, fmt.Errorf("no current model set. Use 'use model' command first")
-	}
-
-	var result CommonResponse
-	result.Code = 0
-	result.Data = []map[string]interface{}{
-		{
-			"provider": c.CurrentModel.Provider,
-			"instance": c.CurrentModel.Instance,
-			"model":    c.CurrentModel.Model,
-		},
-	}
-	return &result, nil
-}
-
-func (c *RAGFlowClient) AddCustomModel(cmd *Command) (ResponseIf, error) {
-	if c.HTTPClient.APIToken == "" && c.HTTPClient.LoginToken == "" {
+func (c *CLI) AddCustomModel(cmd *Command) (ResponseIf, error) {
+	if c.APIServerClientMap[c.Config.APIClientConfig.CurrentAPIServer].APIToken == nil && c.APIServerClientMap[c.Config.APIClientConfig.CurrentAPIServer].LoginToken == nil {
 		return nil, fmt.Errorf("API token not set. Please login first")
 	}
 
-	if c.ServerType != "user" {
+	if c.Config.CLIMode != APIMode {
 		return nil, fmt.Errorf("this command is only allowed in USER mode")
 	}
 
@@ -2634,20 +2825,9 @@ func (c *RAGFlowClient) AddCustomModel(cmd *Command) (ResponseIf, error) {
 		return nil, fmt.Errorf("instance name not provided")
 	}
 
-	modelName, ok := cmd.Params["model_name"].(string)
+	models, ok := cmd.Params["models"].([]map[string]any)
 	if !ok {
 		return nil, fmt.Errorf("model name not provided")
-	}
-
-	// chat, vision, embedding, rerank, tts, asr, ocr
-	modelTypes, ok := cmd.Params["model_types"].([]string)
-	if !ok {
-		return nil, fmt.Errorf("model type not provided")
-	}
-
-	maxTokens, ok := cmd.Params["max_tokens"].(int)
-	if !ok {
-		return nil, fmt.Errorf("max tokens not provided")
 	}
 
 	url := fmt.Sprintf("/providers/%s/instances/%s/models", providerName, instanceName)
@@ -2655,17 +2835,10 @@ func (c *RAGFlowClient) AddCustomModel(cmd *Command) (ResponseIf, error) {
 	payload := map[string]interface{}{
 		"provider_name": providerName,
 		"instance_name": instanceName,
-		"model_name":    modelName,
-		"model_types":   modelTypes,
-		"max_tokens":    maxTokens,
+		"models":        models,
 	}
 
-	supportThink, ok := cmd.Params["support_think"].(bool)
-	if ok {
-		payload["thinking"] = supportThink
-	}
-
-	resp, err := c.HTTPClient.Request("POST", url, "web", nil, payload)
+	resp, err := c.APIServerClientMap[c.Config.APIClientConfig.CurrentAPIServer].Request("POST", url, "web", nil, payload)
 	if err != nil {
 		return nil, fmt.Errorf("failed to add custom model: %w", err)
 	}
@@ -2684,117 +2857,9 @@ func (c *RAGFlowClient) AddCustomModel(cmd *Command) (ResponseIf, error) {
 
 }
 
-// Context related commands
-
-// CECat handles the cat command - shows content using Context Engine
-func (c *RAGFlowClient) CECat(cmd *Command) (ResponseIf, error) {
-	if c.HTTPClient.APIToken == "" && c.HTTPClient.LoginToken == "" {
-		return nil, fmt.Errorf("API token not set. Please login first")
-	}
-	if c.ServerType != "user" {
-		return nil, fmt.Errorf("this command is only allowed in USER mode")
-	}
-
-	path, ok := cmd.Params["path"].(string)
-	if !ok {
-		return nil, fmt.Errorf("fail to convert 'path' to string")
-	}
-
-	// Execute cat command through Filesystem Engine
-	ctx := context.Background()
-	content, err := c.ContextEngine.Cat(ctx, path)
-	if err != nil {
-		return nil, err
-	}
-
-	// Convert to response
-	var response ContextCatResponse
-	response.OutputFormat = c.OutputFormat
-	response.Code = 0
-	response.Content = string(content)
-
-	return &response, nil
-}
-
-// CEList handles the ls command - lists nodes using Context Engine
-func (c *RAGFlowClient) CEList(cmd *Command) (ResponseIf, error) {
-	// Get path from command params, default to "datasets"
-	path, _ := cmd.Params["path"].(string)
-	if path == "" {
-		path = "datasets"
-	}
-
-	// Parse options
-	opts := &ce.ListOptions{}
-	if recursive, ok := cmd.Params["recursive"].(bool); ok {
-		opts.Recursive = recursive
-	}
-	if limit, ok := cmd.Params["limit"].(int); ok {
-		opts.Limit = limit
-	}
-	if offset, ok := cmd.Params["offset"].(int); ok {
-		opts.Offset = offset
-	}
-
-	// Execute list command through Filesystem Engine
-	ctx := context.Background()
-	result, err := c.ContextEngine.List(ctx, path, opts)
-	if err != nil {
-		return nil, err
-	}
-
-	// Convert to response
-	var response ContextListResponse
-	response.OutputFormat = c.OutputFormat
-	response.Code = 0
-	response.Data = ce.FormatNodes(result.Nodes, string(c.OutputFormat))
-
-	return &response, nil
-}
-
-// CESearch handles the search command using Context Engine
-func (c *RAGFlowClient) CESearch(cmd *Command) (ResponseIf, error) {
-	// Get path and query from command params
-	path, _ := cmd.Params["path"].(string)
-	if path == "" {
-		path = "datasets"
-	}
-	query, _ := cmd.Params["query"].(string)
-
-	// Parse options
-	opts := &ce.SearchOptions{
-		Query: query,
-	}
-	if limit, ok := cmd.Params["limit"].(int); ok {
-		opts.Limit = limit
-	}
-	if offset, ok := cmd.Params["offset"].(int); ok {
-		opts.Offset = offset
-	}
-	if recursive, ok := cmd.Params["recursive"].(bool); ok {
-		opts.Recursive = recursive
-	}
-
-	// Execute search command through Filesystem Engine
-	ctx := context.Background()
-	result, err := c.ContextEngine.Search(ctx, path, opts)
-	if err != nil {
-		return nil, err
-	}
-
-	// Convert to response
-	var response ContextSearchResponse
-	response.OutputFormat = c.OutputFormat
-	response.Code = 0
-	response.Total = result.Total
-	response.Data = ce.FormatNodes(result.Nodes, string(c.OutputFormat))
-
-	return &response, nil
-}
-
-// InsertDatasetFromFile inserts dataset chunks from a JSON file
-func (c *RAGFlowClient) InsertDatasetFromFile(cmd *Command) (ResponseIf, error) {
-	if c.ServerType != "user" {
+// InsertChunksFromFile inserts chunks from a JSON file
+func (c *CLI) InsertChunksFromFile(cmd *Command) (ResponseIf, error) {
+	if c.Config.CLIMode != APIMode {
 		return nil, fmt.Errorf("this command is only allowed in USER mode")
 	}
 	filePath, ok := cmd.Params["file_path"].(string)
@@ -2806,7 +2871,7 @@ func (c *RAGFlowClient) InsertDatasetFromFile(cmd *Command) (ResponseIf, error) 
 		"file_path": filePath,
 	}
 
-	resp, err := c.HTTPClient.Request("POST", "/kb/insert_from_file", "web", nil, payload)
+	resp, err := c.APIServerClientMap[c.Config.APIClientConfig.CurrentAPIServer].Request("POST", "/tenant/insert_chunks_from_file", "web", nil, payload)
 	if err != nil {
 		return nil, fmt.Errorf("failed to insert dataset from file: %w", err)
 	}
@@ -2837,8 +2902,8 @@ func (c *RAGFlowClient) InsertDatasetFromFile(cmd *Command) (ResponseIf, error) 
 }
 
 // InsertMetadataFromFile inserts metadata from a JSON file
-func (c *RAGFlowClient) InsertMetadataFromFile(cmd *Command) (ResponseIf, error) {
-	if c.ServerType != "user" {
+func (c *CLI) InsertMetadataFromFile(cmd *Command) (ResponseIf, error) {
+	if c.Config.CLIMode != APIMode {
 		return nil, fmt.Errorf("this command is only allowed in USER mode")
 	}
 
@@ -2851,7 +2916,7 @@ func (c *RAGFlowClient) InsertMetadataFromFile(cmd *Command) (ResponseIf, error)
 		"file_path": filePath,
 	}
 
-	resp, err := c.HTTPClient.Request("POST", "/tenant/insert_metadata_from_file", "web", nil, payload)
+	resp, err := c.APIServerClientMap[c.Config.APIClientConfig.CurrentAPIServer].Request("POST", "/tenant/insert_metadata_from_file", "web", nil, payload)
 	if err != nil {
 		return nil, fmt.Errorf("failed to insert metadata from file: %w", err)
 	}
@@ -2882,8 +2947,8 @@ func (c *RAGFlowClient) InsertMetadataFromFile(cmd *Command) (ResponseIf, error)
 }
 
 // UpdateChunk updates a chunk in a dataset
-func (c *RAGFlowClient) UpdateChunk(cmd *Command) (ResponseIf, error) {
-	if c.ServerType != "user" {
+func (c *CLI) UpdateChunk(cmd *Command) (ResponseIf, error) {
+	if c.Config.CLIMode != APIMode {
 		return nil, fmt.Errorf("this command is only allowed in USER mode")
 	}
 
@@ -2892,14 +2957,14 @@ func (c *RAGFlowClient) UpdateChunk(cmd *Command) (ResponseIf, error) {
 		return nil, fmt.Errorf("chunk_id not provided")
 	}
 
+	docID, ok := cmd.Params["doc_id"].(string)
+	if !ok {
+		return nil, fmt.Errorf("doc_id not provided")
+	}
+
 	datasetName, ok := cmd.Params["dataset_name"].(string)
 	if !ok {
 		return nil, fmt.Errorf("dataset_name not provided")
-	}
-
-	jsonBody, ok := cmd.Params["json_body"].(string)
-	if !ok {
-		return nil, fmt.Errorf("json_body not provided")
 	}
 
 	// Look up dataset_id from dataset_name
@@ -2908,26 +2973,9 @@ func (c *RAGFlowClient) UpdateChunk(cmd *Command) (ResponseIf, error) {
 		return nil, fmt.Errorf("failed to get dataset ID: %w", err)
 	}
 
-	// Try to get doc_id from the chunk retrieval endpoint
-	getResp, err := c.HTTPClient.Request("GET", "/chunk/get?chunk_id="+chunkID, "web", nil, nil)
-	if err != nil {
-		return nil, fmt.Errorf("failed to get chunk info: %w", err)
-	}
-
-	var docID string
-	if getResp.StatusCode == 200 {
-		getJSON, err := getResp.JSON()
-		if err == nil {
-			if data, ok := getJSON["data"].(map[string]interface{}); ok {
-				if d, ok := data["doc_id"].(string); ok {
-					docID = d
-				}
-			}
-		}
-	}
-
-	if docID == "" {
-		return nil, fmt.Errorf("could not find document_id for chunk %s. Please provide document_id explicitly", chunkID)
+	jsonBody, ok := cmd.Params["json_body"].(string)
+	if !ok {
+		return nil, fmt.Errorf("json_body not provided")
 	}
 
 	// Parse the JSON body
@@ -2941,7 +2989,7 @@ func (c *RAGFlowClient) UpdateChunk(cmd *Command) (ResponseIf, error) {
 	payload["document_id"] = docID
 	payload["chunk_id"] = chunkID
 
-	resp, err := c.HTTPClient.Request("POST", "/chunk/update", "web", nil, payload)
+	resp, err := c.APIServerClientMap[c.Config.APIClientConfig.CurrentAPIServer].Request("POST", "/chunk/update", "web", nil, payload)
 	if err != nil {
 		return nil, fmt.Errorf("failed to update chunk: %w", err)
 	}
@@ -2971,9 +3019,52 @@ func (c *RAGFlowClient) UpdateChunk(cmd *Command) (ResponseIf, error) {
 	return &result, nil
 }
 
+// GetChunk retrieves a chunk by ID
+func (c *CLI) GetChunk(cmd *Command) (ResponseIf, error) {
+	if c.Config.CLIMode != APIMode {
+		return nil, fmt.Errorf("this command is only allowed in USER mode")
+	}
+
+	chunkID, ok := cmd.Params["chunk_id"].(string)
+	if !ok {
+		return nil, fmt.Errorf("chunk_id not provided")
+	}
+
+	docID, ok := cmd.Params["doc_id"].(string)
+	if !ok {
+		return nil, fmt.Errorf("doc_id not provided")
+	}
+
+	datasetID, ok := cmd.Params["dataset_id"].(string)
+	if !ok {
+		return nil, fmt.Errorf("dataset_id not provided")
+	}
+
+	resp, err := c.APIServerClientMap[c.Config.APIClientConfig.CurrentAPIServer].Request("GET", fmt.Sprintf("/datasets/%s/documents/%s/chunks/%s", datasetID, docID, chunkID), "web", nil, nil)
+	if err != nil {
+		return nil, fmt.Errorf("failed to get chunk: %w", err)
+	}
+
+	if resp.StatusCode != 200 {
+		return nil, fmt.Errorf("failed to get chunk: HTTP %d, body: %s", resp.StatusCode, string(resp.Body))
+	}
+
+	var result ChunkResponse
+	if err = json.Unmarshal(resp.Body, &result); err != nil {
+		return nil, fmt.Errorf("get chunk failed: invalid JSON (%w)", err)
+	}
+
+	if result.Code != 0 {
+		return nil, fmt.Errorf("%s", result.Message)
+	}
+	result.Duration = resp.Duration
+
+	return &result, nil
+}
+
 // SetMeta sets metadata for a document
-func (c *RAGFlowClient) SetMeta(cmd *Command) (ResponseIf, error) {
-	if c.ServerType != "user" {
+func (c *CLI) SetMeta(cmd *Command) (ResponseIf, error) {
+	if c.Config.CLIMode != APIMode {
 		return nil, fmt.Errorf("this command is only allowed in USER mode")
 	}
 
@@ -2992,7 +3083,7 @@ func (c *RAGFlowClient) SetMeta(cmd *Command) (ResponseIf, error) {
 		"meta":   metaJSON,
 	}
 
-	resp, err := c.HTTPClient.Request("POST", "/document/set_meta", "web", nil, payload)
+	resp, err := c.APIServerClientMap[c.Config.APIClientConfig.CurrentAPIServer].Request("POST", "/document/set_meta", "web", nil, payload)
 	if err != nil {
 		return nil, fmt.Errorf("failed to set metadata: %w", err)
 	}
@@ -3022,9 +3113,60 @@ func (c *RAGFlowClient) SetMeta(cmd *Command) (ResponseIf, error) {
 	return &result, nil
 }
 
+// DeleteMeta deletes metadata for a document
+// If keys is provided, deletes specific keys; otherwise deletes entire document metadata
+func (c *CLI) DeleteMeta(cmd *Command) (ResponseIf, error) {
+	if c.Config.CLIMode != APIMode {
+		return nil, fmt.Errorf("this command is only allowed in USER mode")
+	}
+
+	docID, ok := cmd.Params["doc_id"].(string)
+	if !ok {
+		return nil, fmt.Errorf("doc_id not provided")
+	}
+
+	payload := map[string]interface{}{
+		"doc_id": docID,
+	}
+
+	// If keys provided, include in payload for deleting specific keys
+	if keysJSON, ok := cmd.Params["keys"].(string); ok {
+		payload["keys"] = keysJSON
+	}
+
+	resp, err := c.APIServerClientMap[c.Config.APIClientConfig.CurrentAPIServer].Request("POST", "/document/delete_meta", "web", nil, payload)
+	if err != nil {
+		return nil, fmt.Errorf("failed to delete metadata: %w", err)
+	}
+
+	if resp.StatusCode != 200 {
+		return nil, fmt.Errorf("failed to delete metadata: HTTP %d, body: %s", resp.StatusCode, string(resp.Body))
+	}
+
+	resJSON, err := resp.JSON()
+	if err != nil {
+		return nil, fmt.Errorf("invalid JSON response: %w", err)
+	}
+
+	code, ok := resJSON["code"].(float64)
+	if !ok {
+		return nil, fmt.Errorf("invalid response format: code is not a number")
+	}
+
+	var result SimpleResponse
+	result.Code = int(code)
+	if result.Code == 0 {
+		result.Message = fmt.Sprintf("Success to delete metadata for document: %s", docID)
+	} else {
+		result.Message = fmt.Sprintf("Failed to delete metadata: %v", resJSON)
+	}
+	result.Duration = 0
+	return &result, nil
+}
+
 // RmTags removes tags from chunks in a dataset
-func (c *RAGFlowClient) RmTags(cmd *Command) (ResponseIf, error) {
-	if c.ServerType != "user" {
+func (c *CLI) RmTags(cmd *Command) (ResponseIf, error) {
+	if c.Config.CLIMode != APIMode {
 		return nil, fmt.Errorf("this command is only allowed in USER mode")
 	}
 
@@ -3047,7 +3189,7 @@ func (c *RAGFlowClient) RmTags(cmd *Command) (ResponseIf, error) {
 		"tags": tags,
 	}
 
-	resp, err := c.HTTPClient.Request("POST", "/kb/"+kbID+"/rm_tags", "web", nil, payload)
+	resp, err := c.APIServerClientMap[c.Config.APIClientConfig.CurrentAPIServer].Request("DELETE", "/datasets/"+kbID+"/tags", "web", nil, payload)
 	if err != nil {
 		return nil, fmt.Errorf("failed to remove tags: %w", err)
 	}
@@ -3078,9 +3220,14 @@ func (c *RAGFlowClient) RmTags(cmd *Command) (ResponseIf, error) {
 }
 
 // RemoveChunks removes chunks from a document
-func (c *RAGFlowClient) RemoveChunks(cmd *Command) (ResponseIf, error) {
-	if c.ServerType != "user" {
+func (c *CLI) RemoveChunks(cmd *Command) (ResponseIf, error) {
+	if c.Config.CLIMode != APIMode {
 		return nil, fmt.Errorf("this command is only allowed in USER mode")
+	}
+
+	datasetName, ok := cmd.Params["dataset_name"].(string)
+	if !ok {
+		return nil, fmt.Errorf("dataset_name not provided")
 	}
 
 	docID, ok := cmd.Params["doc_id"].(string)
@@ -3088,9 +3235,13 @@ func (c *RAGFlowClient) RemoveChunks(cmd *Command) (ResponseIf, error) {
 		return nil, fmt.Errorf("doc_id not provided")
 	}
 
-	payload := map[string]interface{}{
-		"doc_id": docID,
+	// Look up dataset ID by name
+	datasetID, err := c.getDatasetID(datasetName)
+	if err != nil {
+		return nil, fmt.Errorf("dataset not found: %w", err)
 	}
+
+	payload := map[string]interface{}{}
 
 	// Check if delete_all is set
 	if deleteAll, ok := cmd.Params["delete_all"].(bool); ok && deleteAll {
@@ -3099,7 +3250,7 @@ func (c *RAGFlowClient) RemoveChunks(cmd *Command) (ResponseIf, error) {
 		payload["chunk_ids"] = chunkIDs
 	}
 
-	resp, err := c.HTTPClient.Request("POST", "/chunk/rm", "web", nil, payload)
+	resp, err := c.APIServerClientMap[c.Config.APIClientConfig.CurrentAPIServer].Request("DELETE", "/datasets/"+datasetID+"/documents/"+docID+"/chunks", "web", nil, payload)
 	if err != nil {
 		return nil, fmt.Errorf("failed to remove chunks: %w", err)
 	}
@@ -3138,6 +3289,113 @@ func (c *RAGFlowClient) RemoveChunks(cmd *Command) (ResponseIf, error) {
 	return &result, nil
 }
 
+func (c *CLI) ParseDocumentsUserCommand(cmd *Command) (ResponseIf, error) {
+	if c.APIServerClientMap[c.Config.APIClientConfig.CurrentAPIServer].APIToken == nil && c.APIServerClientMap[c.Config.APIClientConfig.CurrentAPIServer].LoginToken == nil {
+		return nil, fmt.Errorf("API token not set. Please login first")
+	}
+
+	if c.Config.CLIMode != APIMode {
+		return nil, fmt.Errorf("this command is only allowed in USER mode")
+	}
+
+	datasetID, ok := cmd.Params["dataset_id"].(string)
+	if !ok {
+		return nil, fmt.Errorf("dataset_id not provided")
+	}
+
+	documents, ok := cmd.Params["documents"].([]string)
+	if !ok {
+		return nil, fmt.Errorf("documents not provided")
+	}
+
+	url := fmt.Sprintf("/datasets/%s/documents/parse", datasetID)
+
+	payload := map[string]interface{}{
+		"documents": documents,
+	}
+
+	// Normal mode
+	resp, err := c.APIServerClientMap[c.Config.APIClientConfig.CurrentAPIServer].Request("POST", url, "web", nil, payload)
+	if err != nil {
+		return nil, fmt.Errorf("failed to list documents: %w", err)
+	}
+
+	if resp.StatusCode != 200 {
+		return nil, fmt.Errorf("failed to list documents: HTTP %d, body: %s", resp.StatusCode, string(resp.Body))
+	}
+
+	var result SimpleResponse
+	if err = json.Unmarshal(resp.Body, &result); err != nil {
+		return nil, fmt.Errorf("list documents failed: invalid JSON (%w)", err)
+	}
+
+	if result.Code != 0 {
+		return nil, fmt.Errorf("%s", result.Message)
+	}
+	result.Duration = resp.Duration
+
+	return &result, nil
+}
+
+func (c *CLI) UserParseLocalFile(cmd *Command) (ResponseIf, error) {
+	if c.Config.CLIMode != APIMode {
+		return nil, fmt.Errorf("this command is only allowed in USER mode")
+	}
+
+	filename, ok := cmd.Params["filename"].(string)
+	if !ok {
+		return nil, fmt.Errorf("filename not provided")
+	}
+	visionModel, ok := cmd.Params["vision_model"].(string)
+	if !ok {
+		visionModel = ""
+	}
+	chatModel, ok := cmd.Params["chat_model"].(string)
+	if !ok {
+		chatModel = ""
+	}
+	asrModel, ok := cmd.Params["asr_model"].(string)
+	if !ok {
+		asrModel = ""
+	}
+	ocrModel, ok := cmd.Params["ocr_model"].(string)
+	if !ok {
+		ocrModel = ""
+	}
+	embeddingModel, ok := cmd.Params["embedding_model"].(string)
+	if !ok {
+		embeddingModel = ""
+	}
+	docParseModel, ok := cmd.Params["doc_parse_model"].(string)
+	if !ok {
+		docParseModel = ""
+	}
+
+	fileType := utility.GetFileType(filename)
+	config := map[string]string{
+		"lib_type": "office_oxide",
+	}
+	fileParser, err := parser.GetParser(fileType, config)
+	if err != nil {
+		return nil, err
+	}
+
+	fileContent, err := os.ReadFile(filename)
+	if err != nil {
+		return nil, fmt.Errorf("failed to read dsl file: %w", err)
+	}
+
+	if err = fileParser.Parse(filename, fileContent); err != nil {
+		return nil, formatRequestError("parse local file", err)
+	}
+
+	var result SimpleResponse
+	result.Code = 0
+	result.Message = fmt.Sprintf("Success to parse local file %q, vision: %v, chat: %v, asr: %v, ocr: %v, embedding: %v, doc_parse: %v", filename, visionModel, chatModel, asrModel, ocrModel, embeddingModel, docParseModel)
+	fmt.Println(result.Message)
+	return &result, nil
+}
+
 // formatRequestError Uniformly handle and format network errors in HTTP requests
 func formatRequestError(action string, err error) error {
 	if err == nil {
@@ -3154,4 +3412,235 @@ func formatRequestError(action string, err error) error {
 	default:
 		return fmt.Errorf("%s failed: %w", action, err)
 	}
+}
+
+func (c *CLI) ListUserIngestionTasks(cmd *Command) (ResponseIf, error) {
+	if c.APIServerClientMap[c.Config.APIClientConfig.CurrentAPIServer].APIToken == nil && c.APIServerClientMap[c.Config.APIClientConfig.CurrentAPIServer].LoginToken == nil {
+		return nil, fmt.Errorf("API token not set. Please login first")
+	}
+
+	if c.Config.CLIMode != APIMode {
+		return nil, fmt.Errorf("this command is only allowed in USER mode")
+	}
+
+	datasetID, ok := cmd.Params["dataset_id"].(*string)
+	if !ok {
+		datasetID = nil
+	}
+
+	payload := map[string]interface{}{
+		"dataset_id": datasetID,
+	}
+
+	resp, err := c.APIServerClientMap[c.Config.APIClientConfig.CurrentAPIServer].Request("GET", "/datasets/ingestion/tasks", "web", nil, payload)
+	if err != nil {
+		return nil, fmt.Errorf("failed to list ingestion tasks: %w", err)
+	}
+
+	if resp.StatusCode != 200 {
+		return nil, fmt.Errorf("failed to list ingestion tasks:: HTTP %d, body: %s", resp.StatusCode, string(resp.Body))
+	}
+
+	var result CommonResponse
+	if err = json.Unmarshal(resp.Body, &result); err != nil {
+		return nil, fmt.Errorf("list ingestion tasks: failed: invalid JSON (%w)", err)
+	}
+
+	if result.Code != 0 {
+		return nil, fmt.Errorf("%s", result.Message)
+	}
+
+	result.Duration = resp.Duration
+	return &result, nil
+}
+
+func (c *CLI) UserStartIngestionCommand(cmd *Command) (ResponseIf, error) {
+	if c.APIServerClientMap[c.Config.APIClientConfig.CurrentAPIServer].APIToken == nil && c.APIServerClientMap[c.Config.APIClientConfig.CurrentAPIServer].LoginToken == nil {
+		return nil, fmt.Errorf("API token not set. Please login first")
+	}
+
+	if c.Config.CLIMode != APIMode {
+		return nil, fmt.Errorf("this command is only allowed in USER mode")
+	}
+
+	documentID, ok := cmd.Params["document_id"].(string)
+	if !ok {
+		return nil, fmt.Errorf("document_id not provided")
+	}
+
+	datasetID, ok := cmd.Params["dataset_id"].(string)
+	if !ok {
+		return nil, fmt.Errorf("dataset_id not provided")
+	}
+
+	payload := map[string]interface{}{
+		"documents":  []string{documentID},
+		"dataset_id": datasetID,
+	}
+
+	url := fmt.Sprintf("/datasets/%s/documents/parse", datasetID)
+
+	resp, err := c.APIServerClientMap[c.Config.APIClientConfig.CurrentAPIServer].Request("POST", url, "web", nil, payload)
+	if err != nil {
+		return nil, fmt.Errorf("failed to ingest file: %w", err)
+	}
+
+	if resp.StatusCode != 200 {
+		return nil, fmt.Errorf("failed to ingest file: HTTP %d, body: %s", resp.StatusCode, string(resp.Body))
+	}
+
+	var result CommonResponse
+	if err = json.Unmarshal(resp.Body, &result); err != nil {
+		return nil, fmt.Errorf("ingest file failed: invalid JSON (%w)", err)
+	}
+
+	if result.Code != 0 {
+		return nil, fmt.Errorf("%s", result.Message)
+	}
+
+	result.Duration = resp.Duration
+	return &result, nil
+}
+
+func (c *CLI) UserStopIngestionCommand(cmd *Command) (ResponseIf, error) {
+	if c.APIServerClientMap[c.Config.APIClientConfig.CurrentAPIServer].APIToken == nil && c.APIServerClientMap[c.Config.APIClientConfig.CurrentAPIServer].LoginToken == nil {
+		return nil, fmt.Errorf("API token not set. Please login first")
+	}
+
+	if c.Config.CLIMode != APIMode {
+		return nil, fmt.Errorf("this command is only allowed in USER mode")
+	}
+
+	tasks, ok := cmd.Params["tasks"].([]string)
+	if !ok {
+		return nil, fmt.Errorf("uri not provided")
+	}
+	payload := map[string]interface{}{
+		"tasks": tasks,
+	}
+
+	resp, err := c.APIServerClientMap[c.Config.APIClientConfig.CurrentAPIServer].Request("PUT", "/datasets/ingestion/tasks", "web", nil, payload)
+	if err != nil {
+		return nil, fmt.Errorf("failed to ingest file: %w", err)
+	}
+
+	if resp.StatusCode != 200 {
+		return nil, fmt.Errorf("failed to ingest file: HTTP %d, body: %s", resp.StatusCode, string(resp.Body))
+	}
+
+	var result CommonResponse
+	if err = json.Unmarshal(resp.Body, &result); err != nil {
+		return nil, fmt.Errorf("ingest file failed: invalid JSON (%w)", err)
+	}
+
+	if result.Code != 0 {
+		return nil, fmt.Errorf("%s", result.Message)
+	}
+
+	result.Duration = resp.Duration
+	return &result, nil
+}
+
+func (c *CLI) UserRemoveTaskCommand(cmd *Command) (ResponseIf, error) {
+	if c.APIServerClientMap[c.Config.APIClientConfig.CurrentAPIServer].APIToken == nil && c.APIServerClientMap[c.Config.APIClientConfig.CurrentAPIServer].LoginToken == nil {
+		return nil, fmt.Errorf("API token not set. Please login first")
+	}
+
+	if c.Config.CLIMode != APIMode {
+		return nil, fmt.Errorf("this command is only allowed in USER mode")
+	}
+
+	tasks, ok := cmd.Params["tasks"].([]string)
+	if !ok {
+		return nil, fmt.Errorf("tasks not provided")
+	}
+
+	payload := map[string]interface{}{
+		"tasks": tasks,
+	}
+
+	resp, err := c.APIServerClientMap[c.Config.APIClientConfig.CurrentAPIServer].Request("DELETE", "/datasets/ingestion/tasks", "web", nil, payload)
+	if err != nil {
+		return nil, fmt.Errorf("failed to remove tasks: %w", err)
+	}
+
+	if resp.StatusCode != 200 {
+		return nil, fmt.Errorf("failed to remove tasks: HTTP %d, body: %s", resp.StatusCode, string(resp.Body))
+	}
+
+	var result CommonResponse
+	if err = json.Unmarshal(resp.Body, &result); err != nil {
+		return nil, fmt.Errorf("remove tasks failed: invalid JSON (%w)", err)
+	}
+
+	if result.Code != 0 {
+		return nil, fmt.Errorf("%s", result.Message)
+	}
+
+	result.Duration = resp.Duration
+	return &result, nil
+}
+
+func (c *CLI) ChunkCommand(cmd *Command) (ResponseIf, error) {
+	if c.Config.CLIMode != APIMode {
+		return nil, fmt.Errorf("this command is only allowed in USER mode")
+	}
+
+	var result ExplainResponse
+	start := time.Now()
+
+	filename, ok := cmd.Params["filename"].(string)
+	if !ok {
+		return nil, fmt.Errorf("filename not provided")
+	}
+	dslFilename, ok := cmd.Params["dsl"].(string)
+	if !ok {
+		return nil, fmt.Errorf("dsl not provided")
+	}
+	dsl, err := os.ReadFile(dslFilename)
+	if err != nil {
+		return nil, fmt.Errorf("failed to read dsl file: %w", err)
+	}
+
+	explain, ok := cmd.Params["explain"].(bool)
+	if !ok {
+		explain = false
+	}
+
+	engine := ingestion.NewChunkEngine()
+	plan, err := engine.Compile(string(dsl))
+	if err != nil {
+		return nil, fmt.Errorf("compile failed: %w", err)
+	}
+
+	if explain {
+
+		explanation, err := engine.Explain(plan)
+		if err != nil {
+			return nil, fmt.Errorf("explain error: %w", err)
+		}
+
+		result.Message = explanation
+	} else {
+		fileToChunking, err := os.ReadFile(filename)
+		if err != nil {
+			return nil, fmt.Errorf("failed to read file: %w", err)
+		}
+
+		chunkContext, err := engine.Execute(plan, string(fileToChunking))
+		if err != nil {
+			return nil, fmt.Errorf("chunking error: %w", err)
+		}
+
+		for _, resultChunk := range chunkContext.ResultChunks {
+			fmt.Printf("Chunk index: %d\n", resultChunk.Index)
+			fmt.Printf("Chunk size: %d\n", resultChunk.Size)
+			fmt.Printf("Chunk content: \n%s\n", resultChunk.Content)
+		}
+	}
+
+	result.Duration = time.Since(start).Seconds()
+	result.Code = 0
+	result.Message = fmt.Sprintf("Success to chunk %s", filename)
+	return &result, nil
 }

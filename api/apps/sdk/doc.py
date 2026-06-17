@@ -27,7 +27,7 @@ from quart import request, send_file
 
 from api.db import FileType
 from api.db.db_models import APIToken, Document, File, Task
-from api.db.joint_services.tenant_model_service import get_model_config_by_id, get_model_config_by_type_and_name, get_tenant_default_model_by_type
+from api.db.joint_services.tenant_model_service import get_model_config_by_id, get_model_config_from_provider_instance, get_tenant_default_model_by_type
 from api.db.services.doc_metadata_service import DocMetadataService
 from api.db.services.document_service import DocumentService
 from api.db.services.file2document_service import File2DocumentService
@@ -677,7 +677,7 @@ async def update_chunk(tenant_id, dataset_id, document_id, chunk_id):
         model_config = get_model_config_by_id(tenant_embd_id)
     else:
         embd_id = DocumentService.get_embd_id(document_id)
-        model_config = get_model_config_by_type_and_name(tenant_id, LLMType.EMBEDDING.value, embd_id)
+        model_config = get_model_config_from_provider_instance(tenant_id, LLMType.EMBEDDING.value, embd_id)
     embd_mdl = TenantLLMService.model_instance(model_config)
     if doc.parser_id == ParserType.QA:
         arr = [t for t in re.split(r"[\n\t]", d["content_with_weight"]) if len(t) > 1]
@@ -937,7 +937,7 @@ async def retrieval_test(tenant_id):
         if kb.tenant_embd_id:
             embd_model_config = get_model_config_by_id(kb.tenant_embd_id)
         else:
-            embd_model_config = get_model_config_by_type_and_name(kb.tenant_id, LLMType.EMBEDDING, kb.embd_id)
+            embd_model_config = get_model_config_from_provider_instance(kb.tenant_id, LLMType.EMBEDDING, kb.embd_id)
         embd_mdl = LLMBundle(kb.tenant_id, embd_model_config)
 
         rerank_mdl = None
@@ -945,7 +945,7 @@ async def retrieval_test(tenant_id):
             rerank_model_config = get_model_config_by_id(req["tenant_rerank_id"])
             rerank_mdl = LLMBundle(kb.tenant_id, rerank_model_config)
         elif req.get("rerank_id"):
-            rerank_model_config = get_model_config_by_type_and_name(kb.tenant_id, LLMType.RERANK, req["rerank_id"])
+            rerank_model_config = get_model_config_from_provider_instance(kb.tenant_id, LLMType.RERANK, req["rerank_id"])
             rerank_mdl = LLMBundle(kb.tenant_id, rerank_model_config)
 
         if langs:

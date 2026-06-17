@@ -724,6 +724,10 @@ export const useFetchSessionsByCanvasId = () => {
 
       const { data } = await fetchAgentLogsByCanvasId(canvasId, {
         page: 1,
+        // CUSTOM B2B SaaS: keep userInfo.id (real user) — upstream's
+        // tenantInfo.tenant_id is the user_id-as-tenant_id anti-pattern,
+        // returns empty on workspace tenants. page_size 100000 stays
+        // because the UI expects all sessions client-side.
         page_size: 100000,
         exp_user_id: userInfo.id,
       });

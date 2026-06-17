@@ -40,11 +40,12 @@ except ImportError:  # pragma: no cover - optional dependency
     QuartBadRequest = None
 
 from peewee import OperationalError
+from quart import g
 
-from common.constants import ActiveEnum
-from api.db.db_models import APIToken
+from common.constants import ActiveEnum, LLMType
 from api.utils.json_encode import CustomJSONEncoder
 from common.mcp_tool_call_conn import MCPToolCallSession, close_multiple_mcp_toolcall_sessions
+from api.db.db_models import APIToken
 from api.db.services.tenant_llm_service import LLMFactoriesService
 from common.connection_utils import timeout
 from common.constants import RetCode
@@ -146,6 +147,9 @@ def server_error_response(e):
 
     if repr(e).find("index_not_found_exception") >= 0:
         return get_json_result(code=RetCode.EXCEPTION_ERROR, message="No chunk found, please upload file and parse it.")
+
+    if "not_found" in str(e):
+        return get_error_data_result(message="No chunk found! Check the chunk status please!")
 
     return get_json_result(code=RetCode.EXCEPTION_ERROR, message=repr(e))
 
@@ -293,6 +297,7 @@ def apikey_required(func):
         return func(*args, **kwargs)
 
     return decorated_function
+
 
 
 def build_error_result(code=RetCode.FORBIDDEN, message="success"):
@@ -548,6 +553,15 @@ def get_parser_config(chunk_method, parser_config):
                 ],
                 "method": "light",
                 "batch_chunk_token_size": 4096,
+                "retry_attempts": 2,
+                "retry_backoff_seconds": 2.0,
+                "retry_backoff_max_seconds": 60.0,
+                "build_subgraph_timeout_per_chunk_seconds": 300,
+                "build_subgraph_min_timeout_seconds": 600,
+                "merge_timeout_seconds": 180,
+                "resolution_timeout_seconds": 1800,
+                "community_timeout_seconds": 1800,
+                "lock_acquire_timeout_seconds": 600,
             },
             "parent_child": {
                 "use_parent_child": False,
@@ -675,8 +689,7 @@ def check_duplicate_ids(ids, id_type="item"):
 
 
 def verify_embedding_availability(embd_id: str, tenant_id: str) -> tuple[bool, str | None]:
-    from api.db.services.llm_service import LLMService
-    from api.db.services.tenant_llm_service import TenantLLMService
+    from api.db.joint_services.tenant_model_service import get_model_config_from_provider_instance
 
     """
     Verifies availability of an embedding model for a specific tenant.
@@ -712,18 +725,21 @@ def verify_embedding_availability(embd_id: str, tenant_id: str) -> tuple[bool, s
         (False, {'code': 101, 'message': "Unsupported model: <invalid_model>"})
     """
     try:
-        llm_name, llm_factory = TenantLLMService.split_model_name_and_factory(embd_id)
-        in_llm_service = bool(LLMService.query(llm_name=llm_name, fid=llm_factory, model_type="embedding"))
-
-        tenant_llms = TenantLLMService.get_my_llms(tenant_id=tenant_id)
-        is_tenant_model = any(llm["llm_name"] == llm_name and llm["llm_factory"] == llm_factory and llm["model_type"] == "embedding" for llm in tenant_llms)
-
-        is_builtin_model = llm_factory == "Builtin"
-        if not (is_builtin_model or is_tenant_model or in_llm_service):
-            return False, f"Unsupported model: <{embd_id}>"
-
-        if not (is_builtin_model or is_tenant_model):
+        get_model_config_from_provider_instance(tenant_id, LLMType.EMBEDDING, embd_id)
+    except LookupError:
+        # Distinguish "Unsupported" (model name+factory unknown in the
+        # catalog) from "Unauthorized" (the (name, factory) tuple exists in
+        # the catalog but this tenant has no API key for it). Matches
+        # upstream's update_dataset contract: an unknown factory yields
+        # "Unsupported" even if the bare model name happens to exist under
+        # a different factory. Accepts 2- and 3-part model identifiers.
+        from api.db.services.llm_service import LLMService
+        from api.utils.tenant_utils import _bare_model_name, _provider_from_model_ref
+        pure_name = _bare_model_name(embd_id or "")
+        factory = _provider_from_model_ref(embd_id or "")
+        if pure_name and factory and LLMService.query(llm_name=pure_name, fid=factory):
             return False, f"Unauthorized model: <{embd_id}>"
+        return False, f"Unsupported model: <{embd_id}>"
     except OperationalError as e:
         logging.exception(e)
         return False, "Database operation failed"

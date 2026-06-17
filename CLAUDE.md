@@ -10,44 +10,62 @@ Use the fff MCP tools (`mcp__fff__grep`, `mcp__fff__find_files`, `mcp__fff__mult
 
 RAGFlow is an open-source RAG (Retrieval-Augmented Generation) engine based on deep document understanding. It's a full-stack application with:
 
-- Python backend (Flask-based API server)
+- Python backend (Quart-based async API server — Quart is the async reimplementation of Flask)
 - React/TypeScript frontend (built with vitejs)
-- Microservices architecture with Docker deployment
-- Multiple data stores (MySQL, Elasticsearch/Infinity, Redis, MinIO)
+- Background task executor workers (separate Python processes, Redis-queue-driven)
+- Peewee ORM for database models (not SQLAlchemy)
+- Multiple data stores (MySQL/PostgreSQL, Elasticsearch/Infinity/OpenSearch/OceanBase, Redis, MinIO)
 
 ## Architecture
 
-### Backend (`/api/`)
+### Runtime Architecture
 
-- **Main Server**: `api/ragflow_server.py` - Flask application entry point
-- **Apps**: Modular Flask blueprints in `api/apps/` for different functionalities:
-  - `kb_app.py` - Knowledge base management
-  - `dialog_app.py` - Chat/conversation handling
-  - `document_app.py` - Document processing
-  - `canvas_app.py` - Agent workflow canvas
-  - `file_app.py` - File upload/management
-- **Services**: Business logic in `api/db/services/`
-- **Models**: Database models in `api/db/db_models.py`
+RAGFlow runs as **two separate Python process types**, orchestrated by `docker/launch_backend_service.sh`:
+
+- **API Server** (`api/ragflow_server.py`): Quart-based async HTTP server
+- **Task Executors** (`rag/svr/task_executor.py`): Background workers processing documents from Redis streams. Multiple instances run in parallel (controlled by `WS` env var). Each consumes from priority-ordered Redis streams (`te.1.common`, `te.0.common`), using consumer groups for load distribution.
+
+Key consequence: task executors import a different code surface than the API server, so always check which process a module is meant for.
+
+### Backend API (`/api/`)
+
+- **App factory**: `api/apps/__init__.py` — creates the Quart app, configures auth (`login_required` decorator, JWT + API token + session fallback), and dynamically discovers/registers blueprints
+- **Two API coexisting patterns**:
+  - **RESTful APIs** in `api/apps/restful_apis/` — newer pattern with Pydantic request validation, service layer in `api/apps/services/`, routes registered under `/api/v1`
+  - **Legacy APIs** in `api/apps/*_app.py` — older pattern using `@validate_request()`, routes registered under `/v1/<page_name>`
+  - **SDK APIs** in `api/apps/sdk/` — registered under `/v1/`
+- **Services**: `api/db/services/` — business logic wrapping Peewee model operations. `api/apps/services/` — service layer for the RESTful APIs
+- **Models**: `api/db/db_models.py` — Peewee ORM models with pooled MySQL/PostgreSQL connections, custom `JSONField`/`ListField` types, retry logic on connection loss
 
 ### Core Processing (`/rag/`)
 
-- **Document Processing**: `deepdoc/` - PDF parsing, OCR, layout analysis
-- **LLM Integration**: `rag/llm/` - Model abstractions for chat, embedding, reranking
-- **RAG Pipeline**: `rag/flow/` - Chunking, parsing, tokenization
-- **Graph RAG**: `rag/graphrag/` - Knowledge graph construction and querying
+- **Document ingestion pipeline**: `rag/flow/pipeline.py` — `Pipeline` (extends `agent.canvas.Graph`) orchestrates the ingestion DAG. Components: File (fetches binary from storage), Parser (dispatches to `deepdoc.parser` based on file type), TokenChunker/TitleChunker (splits into chunks), Tokenizer (computes full-text tokens + embedding vectors), Extractor (LLM-based extraction). Data flows via Pydantic `*FromUpstream` schemas.
+- **Document parsing**: `deepdoc/` — PDF parsing (vision-based OCR, layout analysis, table structure recognition) and format-specific parsers (DOCX, XLSX, PPT, Markdown, HTML, images). All parsers normalize to a common structure (list of bbox dicts for PDFs, `{text, doc_type_kwd}` for others).
+- **LLM Integration**: `rag/llm/` — factory pattern with runtime class discovery. `chat_model.py` (30+ providers via OpenAI SDK and LiteLLM wrappers), `embedding_model.py`, `rerank_model.py`, `cv_model.py` (image-to-text), `sequence2txt_model.py` (ASR), `tts_model.py`. Use `LLMBundle` (from `api.db.services.llm_service`) as the unified interface.
+- **Graph RAG**: `rag/graphrag/` — multi-phase pipeline: per-document subgraph extraction (LLM or spaCy NER), Leiden community detection, entity resolution, community summarization. Entities/relations/reports are indexed as chunks alongside regular text chunks, differentiated by `knowledge_graph_kwd`.
+- **Search**: `rag/nlp/search.py` — `Dealer` class combines vector similarity + BM25 + re-ranking. `KGSearch` extends it for graph-aware retrieval (entity resolution, n-hop enrichment).
 
 ### Agent System (`/agent/`)
 
-- **Components**: Modular workflow components (LLM, retrieval, categorize, etc.)
-- **Templates**: Pre-built agent workflows in `agent/templates/`
-- **Tools**: External API integrations (Tavily, Wikipedia, SQL execution, etc.)
+- **Execution engine**: `agent/canvas.py` — `Canvas` (extends `Graph`) executes the DAG. Components are run in topological order via `_run_batch`, each receiving upstream outputs as kwargs. Control-flow components (`Categorize`, `Switch`, `Iteration`, `Loop`) dynamically modify the execution path.
+- **Component base**: `agent/component/base.py` — `ComponentBase` with `invoke(**kwargs)` / `invoke_async(**kwargs)` lifecycle. Variable references (`{component_id@output_var}` or `{sys.query}`) are resolved from the canvas graph at runtime.
+- **Components**: Modular workflow components in `agent/component/` — Begin, LLM, Agent (tool-calling LLM), Categorize, Switch, Iteration, Loop, Message, Invoke (HTTP), and data manipulation nodes. Auto-discovered by `__init__.py`.
+- **Templates**: Pre-built agent workflows as JSON DSL files in `agent/templates/`. Each contains a complete `components` DAG, `path`, and `globals`.
+- **Tools**: `agent/tools/` — Retrieval, web search (DuckDuckGo, Google, Tavily, SearXNG), academic search (ArXiv, PubMed, Google Scholar, Wikipedia), code execution, SQL execution, email, GitHub, finance data, translation, weather. Tools implement `ToolBase` (extends `ComponentBase`) and produce OpenAI-compatible function descriptors.
+- **Plugins**: `agent/plugin/` — plugin system using `pluginlib` for loading external LLM tool plugins from `embedded_plugins/`.
 
 ### Frontend (`/web/`)
 
 - React/TypeScript with vitejs framework
-- shadcn/ui components
-- State management with Zustand
-- Tailwind CSS for styling
+- shadcn/ui components (Radix UI primitives + Tailwind CSS)
+- `@tanstack/react-query` for server state (cache keys, mutations, invalidation)
+- Zustand for local state (primarily agent canvas graph store)
+- `react-router` v7 with lazy-loaded pages
+- `react-i18next` for i18n (17 languages)
+- Axios for HTTP with a layered pattern: endpoint definitions (`utils/api.ts`) → HTTP client (`utils/next-request.ts`) → service layer (`services/`) → query hooks (`hooks/use-*-request.ts`) → components
+- `@xyflow/react` for the agent workflow canvas
+- `react-hook-form` + `zod` for form validation
+- Two API proxy prefixes: `webAPI = '/v1'` (legacy) and `restAPIv1 = '/api/v1'` (RESTful)
 
 ## Common Development Commands
 
@@ -146,6 +164,24 @@ This fork adds a multi-tenant RBAC system (workspaces, organizations, roles) on 
 ### Critical upstream assumption: `user_id == tenant_id`
 
 In upstream RAGFlow, `Tenant.id = User.id` (set in `api/db/init_data.py`). Our workspace tenants break this — a workspace has its own `tenant_id` that is NOT a user_id. **If upstream ever changes the user_id == tenant_id mapping, all our workspace logic must be revisited.**
+
+### Model storage: dual-write (`tenant_llm` + `TenantModelProvider/Instance/Model`)
+
+Upstream 2026-06-02 introduced a 3-level hierarchy for model storage: `tenant_model_provider` → `tenant_model_instance` → `tenant_model` (+ `tenant_model_group`, `tenant_model_group_mapping`). We **migrated** to it on 2026-06-03 by running `tools/scripts/mysql_migration.py --stages tenant_model_provider,tenant_model_instance,tenant_model,model_id_config --execute`. The migration is idempotent (`INSERT IGNORE` semantics) — safe to re-run.
+
+**Both schemas are now kept in sync** by the admin panel:
+- `tenant_llm` (legacy) — STILL written by `management/server/routers/models.py`. Required because `TenantLLMService.get_api_key()` is still used at inference time (token usage tracking, `LLMBundle` lookups, etc.).
+- `tenant_model_provider/instance/model` (new) — written via `management/server/services/sync_tenant_model_tables.py::sync_tenant_llm_to_new_tables(tenant_id, llm_factory)` after every mutation. Required because upstream's `/v1/models`, `/v1/models/default`, and `get_model_config_from_provider_instance` read from these tables exclusively.
+
+**`tenant.llm_id` / `embd_id` / etc. fields** store the 3-part format `name@instance@provider` post-migration (e.g. `nomic-embed-text@default@Ollama`). Upstream's `_get_model_info` accepts both 2- and 3-part — we standardize on 3-part for new writes.
+
+**On upstream merges that touch model handling:**
+1. **Do NOT** re-introduce a "fallback to `tenant_llm` when new tables are empty" pattern in `api/apps/services/models_api_service.py` — the new tables are authoritative now.
+2. **Do NOT** drop the `legacy_id` lookup in `api/db/joint_services/tenant_model_service.py::get_model_config_from_provider_instance` — `LLMBundle.encode()` / `chat()` etc. still need `model_config["id"]` for `TenantLLMService.increase_usage_by_id` (token tracking). Upstream forgot to rewire this when they refactored the function.
+3. **Verify after merge**: `management/server/services/sync_tenant_model_tables.py` is still imported in the 5 mutation routes of `management/server/routers/models.py` (add / update / toggle-status / delete provider, set defaults).
+4. **When upstream rewires usage tracking to the new tables** (`tenant_model.used_tokens` or similar), THIS is the trigger to drop the dual-write: stop writing `tenant_llm`, remove the `legacy_id` injection, write only to the new tables.
+
+The custom helper is the entire mirror logic in ~150 lines and survives upstream model-layer churn without per-merge edits — much better than the previous fallback approach.
 
 ### Custom files to watch on upstream merges
 
@@ -252,7 +288,7 @@ git merge origin/main --no-commit   # stop before auto-commit to resolve conflic
 | `api/apps/restful_apis/document_api.py` | Take upstream (new RESTful `list_docs` route + imports) |
 | `web/src/utils/api.ts`, `use-rename-document.ts` | Take upstream (RESTful URL functions, `dataset_id` rename) |
 | `web/src/services/knowledge-service.ts` — `listDocument` | Take upstream (RESTful GET) |
-| `web/src/services/knowledge-service.ts` — `uploadDocument` | **Keep ours** — `X-Workspace-Id` header |
+| `web/src/services/knowledge-service.ts` — `uploadDocument` / `webCrawlDocument` | **Keep ours** — uses `axios.post()` directly (not `request.post`) to inject `X-Workspace-Id` header. **DANGER trap**: when resolving conflicts here, the imports block and the function bodies can drift apart. If upstream removes `axios` from imports because they no longer use it, but we keep our custom function body that does use it, the result is a silent runtime `ReferenceError` swallowed by the `try/catch → console.warn` in `useUploadDocument`. Symptom: Save button does nothing, no visible error, no network call. **Verify after merge**: `grep -E "^import.*(axios\|Authorization\|getAuthorization)" web/src/services/knowledge-service.ts` must show all three present. |
 | Test files | Take upstream |
 
 **After resolving:**
@@ -299,7 +335,7 @@ REAL_JWT=$(grep "^ADMIN_JWT_SECRET=" .env.local | cut -d= -f2-)
 export RAGFLOW_TEST_LOCAL_AUTH=1 RSA_PASSPHRASE=Welcome
 export ADMIN_JWT_SECRET="$REAL_JWT"
 export VIEWER_EMAIL=viewer.internal@cyllene.com EDITOR_EMAIL=editor.internal@cyllene.com
-export HOST_ADDRESS=http://127.0.0.1:9380 ZHIPU_AI_API_KEY=dummy PYTHONPATH=.
+export HOST_ADDRESS=http://127.0.0.1:9380 ZHIPU_AI_API_KEY=dummy SILICONFLOW_API_KEY=dummy PYTHONPATH=.
 # 3. Run each dir SEPARATELY — combining triggers Python module shadowing
 #    (notably `infinity` SDK gets shadowed → 30+ collection errors).
 uv run python -m pytest test/multitenant \
@@ -328,6 +364,7 @@ The 164 skips in multitenant_http_api are upstream `@pytest.mark.skipif(DOC_ENGI
 - Bumping Infinity image (`docker/docker-compose-base.yml` + `pyproject.toml`) — nightly format breaks the local WAL silently. Our Helm chart pins `dev5` explicitly; **do not** propagate upstream bumps to `helm/ragflow/values.yaml` without a migration plan.
 
 **Watch for these upstream breaking changes (require full audit):**
+- `rag/svr/task_executor.py` CLI changes — upstream 2026-06-02 switched from a positional worker name to `argparse` flags `-i <index> -t <type>`. **All custom launchers** must pass `-i` explicitly: `scripts/dev_up.sh`, `scripts/dev_simple.sh`, `scripts/dev_scaled.sh`, and the Helm template at `helm/ragflow/charts/ragflow-task-executor/templates/deployment.yaml`. CONSUMER_NAME is now derived as `task_executor_<type>_<index>`. Symptom: `error: unrecognized arguments: <name>` in `/tmp/ragflow_task_executor.log` → no worker → `test_e2e_smoke` and any parse/embed flow times out.
 - Any change to `user_id == tenant_id` invariant in `api/db/init_data.py`
 - New top-level route group added outside `authorized` in `router.go` (won't get workspace middleware)
 - Rename of `GetInfoByUserID` in `internal/dao/tenant.go` (breaks `ListTenantDefaultModels`)

@@ -16,15 +16,19 @@
 
 package cli
 
-import "fmt"
+import (
+	"fmt"
+	"ragflow/internal/common"
+	"strings"
+)
 
 // Command parsers
 func (p *Parser) parseAdminLoginUser() (*Command, error) {
 	cmd := NewCommand("login_user")
 
 	p.nextToken() // consume LOGIN
-	if p.curToken.Type != TokenUser {
-		return nil, fmt.Errorf("expected USER after LOGIN")
+	if p.curToken.Type != TokenAdmin {
+		return nil, fmt.Errorf("expected ADMIN after LOGIN")
 	}
 
 	p.nextToken()
@@ -190,8 +194,12 @@ func (p *Parser) parseAdminListCommand() (*Command, error) {
 		return NewCommand("list_user_chats"), nil
 	case TokenFiles:
 		return p.parseAdminListFiles()
-	case TokenTasks:
-		return p.parseAdminListTasks()
+	case TokenIngestors:
+		return p.parseAdminListIngestors()
+	case TokenIngestion:
+		return p.parseAdminListIngestionTasks()
+	case TokenAPI:
+		return p.parseListApiCommand()
 	default:
 		return nil, fmt.Errorf("unknown LIST target: %s", p.curToken.Value)
 	}
@@ -370,9 +378,87 @@ func (p *Parser) parseAdminListFiles() (*Command, error) {
 	return cmd, nil
 }
 
-func (p *Parser) parseAdminListTasks() (*Command, error) {
+func (p *Parser) parseAdminListIngestors() (*Command, error) {
 	p.nextToken() // consume TASKS
-	cmd := NewCommand("list_admin_tasks")
+	cmd := NewCommand("admin_list_ingestors")
+
+	return cmd, nil
+}
+
+func (p *Parser) parseAdminStopIngestionTasks() (*Command, error) {
+	p.nextToken() // consume STOP
+
+	if p.curToken.Type != TokenIngestion {
+		return nil, fmt.Errorf("expected INGESTION")
+	}
+	p.nextToken()
+
+	if p.curToken.Type != TokenTasks {
+		return nil, fmt.Errorf("expected TASKS")
+	}
+	p.nextToken() // consume TASK
+
+	taskString, err := p.parseQuotedString()
+	if err != nil {
+		return nil, err
+	}
+
+	tasks := strings.Split(taskString, " ")
+	p.nextToken() // consume TASK
+
+	cmd := NewCommand("admin_stop_ingestion_tasks")
+	cmd.Params["tasks"] = tasks
+
+	// Semicolon is optional for UNSET TOKEN
+	if p.curToken.Type == TokenSemicolon {
+		p.nextToken()
+	}
+
+	return cmd, nil
+}
+
+func (p *Parser) parseAdminRemoveIngestionTasks() (*Command, error) {
+	p.nextToken() // consume Ingestion
+
+	if p.curToken.Type != TokenTasks {
+		return nil, fmt.Errorf("expected TASKS")
+	}
+	p.nextToken() // consume TASKS
+
+	taskString, err := p.parseQuotedString()
+	if err != nil {
+		return nil, err
+	}
+
+	tasks := strings.Split(taskString, " ")
+	p.nextToken() // consume TASKS
+
+	cmd := NewCommand("admin_remove_ingestion_tasks")
+	cmd.Params["tasks"] = tasks
+
+	// Semicolon is optional for UNSET TOKEN
+	if p.curToken.Type == TokenSemicolon {
+		p.nextToken()
+	}
+
+	return cmd, nil
+}
+
+func (p *Parser) parseAdminListIngestionTasks() (*Command, error) {
+	p.nextToken() // consume Ingestion
+
+	if p.curToken.Type != TokenTasks {
+		return nil, fmt.Errorf("expected TASKS")
+	}
+	p.nextToken() // consume TASKS
+
+	cmd := NewCommand("list_admin_ingestion_tasks")
+
+	// Semicolon is optional for UNSET TOKEN
+	if p.curToken.Type == TokenSemicolon {
+		p.nextToken()
+	}
+
 	return cmd, nil
 }
 
@@ -396,15 +482,12 @@ func (p *Parser) parseAdminShowCommand() (*Command, error) {
 		return NewCommand("show_token"), nil
 	case TokenCurrent:
 		p.nextToken()
-		if p.curToken.Type != TokenUser {
-			return nil, fmt.Errorf("expected USER after CURRENT")
-		}
-		p.nextToken()
+
 		// Semicolon is optional for SHOW TOKEN
 		if p.curToken.Type == TokenSemicolon {
 			p.nextToken()
 		}
-		return NewCommand("show_current_user"), nil
+		return NewCommand("show_current"), nil
 	case TokenUser:
 		return p.parseShowUser()
 	case TokenRole:
@@ -417,6 +500,10 @@ func (p *Parser) parseAdminShowCommand() (*Command, error) {
 		return p.parseShowProvider()
 	case TokenModel:
 		return p.parseShowModel()
+	case TokenAdmin:
+		return p.parseUserShowAdmin()
+	case TokenAPI:
+		return p.parseUserShowAPI()
 	default:
 		return nil, fmt.Errorf("unknown SHOW target: %s", p.curToken.Value)
 	}
@@ -1215,14 +1302,20 @@ func (p *Parser) parseAdminSetDefault() (*Command, error) {
 	}
 
 	p.nextToken()
-	compositeModelName, err := p.parseQuotedString()
+	modelNameOrID, err := p.parseQuotedString()
 	if err != nil {
 		return nil, err
 	}
 
 	cmd := NewCommand("set_default_model")
 	cmd.Params["model_type"] = modelType
-	cmd.Params["composite_model_name"] = compositeModelName
+	if common.IsCompositeModelName(modelNameOrID) {
+		cmd.Params["composite_model_name"] = modelNameOrID
+	} else if common.IsUUID(modelNameOrID) {
+		cmd.Params["model_id"] = modelNameOrID
+	} else {
+		return nil, fmt.Errorf("invalid format of model name or ID: %s", modelNameOrID)
+	}
 
 	p.nextToken()
 	// Semicolon is optional for UNSET TOKEN
@@ -1355,7 +1448,7 @@ func (p *Parser) parseAdminImportCommand() (*Command, error) {
 	return cmd, nil
 }
 
-func (p *Parser) parseAdminSearchCommand() (*Command, error) {
+func (p *Parser) parseAdminRetrieveCommand() (*Command, error) {
 	p.nextToken() // consume SEARCH
 	question, err := p.parseQuotedString()
 	if err != nil {
@@ -1511,8 +1604,8 @@ func (p *Parser) parseAdminUserStatement() (*Command, error) {
 		return p.parseParseCommand()
 	case TokenImport:
 		return p.parseImportCommand()
-	case TokenSearch:
-		return p.parseSearchCommand()
+	case TokenRetrieve:
+		return p.parseRetrieveCommand()
 	default:
 		return nil, fmt.Errorf("invalid user statement: %s", p.curToken.Value)
 	}
@@ -1543,10 +1636,19 @@ func (p *Parser) parseAdminStartupCommand() (*Command, error) {
 
 func (p *Parser) parseAdminShutdownCommand() (*Command, error) {
 	p.nextToken() // consume SHUTDOWN
-	if p.curToken.Type != TokenService {
-		return nil, fmt.Errorf("expected SERVICE")
+
+	switch p.curToken.Type {
+	case TokenService:
+		return p.parseAdminShutdownServiceCommand()
+	case TokenIngestor:
+		return p.parseAdminShutdownIngestorCommand()
+	default:
+		return nil, fmt.Errorf("expected SERVICE or INGESTOR")
 	}
-	p.nextToken()
+}
+
+func (p *Parser) parseAdminShutdownServiceCommand() (*Command, error) {
+	p.nextToken() // consume SERVICE
 
 	serviceNum, err := p.parseNumber()
 	if err != nil {
@@ -1555,6 +1657,25 @@ func (p *Parser) parseAdminShutdownCommand() (*Command, error) {
 
 	cmd := NewCommand("shutdown_service")
 	cmd.Params["number"] = serviceNum
+
+	p.nextToken()
+	// Semicolon is optional for UNSET TOKEN
+	if p.curToken.Type == TokenSemicolon {
+		p.nextToken()
+	}
+	return cmd, nil
+}
+
+func (p *Parser) parseAdminShutdownIngestorCommand() (*Command, error) {
+	p.nextToken() // consume INGESTOR
+
+	ingestorName, err := p.parseQuotedString()
+	if err != nil {
+		return nil, err
+	}
+
+	cmd := NewCommand("admin_shutdown_ingestor_command")
+	cmd.Params["ingestor_name"] = ingestorName
 
 	p.nextToken()
 	// Semicolon is optional for UNSET TOKEN
@@ -1587,6 +1708,118 @@ func (p *Parser) parseAdminRestartCommand() (*Command, error) {
 	return cmd, nil
 }
 
+func (p *Parser) parseAdminAddCommand() (*Command, error) {
+	p.nextToken() // consume ADD
+	switch p.curToken.Type {
+	case TokenAPI:
+		return p.parseAddAPIServer()
+	case TokenAdmin:
+		return p.parseAddAdminServer()
+	default:
+		return nil, fmt.Errorf("unknown ADD target: %s", p.curToken.Value)
+	}
+}
+
+func (p *Parser) parseAdminDeleteCommand() (*Command, error) {
+	p.nextToken() // consume DELETE
+	switch p.curToken.Type {
+	case TokenAPI:
+		return p.parseDeleteAPIServer()
+	case TokenAdmin:
+		return p.parseDeleteAdminServer()
+	default:
+		return nil, fmt.Errorf("unknown ADD target: %s", p.curToken.Value)
+	}
+}
+
+func (p *Parser) parseAdminSaveCommand() (*Command, error) {
+	p.nextToken() // consume SAVE
+	switch p.curToken.Type {
+	case TokenConfig:
+		return p.parseSaveConfig()
+	default:
+		return nil, fmt.Errorf("unknown ADD target: %s", p.curToken.Value)
+	}
+}
+
+func (p *Parser) parseAdminUseCommand() (*Command, error) {
+	p.nextToken() // consume USE
+	switch p.curToken.Type {
+	case TokenAPI:
+		return p.parseUseAPIServer()
+	case TokenAdmin:
+		return p.parseUseAdminServer()
+	default:
+		return nil, fmt.Errorf("expected MODEL or SKILL after USE")
+	}
+}
+
+func (p *Parser) parseStartIngestion() (*Command, error) {
+	p.nextToken() // consume Start
+
+	if p.curToken.Type != TokenIngestion {
+		return nil, fmt.Errorf("expect INGESTION")
+	}
+	p.nextToken() // consume Ingest
+
+	uri, err := p.parseQuotedString()
+	if err != nil {
+		return nil, err
+	}
+
+	cmd := NewCommand("admin_start_ingestion_command")
+	cmd.Params["uri"] = uri
+	p.nextToken()
+
+	// Semicolon is optional for UNSET TOKEN
+	if p.curToken.Type == TokenSemicolon {
+		p.nextToken()
+	}
+	return cmd, nil
+}
+
+func (p *Parser) parseStopIngestion() (*Command, error) {
+	p.nextToken() // consume Stop
+
+	if p.curToken.Type != TokenIngestion {
+		return nil, fmt.Errorf("expect INGESTION")
+	}
+	p.nextToken() // consume Ingest
+
+	taskID, err := p.parseQuotedString()
+	if err != nil {
+		return nil, err
+	}
+
+	cmd := NewCommand("admin_stop_ingestion_command")
+	cmd.Params["task_id"] = taskID
+	p.nextToken()
+
+	// Semicolon is optional for UNSET TOKEN
+	if p.curToken.Type == TokenSemicolon {
+		p.nextToken()
+	}
+	return cmd, nil
+}
+
+func (p *Parser) parseAdminIngestCommand() (*Command, error) {
+	p.nextToken() // consume Ingest
+
+	uri, err := p.parseQuotedString()
+	if err != nil {
+		return nil, err
+	}
+
+	cmd := NewCommand("admin_ingest_command")
+	cmd.Params["uri"] = uri
+	p.nextToken()
+
+	// Semicolon is optional for UNSET TOKEN
+	if p.curToken.Type == TokenSemicolon {
+		p.nextToken()
+	}
+	return cmd, nil
+}
 func (p *Parser) parseAdminUnsetCommand() (*Command, error) {
 	p.nextToken() // consume UNSET
 
@@ -1600,4 +1833,95 @@ func (p *Parser) parseAdminUnsetCommand() (*Command, error) {
 		p.nextToken()
 	}
 	return NewCommand("unset_token"), nil
+}
+
+func (p *Parser) parseMessageQueueCommand() (*Command, error) {
+	p.nextToken() // consume MESSAGE_QUEUE
+
+	var cmd *Command
+	switch p.curToken.Type {
+	case TokenShow:
+		p.nextToken()
+		cmd = NewCommand("user_show_message_queue_command")
+
+	case TokenList:
+		p.nextToken() // consume LIST
+
+		cmd = NewCommand("user_list_message_queue_command")
+		if p.curToken.Type == TokenPending {
+			cmd.Params["pending"] = true
+			p.nextToken() // consume PENDING
+		} else {
+			cmd.Params["pending"] = false
+		}
+	case TokenPublish:
+		p.nextToken() // consume PUBLISH
+
+		message, err := p.parseQuotedString()
+		if err != nil {
+			return nil, fmt.Errorf("expected message after PUBLISH")
+		}
+		p.nextToken() // consume message
+
+		cmd = NewCommand("user_publish_message_command")
+		cmd.Params["message"] = message
+	case TokenPull:
+		p.nextToken() // consume PULL
+
+		messageCount, err := p.parseNumber()
+		if err != nil {
+			messageCount = 1
+		} else {
+			p.nextToken() // consume NUMBER
+		}
+
+		if messageCount <= 0 || messageCount > 100 {
+			return nil, fmt.Errorf("message count cannot be less than 0 or greater than 100")
+		}
+
+		cmd = NewCommand("user_pull_message_command")
+		cmd.Params["message_count"] = messageCount
+
+		if p.curToken.Type == TokenNoACK {
+			cmd.Params["ack_policy"] = "NOACK"
+			p.nextToken() // consume NOACK
+		} else {
+			cmd.Params["ack_policy"] = "ACK"
+		}
+
+	default:
+		return nil, fmt.Errorf("expected WITH")
+	}
+
+	// Semicolon is optional
+	if p.curToken.Type == TokenSemicolon {
+		p.nextToken()
+	}
+	return cmd, nil
+}
+
+func (p *Parser) parseAdminRemoveCommand() (*Command, error) {
+	p.nextToken() // consume MESSAGE_QUEUE
+
+	var cmd *Command
+	switch p.curToken.Type {
+	case TokenService:
+		p.nextToken() // consume SERVICE
+		serviceNum, err := p.parseNumber()
+		if err != nil {
+			return nil, fmt.Errorf("expected service number after SERVICE")
+		}
+		p.nextToken() // consume service number
+		cmd = NewCommand("admin_remove_service_command")
+		cmd.Params["service_number"] = serviceNum
+	case TokenIngestion:
+		return p.parseAdminRemoveIngestionTasks()
+	default:
+		return nil, fmt.Errorf("expected SERVICE")
+	}
+	// Semicolon is optional
+	if p.curToken.Type == TokenSemicolon {
+		p.nextToken()
+	}
+	return cmd, nil
 }

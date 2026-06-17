@@ -51,7 +51,9 @@ RUN apt update && \
     rm -f /etc/apt/apt.conf.d/docker-clean && \
     echo 'Binary::apt::APT::Keep-Downloaded-Packages "true";' > /etc/apt/apt.conf.d/keep-cache && \
     chmod 1777 /tmp && \
-    apt clean && \
+    apt update && \
+    apt install -y \
+    libglib2.0-0 libglx-mesa0 libgl1 pkg-config libgdiplus default-jdk libatk-bridge2.0-0 libgtk-4-1 libnss3 xdg-utils libjemalloc-dev gnupg unzip curl wget git vim less ghostscript pandoc texlive texlive-latex-extra texlive-xetex texlive-lang-chinese fonts-freefont-ttf fonts-noto-cjk postgresql-client && \
     rm -rf /var/lib/apt/lists/*
 
 # Core dependencies
@@ -106,14 +108,14 @@ RUN mkdir -p /usr/share/infinity/resource && \
     cp -r /tmp/resource/* /usr/share/infinity/resource && \
     rm -rf /tmp/resource
 
-# Install nginx
-RUN mkdir -p /etc/apt/keyrings && \
+ARG NGINX_VERSION=1.31.0-1~noble
+RUN --mount=type=cache,id=ragflow_apt,target=/var/cache/apt,sharing=locked \
+    mkdir -p /etc/apt/keyrings && \
     curl --retry 5 --retry-delay 2 --retry-all-errors -fsSL https://nginx.org/keys/nginx_signing.key | gpg --dearmor -o /etc/apt/keyrings/nginx-archive-keyring.gpg && \
     echo "deb [signed-by=/etc/apt/keyrings/nginx-archive-keyring.gpg] https://nginx.org/packages/mainline/ubuntu/ noble nginx" > /etc/apt/sources.list.d/nginx.list && \
-    apt update && \
-    apt install -y --no-install-recommends nginx=${NGINX_VERSION} && \
+    apt -o Acquire::Retries=5 update && \
+    apt -o Acquire::Retries=5 install -y nginx=${NGINX_VERSION} && \
     apt-mark hold nginx && \
-    apt clean && \
     rm -rf /var/lib/apt/lists/*
 
 # Install uv
@@ -136,8 +138,7 @@ RUN curl -fsSL https://deb.nodesource.com/setup_20.x | bash - && \
     apt purge -y nodejs npm || true && \
     apt autoremove -y && \
     apt update && \
-    apt install -y --no-install-recommends nodejs && \
-    apt clean && \
+    apt install -y nodejs && \
     rm -rf /var/lib/apt/lists/*
 
 # Add msssql ODBC driver
@@ -148,11 +149,13 @@ RUN curl -fsSL https://packages.microsoft.com/keys/microsoft.asc | apt-key add -
     if [ "$arch" = "arm64" ] || [ "$arch" = "aarch64" ]; then \
         ACCEPT_EULA=Y apt install -y --no-install-recommends unixodbc-dev msodbcsql18; \
     else \
-        ACCEPT_EULA=Y apt install -y --no-install-recommends unixodbc-dev msodbcsql17; \
-    fi || \
-    { echo "Failed to install ODBC driver"; exit 1; } && \
-    apt clean && \
-    rm -rf /var/lib/apt/lists/*
+        # x86_64 or others \
+        ACCEPT_EULA=Y apt install -y unixodbc-dev msodbcsql17; \
+    fi && \
+    rm -rf /var/lib/apt/lists/* || \
+    { echo "Failed to install ODBC driver"; exit 1; }
+
+
 
 # Add dependencies of selenium
 RUN unzip /tmp/chrome-linux64.zip && \
@@ -178,18 +181,54 @@ FROM base AS builder
 USER root
 WORKDIR /ragflow
 
-# Python deps
+# Install build-only dependencies for compiling Python C extensions.
+# These are not inherited from base to keep the production image smaller.
+RUN --mount=type=cache,id=ragflow_apt,target=/var/cache/apt,sharing=locked \
+    apt update && \
+    apt install -y build-essential libpython3-dev libicu-dev libgbm-dev && \
+    rm -rf /var/lib/apt/lists/*
+
+# install dependencies from uv.lock file
 COPY pyproject.toml uv.lock ./
-RUN if [ "$NEED_MIRROR" == "1" ]; then \
+
+# https://github.com/astral-sh/uv/issues/10462
+# uv records index url into uv.lock but doesn't failover among multiple indexes
+# Also rewrite pypi.tuna.tsinghua.edu.cn to mirrors.aliyun.com/pypi so locks
+# that were resolved against the Tsinghua mirror (e.g. when UV_INDEX pointed
+# there) get normalized to the Aliyun mirror in NEED_MIRROR=1 builds. Without
+# this, stale Tsinghua URLs slip through and `uv sync --frozen` 404s on
+# packages that the Tsinghua mirror no longer carries.
+RUN --mount=type=cache,id=ragflow_uv,target=/root/.cache/uv,sharing=locked \
+    if [ "$NEED_MIRROR" == "1" ]; then \
         sed -i 's|pypi.org|mirrors.aliyun.com/pypi|g' uv.lock; \
+        sed -i 's|pypi.tuna.tsinghua.edu.cn|mirrors.aliyun.com/pypi|g' uv.lock; \
     else \
         sed -i 's|mirrors.aliyun.com/pypi|pypi.org|g' uv.lock; \
-    fi && \
-    uv sync --python 3.13 --frozen && \
+        sed -i 's|pypi.tuna.tsinghua.edu.cn|pypi.org|g' uv.lock; \
+        sed -i 's|gitee.com|github.com|g' uv.lock; \
+    fi; \
+    # --refresh-package litellm forces a re-download of litellm from the
+    # (post-sed) URLs in uv.lock even if BuildKit's persistent uv cache mount
+    # holds a stale wheel from a previous build. litellm 1.88.x has had
+    # multiple internal ImportError issues (1.88.1 missing
+    # DEFAULT_HEALTH_CHECK_STALENESS_MULTIPLIER, 1.88.0 wheel pulled via
+    # some proxies missing RedisPipelineLpopOperation) — always re-fetching
+    # the locked version avoids serving a half-broken cached copy.
+    uv sync --python 3.13 --frozen --refresh-package litellm && \
+    # Ensure pip is available in the venv for runtime package installation (fixes #12651)
     .venv/bin/python3 -m ensurepip --upgrade
 
-# docs are required by web build through raw imports
-COPY docs /ragflow/docs
+# Install frontend dependencies — depends only on package manifests so
+# web source / docs changes don't invalidate this layer.
+COPY web/package.json web/package-lock.json web/.npmrc ./web/
+RUN --mount=type=cache,id=ragflow_npm,target=/root/.npm,sharing=locked \
+    cd web && NODE_OPTIONS="--max-old-space-size=8192" npm install
+
+# Copy full web source and docs for the frontend build.
+COPY web web
+COPY docs docs
+RUN --mount=type=cache,id=ragflow_npm,target=/root/.npm,sharing=locked \
+    cd web && NODE_OPTIONS="--max-old-space-size=8192" VITE_BUILD_SOURCEMAP=false VITE_MINIFY=esbuild npm run build
 
 # Web frontend: copy manifests first for better layer caching
 COPY web/package*.json /ragflow/web/
@@ -223,7 +262,6 @@ ENV PATH="${VIRTUAL_ENV}/bin:${PATH}"
 
 ENV PYTHONPATH=/ragflow/
 
-COPY web web
 COPY admin admin
 COPY api api
 COPY conf conf
@@ -236,7 +274,7 @@ COPY management management
 COPY common common
 COPY memory memory
 COPY bin bin
-COPY docs docs
+COPY tools/scripts tools/scripts
 
 COPY docker/service_conf.yaml.template ./conf/service_conf.yaml.template
 COPY docker/entrypoint.sh ./

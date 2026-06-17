@@ -329,6 +329,11 @@ class Canvas(Graph):
         self.dsl["memory"] = self.memory
         return super().__str__()
 
+    def clear_history(self):
+        self.history = []
+        if isinstance(self.globals.get("sys.history"), list):
+            self.globals["sys.history"] = []
+
     def reset(self, mem=False):
         super().reset()
         if not mem:
@@ -402,7 +407,7 @@ class Canvas(Graph):
                 break
 
         for k in kwargs.keys():
-            if k in ["query", "user_id", "files"] and kwargs[k]:
+            if k in ["query", "user_id", "files", "chat_template_kwargs"] and kwargs[k]:
                 if k == "files":
                     self.globals[f"sys.{k}"] = await self.get_files_async(kwargs[k], layout_recognize)
                 else:

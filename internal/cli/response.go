@@ -16,7 +16,10 @@
 
 package cli
 
-import "fmt"
+import (
+	"fmt"
+	"strings"
+)
 
 type ResponseIf interface {
 	Type() string
@@ -54,6 +57,36 @@ func (r *CommonResponse) PrintOut() {
 	}
 }
 
+type ModelsResponse struct {
+	Code         int                                 `json:"code"`
+	Data         map[string][]map[string]interface{} `json:"data"`
+	Message      string                              `json:"message"`
+	Duration     float64
+	OutputFormat OutputFormat
+}
+
+func (r *ModelsResponse) Type() string {
+	return "models"
+}
+
+func (r *ModelsResponse) TimeCost() float64 {
+	return r.Duration
+}
+
+func (r *ModelsResponse) SetOutputFormat(format OutputFormat) {
+	r.OutputFormat = format
+}
+
+func (r *ModelsResponse) PrintOut() {
+	if r.Code == 0 {
+		models := r.Data["models"]
+		PrintTableSimpleByFormat(models, r.OutputFormat)
+	} else {
+		fmt.Println("ERROR")
+		fmt.Printf("%d, %s\n", r.Code, r.Message)
+	}
+}
+
 type CommonDataResponse struct {
 	Code         int                    `json:"code"`
 	Data         map[string]interface{} `json:"data"`
@@ -77,7 +110,14 @@ func (r *CommonDataResponse) SetOutputFormat(format OutputFormat) {
 func (r *CommonDataResponse) PrintOut() {
 	if r.Code == 0 {
 		table := make([]map[string]interface{}, 0)
-		table = append(table, r.Data)
+		for key, value := range r.Data {
+			elem := map[string]interface{}{
+				"field": key,
+				"value": value,
+			}
+			table = append(table, elem)
+		}
+		//table = append(table, r.Data)
 		PrintTableSimpleByFormat(table, r.OutputFormat)
 	} else {
 		fmt.Println("ERROR")
@@ -119,6 +159,104 @@ func (r *ListDocumentsResponse) PrintOut() {
 		fmt.Println("ERROR")
 		fmt.Printf("%d, %s\n", r.Code, r.Message)
 	}
+}
+
+type ChunkResponse struct {
+	Code         int                    `json:"code"`
+	Data         map[string]interface{} `json:"data"`
+	Message      string                 `json:"message"`
+	Duration     float64
+	OutputFormat OutputFormat
+}
+
+func (r *ChunkResponse) Type() string {
+	return "chunk"
+}
+
+func (r *ChunkResponse) TimeCost() float64 {
+	return r.Duration
+}
+
+func (r *ChunkResponse) SetOutputFormat(format OutputFormat) {
+	r.OutputFormat = format
+}
+
+func (r *ChunkResponse) PrintOut() {
+	if r.Code == 0 {
+		for k, v := range r.Data {
+			fmt.Printf("%s: %v\n", k, v)
+		}
+	} else {
+		fmt.Println("ERROR")
+		fmt.Printf("%d, %s\n", r.Code, r.Message)
+	}
+}
+
+type MetadataResponse struct {
+	Code         int                    `json:"code"`
+	Data         map[string]interface{} `json:"data"`
+	Message      string                 `json:"message"`
+	Duration     float64
+	OutputFormat OutputFormat
+}
+
+func (r *MetadataResponse) Type() string {
+	return "metadata"
+}
+
+func (r *MetadataResponse) TimeCost() float64 {
+	return r.Duration
+}
+
+func (r *MetadataResponse) SetOutputFormat(format OutputFormat) {
+	r.OutputFormat = format
+}
+
+func (r *MetadataResponse) PrintOut() {
+	if r.Code == 0 {
+		// Data is map[field]map[value][]doc_id - print flattened metadata
+		if r.Data != nil {
+			printFlattenedMetadata(r.Data, r.OutputFormat)
+		}
+	} else {
+		fmt.Println("ERROR")
+		fmt.Printf("%d, %s\n", r.Code, r.Message)
+	}
+}
+
+func printFlattenedMetadata(data map[string]interface{}, format OutputFormat) {
+	// Convert flattened metadata to table format
+	// {field: {value: [doc_ids]}} -> [{field, value, document_ids}, ...]
+	tableData := make([]map[string]interface{}, 0)
+	for field, values := range data {
+		valueMap, ok := values.(map[string]interface{})
+		if !ok {
+			continue
+		}
+		for value, docIDs := range valueMap {
+			var docIDStr string
+			switch v := docIDs.(type) {
+			case []string:
+				docIDStr = strings.Join(v, ", ")
+			case []interface{}:
+				docStrs := make([]string, 0, len(v))
+				for _, d := range v {
+					if s, ok := d.(string); ok {
+						docStrs = append(docStrs, s)
+					}
+				}
+				docIDStr = strings.Join(docStrs, ", ")
+			default:
+				docIDStr = fmt.Sprintf("%v", docIDs)
+			}
+			tableData = append(tableData, map[string]interface{}{
+				"field":        field,
+				"value":        value,
+				"document_ids": docIDStr,
+			})
+		}
+	}
+	PrintTableSimpleByFormat(tableData, format)
 }
 
 type SimpleResponse struct {
@@ -421,69 +559,43 @@ func (r *TaskResponse) PrintOut() {
 	}
 }
 
-// ==================== ContextEngine Commands ====================
-
-// ContextListResponse represents the response for ls command
-type ContextListResponse struct {
-	Code         int                      `json:"code"`
-	Data         []map[string]interface{} `json:"data"`
-	Message      string                   `json:"message"`
-	Duration     float64
-	OutputFormat OutputFormat
-}
-
-func (r *ContextListResponse) Type() string                        { return "ce_ls" }
-func (r *ContextListResponse) TimeCost() float64                   { return r.Duration }
-func (r *ContextListResponse) SetOutputFormat(format OutputFormat) { r.OutputFormat = format }
-func (r *ContextListResponse) PrintOut() {
-	if r.Code == 0 {
-		PrintTableSimpleByFormat(r.Data, r.OutputFormat)
-	} else {
-		fmt.Println("ERROR")
-		fmt.Printf("%d, %s\n", r.Code, r.Message)
-	}
-}
-
-// ContextSearchResponse represents the response for search command
-type ContextSearchResponse struct {
-	Code         int                      `json:"code"`
-	Data         []map[string]interface{} `json:"data"`
-	Total        int                      `json:"total"`
-	Message      string                   `json:"message"`
-	Duration     float64
-	OutputFormat OutputFormat
-}
-
-func (r *ContextSearchResponse) Type() string                        { return "ce_search" }
-func (r *ContextSearchResponse) TimeCost() float64                   { return r.Duration }
-func (r *ContextSearchResponse) SetOutputFormat(format OutputFormat) { r.OutputFormat = format }
-func (r *ContextSearchResponse) PrintOut() {
-	if r.Code == 0 {
-		fmt.Printf("Found %d results:\n", r.Total)
-		PrintTableSimpleByFormat(r.Data, r.OutputFormat)
-	} else {
-		fmt.Println("ERROR")
-		fmt.Printf("%d, %s\n", r.Code, r.Message)
-	}
-}
-
-// ContextCatResponse represents the response for cat command
-type ContextCatResponse struct {
+type ExplainResponse struct {
 	Code         int    `json:"code"`
-	Content      string `json:"content"`
 	Message      string `json:"message"`
 	Duration     float64
 	OutputFormat OutputFormat
 }
 
-func (r *ContextCatResponse) Type() string                        { return "ce_cat" }
-func (r *ContextCatResponse) TimeCost() float64                   { return r.Duration }
-func (r *ContextCatResponse) SetOutputFormat(format OutputFormat) { r.OutputFormat = format }
-func (r *ContextCatResponse) PrintOut() {
+func (r *ExplainResponse) Type() string {
+	return "explain"
+}
+
+func (r *ExplainResponse) TimeCost() float64 {
+	return r.Duration
+}
+
+func (r *ExplainResponse) SetOutputFormat(format OutputFormat) {
+	r.OutputFormat = format
+}
+
+func (r *ExplainResponse) PrintOut() {
 	if r.Code == 0 {
-		fmt.Println(r.Content)
+		fmt.Printf("\n%s\n", r.Message)
 	} else {
-		fmt.Println("ERROR")
-		fmt.Printf("%d, %s\n", r.Code, r.Message)
+		fmt.Printf("ERROR %d\n", r.Code)
 	}
+}
+
+// FileSystemResponse wraps the raw text output from executeFilesystem().
+type FileSystemResponse struct {
+	Output       string
+	Duration     float64
+	OutputFormat OutputFormat
+}
+
+func (r *FileSystemResponse) Type() string                        { return "filesystem" }
+func (r *FileSystemResponse) TimeCost() float64                   { return r.Duration }
+func (r *FileSystemResponse) SetOutputFormat(format OutputFormat) { r.OutputFormat = format }
+func (r *FileSystemResponse) PrintOut() {
+	fmt.Print(r.Output)
 }

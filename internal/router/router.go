@@ -44,8 +44,16 @@ type Router struct {
 	searchHandler        *handler.SearchHandler
 	fileHandler          *handler.FileHandler
 	memoryHandler        *handler.MemoryHandler
+	mcpHandler           *handler.MCPHandler
 	skillSearchHandler   *handler.SkillSearchHandler
 	providerHandler      *handler.ProviderHandler
+	agentHandler         *handler.AgentHandler
+	searchBotHandler     *handler.SearchBotHandler
+	difyRetrievalHandler *handler.DifyRetrievalHandler
+	pluginHandler        *handler.PluginHandler
+	modelHandler         *handler.ModelHandler
+	fileCommitHandler    *handler.FileCommitHandler
+	adminRuntimeHandler  *handler.AdminRuntimeHandler
 }
 
 // NewRouter create router
@@ -56,6 +64,7 @@ func NewRouter(
 	documentHandler *handler.DocumentHandler,
 	datasetsHandler *handler.DatasetsHandler,
 	systemHandler *handler.SystemHandler,
+	knowledgebaseHandler *handler.KnowledgebaseHandler,
 	chunkHandler *handler.ChunkHandler,
 	llmHandler *handler.LLMHandler,
 	chatHandler *handler.ChatHandler,
@@ -64,31 +73,57 @@ func NewRouter(
 	searchHandler *handler.SearchHandler,
 	fileHandler *handler.FileHandler,
 	memoryHandler *handler.MemoryHandler,
+	mcpHandler *handler.MCPHandler,
 	skillSearchHandler *handler.SkillSearchHandler,
 	providerHandler *handler.ProviderHandler,
+	agentHandler *handler.AgentHandler,
+	searchBotHandler *handler.SearchBotHandler,
+	difyRetrievalHandler *handler.DifyRetrievalHandler,
+	pluginHandler *handler.PluginHandler,
+	modelHandler *handler.ModelHandler,
+	fileCommitHandler *handler.FileCommitHandler,
+	adminRuntimeHandler *handler.AdminRuntimeHandler,
 ) *Router {
 	return &Router{
-		authHandler:        authHandler,
-		userHandler:        userHandler,
-		tenantHandler:      tenantHandler,
-		documentHandler:    documentHandler,
-		datasetsHandler:    datasetsHandler,
-		systemHandler:      systemHandler,
-		chunkHandler:       chunkHandler,
-		llmHandler:         llmHandler,
-		chatHandler:        chatHandler,
-		chatSessionHandler: chatSessionHandler,
-		connectorHandler:   connectorHandler,
-		searchHandler:      searchHandler,
-		fileHandler:        fileHandler,
-		memoryHandler:      memoryHandler,
-		skillSearchHandler: skillSearchHandler,
-		providerHandler:    providerHandler,
+		authHandler:          authHandler,
+		userHandler:          userHandler,
+		tenantHandler:        tenantHandler,
+		documentHandler:      documentHandler,
+		datasetsHandler:      datasetsHandler,
+		systemHandler:        systemHandler,
+		knowledgebaseHandler: knowledgebaseHandler,
+		chunkHandler:         chunkHandler,
+		llmHandler:           llmHandler,
+		chatHandler:          chatHandler,
+		chatSessionHandler:   chatSessionHandler,
+		connectorHandler:     connectorHandler,
+		searchHandler:        searchHandler,
+		fileHandler:          fileHandler,
+		memoryHandler:        memoryHandler,
+		mcpHandler:           mcpHandler,
+		skillSearchHandler:   skillSearchHandler,
+		providerHandler:      providerHandler,
+		agentHandler:         agentHandler,
+		searchBotHandler:     searchBotHandler,
+		difyRetrievalHandler: difyRetrievalHandler,
+		pluginHandler:        pluginHandler,
+		modelHandler:         modelHandler,
+		fileCommitHandler:    fileCommitHandler,
+		adminRuntimeHandler:  adminRuntimeHandler,
 	}
 }
 
 // Setup setup routes
 func (r *Router) Setup(engine *gin.Engine) {
+	// Mark all responses from Go with a header for debugging.
+	engine.Use(func(c *gin.Context) {
+		c.Header("X-API-Source", "go")
+		c.Next()
+	})
+
+	// Log all HTTP requests.
+	engine.Use(gin.Logger())
+
 	// Health check
 	engine.GET("/health", r.systemHandler.Health)
 
@@ -99,11 +134,17 @@ func (r *Router) Setup(engine *gin.Engine) {
 	// User logout endpoint
 	engine.GET("/v1/user/logout", r.userHandler.Logout)
 
+	// OAuth callbacks are invoked by third-party providers and cannot rely on
+	// the RAGFlow auth middleware.
+	engine.GET("/connectors/gmail/oauth/web/callback", r.connectorHandler.GmailWebOAuthCallback)
+	engine.GET("/connectors/google-drive/oauth/web/callback", r.connectorHandler.GoogleDriveWebOAuthCallback)
+
 	apiNoAuth := engine.Group("/api/v1")
 	{
 		apiNoAuth.GET("/system/ping", r.systemHandler.Ping)
 		apiNoAuth.GET("/system/config", r.systemHandler.GetConfig)
 		apiNoAuth.GET("/system/version", r.systemHandler.GetVersion)
+		apiNoAuth.GET("/system/healthz", r.systemHandler.Healthz)
 
 		// User login channels endpoint
 		apiNoAuth.GET("/auth/login/channels", r.userHandler.GetLoginChannels)
@@ -111,8 +152,30 @@ func (r *Router) Setup(engine *gin.Engine) {
 		// User login by email endpoint
 		apiNoAuth.POST("/auth/login", r.userHandler.LoginByEmail)
 
+		// OAuth / OIDC login routes. The static "channels" segment is
+		// registered before the wildcard, so gin's tree resolves
+		// /auth/login/channels to GetLoginChannels and other values to
+		// OAuthLogin without conflict.
+		apiNoAuth.GET("/auth/login/:channel", r.userHandler.OAuthLogin)
+		apiNoAuth.GET("/auth/oauth/:channel/callback", r.userHandler.OAuthCallback)
+
 		// Register
 		apiNoAuth.POST("/users", r.userHandler.Register)
+
+		// Document images are embedded directly in pages and match Python's public route.
+		apiNoAuth.GET("/documents/images/:image_id", r.documentHandler.GetDocumentImage)
+
+		// Google redirects here after Gmail / Google Drive web OAuth completes.
+		apiNoAuth.GET("/connectors/gmail/oauth/web/callback", r.connectorHandler.GmailWebOAuthCallback)
+		apiNoAuth.GET("/connectors/google-drive/oauth/web/callback", r.connectorHandler.GoogleDriveWebOAuthCallback)
+		// Forgot-password flow (fixes #15282).
+		// Routes are intentionally registered before any auth middleware:
+		// a user who has forgotten their password is, by definition,
+		// unauthenticated.
+		apiNoAuth.POST("/auth/password/forgot/captcha", r.userHandler.ForgotCaptcha)
+		apiNoAuth.POST("/auth/password/forgot/otp", r.userHandler.ForgotSendOTP)
+		apiNoAuth.POST("/auth/password/forgot/otp/verify", r.userHandler.ForgotVerifyOTP)
+		apiNoAuth.POST("/auth/password/reset", r.userHandler.ForgotResetPassword)
 	}
 
 	// Protected routes
@@ -164,6 +227,10 @@ func (r *Router) Setup(engine *gin.Engine) {
 			tenants := v1.Group("/tenants")
 			{
 				tenants.GET("", r.tenantHandler.TenantList)
+				tenants.PATCH("/:tenant_id", r.tenantHandler.AcceptTenantInvite)
+				tenants.GET("/:tenant_id/users", r.tenantHandler.ListTenantMembers)
+				tenants.POST("/:tenant_id/users", r.tenantHandler.AddTenantMember)
+				tenants.DELETE("/:tenant_id/users", r.tenantHandler.RemoveTenantMember)
 			}
 
 			v1.GET("/tenant/list", r.tenantHandler.TenantList)
@@ -176,6 +243,8 @@ func (r *Router) Setup(engine *gin.Engine) {
 			{
 				documents.POST("", rbacPerm(common.PermDocumentCreate), r.documentHandler.CreateDocument)
 				documents.GET("", rbacPerm(common.PermDocumentRead), r.documentHandler.ListDocuments)
+				documents.GET("/artifact/:filename", rbacPerm(common.PermDocumentRead), r.documentHandler.GetDocumentArtifact)
+				documents.GET("/:id/preview", rbacPerm(common.PermDocumentRead), r.documentHandler.GetDocumentPreview)
 				documents.GET("/:id", rbacPerm(common.PermDocumentRead), r.documentHandler.GetDocumentByID)
 				documents.PUT("/:id", rbacPerm(common.PermDocumentCreate), r.documentHandler.UpdateDocument)
 				documents.DELETE("/:id", rbacPerm(common.PermDocumentDelete), r.documentHandler.DeleteDocument)
@@ -191,20 +260,57 @@ func (r *Router) Setup(engine *gin.Engine) {
 				chats.GET("/:chat_id/sessions", rbacPerm(common.PermChatRead), r.chatSessionHandler.ListChatSessions)
 			}
 
+			// Searchbot routes — upstream renamed relatedQuestionsHandler → searchBotHandler.Handle
+			// and added /retrieval_test + /ask on the same handler.
+			v1.POST("/searchbots/related_questions", rbacPerm(common.PermChatUse), r.searchBotHandler.Handle)
+			v1.POST("/searchbots/retrieval_test", rbacPerm(common.PermDatasetRead), r.searchBotHandler.RetrievalTest)
+			v1.POST("/searchbots/ask", rbacPerm(common.PermChatUse), r.searchBotHandler.Ask)
+
 			// Dataset routes — mirrors restful_apis/dataset_api.py.
 			datasets := v1.Group("/datasets")
 			{
 				datasets.GET("", rbacPerm(common.PermDatasetRead), r.datasetsHandler.ListDatasets)
 				datasets.GET("/:dataset_id", rbacPerm(common.PermDatasetRead), r.datasetsHandler.GetDataset)
 				datasets.GET("/:dataset_id/graph", rbacPerm(common.PermDatasetRead), r.datasetsHandler.GetKnowledgeGraph)
+				datasets.DELETE("/:dataset_id/tags", rbacPerm(common.PermDatasetUpdate), r.datasetsHandler.RemoveTags)
 				datasets.DELETE("/:dataset_id/graph", rbacPerm(common.PermDatasetDelete), r.datasetsHandler.DeleteKnowledgeGraph)
 				datasets.POST("", rbacPerm(common.PermDatasetCreate), r.datasetsHandler.CreateDataset)
 				datasets.DELETE("", rbacPerm(common.PermDatasetDelete), r.datasetsHandler.DeleteDatasets)
-				// /datasets/search is a retrieval-test endpoint — reads only.
-				datasets.POST("/search", rbacPerm(common.PermDatasetRead), r.chunkHandler.RetrievalTest)
+				// upstream 2026-06-08 renamed chunkHandler.RetrievalTest → datasetsHandler.SearchDatasets
+				// for the /datasets/search endpoint. Still a read-only retrieval test.
+				datasets.POST("/search", rbacPerm(common.PermDatasetRead), r.datasetsHandler.SearchDatasets)
+				datasets.GET("/metadata/flattened", rbacPerm(common.PermDatasetRead), r.datasetsHandler.ListMetadataFlattened)
+				// upstream 2026-06-09 added dataset-scoped metadata summary endpoint.
+				datasets.GET("/:dataset_id/metadata/summary", rbacPerm(common.PermDatasetRead), r.documentHandler.MetadataSummaryByDataset)
+
+				// Dataset ingestion logs (read-only).
+				datasets.GET("/:dataset_id/ingestions/summary", rbacPerm(common.PermDatasetRead), r.datasetsHandler.GetIngestionSummary)
+				datasets.GET("/:dataset_id/ingestions", rbacPerm(common.PermDatasetRead), r.datasetsHandler.ListIngestionLogs)
+				datasets.GET("/:dataset_id/ingestions/:log_id", rbacPerm(common.PermDatasetRead), r.datasetsHandler.GetIngestionLog)
+
+				// Metadata Config — GET is read, PUT is an update.
+				datasets.GET("/:dataset_id/metadata/config", rbacPerm(common.PermDatasetRead), r.datasetsHandler.GetMetadataConfig)
+				datasets.PUT("/:dataset_id/metadata/config", rbacPerm(common.PermDatasetUpdate), r.datasetsHandler.UpdateMetadataConfig)
 
 				// Listing documents within a dataset belongs to the documents scope.
 				datasets.GET("/:dataset_id/documents", rbacPerm(common.PermDocumentRead), r.documentHandler.ListDocuments)
+				// upstream 2026-06-08 added DownloadDocument on the dataset-scoped path.
+				datasets.GET("/:dataset_id/documents/:document_id", rbacPerm(common.PermDocumentRead), r.documentHandler.DownloadDocument)
+				datasets.DELETE("/:dataset_id/documents", rbacPerm(common.PermDocumentDelete), r.documentHandler.DeleteDocuments)
+
+				// Dataset document chunk — single-chunk read + chunk delete.
+				datasets.GET("/:dataset_id/documents/:document_id/chunks/:chunk_id", rbacPerm(common.PermDocumentRead), r.chunkHandler.Get)
+				// upstream 2026-06-15 replaced ParseDocuments / StopParseDocuments with the
+				// ingestion task system (StartIngestionTask + ListIngestionTasks +
+				// StopIngestionTasks + RemoveIngestionTasks). POST /documents/parse is
+				// kept as the entry point but now routes to StartIngestionTask.
+				datasets.POST("/:dataset_id/documents/parse", rbacPerm(common.PermDocumentCreate), r.documentHandler.StartIngestionTask)
+				datasets.GET("/ingestion/tasks", rbacPerm(common.PermDocumentRead), r.documentHandler.ListIngestionTasks)
+				datasets.PUT("/ingestion/tasks", rbacPerm(common.PermDocumentDelete), r.documentHandler.StopIngestionTasks)
+				datasets.DELETE("/ingestion/tasks", rbacPerm(common.PermDocumentDelete), r.documentHandler.RemoveIngestionTasks)
+				datasets.DELETE("/:dataset_id/documents/:document_id/chunks", rbacPerm(common.PermDocumentDelete), r.chunkHandler.RemoveChunks)
+				// upstream 2026-06-09 added per-document metadata config PUT.
+				datasets.PUT("/:dataset_id/documents/:document_id/metadata/config", rbacPerm(common.PermDocumentCreate), r.datasetsHandler.UpdateDocumentMetadataConfig)
 			}
 
 			// Search applications — mirrors restful_apis/search_api.py exactly.
@@ -227,9 +333,53 @@ func (r *Router) Setup(engine *gin.Engine) {
 				file.GET("", rbacPerm(common.PermDocumentRead), r.fileHandler.ListFiles)
 				file.DELETE("", rbacPerm(common.PermDocumentDelete), r.fileHandler.DeleteFiles)
 				file.POST("/move", rbacPerm(common.PermDocumentCreate), r.fileHandler.MoveFiles)
+				// upstream 2026-06-12 added file → dataset linking + per-file version history (git-like file API).
+				file.POST("/link-to-datasets", rbacPerm(common.PermDocumentCreate), r.fileHandler.LinkToDatasets)
 				file.GET("/:id/ancestors", rbacPerm(common.PermDocumentRead), r.fileHandler.GetFileAncestors)
 				file.GET("/:id/parent", rbacPerm(common.PermDocumentRead), r.fileHandler.GetParentFolder)
 				file.GET("/:id", rbacPerm(common.PermDocumentRead), r.fileHandler.Download)
+				file.GET("/:id/versions", rbacPerm(common.PermDocumentRead), r.fileCommitHandler.GetFileVersionHistory)
+			}
+
+			// upstream 2026-06-11 added git-like file commit API (#15978). Three URL shapes
+			// share the same handler: /folders/:folder_id, /workspace/:folder_id, and
+			// /datasets/:dataset_id (resolved to folder_id via middleware). RBAC: read with
+			// DocumentRead, write with DocumentCreate.
+			commitFolders := v1.Group("/folders")
+			{
+				commitFolders.POST("/:folder_id/commits", rbacPerm(common.PermDocumentCreate), r.fileCommitHandler.CreateCommit)
+				commitFolders.GET("/:folder_id/commits", rbacPerm(common.PermDocumentRead), r.fileCommitHandler.ListCommits)
+				commitFolders.GET("/:folder_id/commits/diff", rbacPerm(common.PermDocumentRead), r.fileCommitHandler.DiffCommits)
+				commitFolders.GET("/:folder_id/commits/:commit_id", rbacPerm(common.PermDocumentRead), r.fileCommitHandler.GetCommit)
+				commitFolders.GET("/:folder_id/commits/:commit_id/files", rbacPerm(common.PermDocumentRead), r.fileCommitHandler.ListCommitFiles)
+				commitFolders.GET("/:folder_id/commits/:commit_id/tree", rbacPerm(common.PermDocumentRead), r.fileCommitHandler.GetCommitTree)
+				commitFolders.GET("/:folder_id/commits/:commit_id/files/:file_id/content", rbacPerm(common.PermDocumentRead), r.fileCommitHandler.GetCommitFileContent)
+				commitFolders.GET("/:folder_id/changes", rbacPerm(common.PermDocumentRead), r.fileCommitHandler.GetUncommittedChanges)
+			}
+
+			commitWorkspace := v1.Group("/workspace")
+			{
+				commitWorkspace.POST("/:folder_id/commits", rbacPerm(common.PermDocumentCreate), r.fileCommitHandler.CreateCommit)
+				commitWorkspace.GET("/:folder_id/commits", rbacPerm(common.PermDocumentRead), r.fileCommitHandler.ListCommits)
+				commitWorkspace.GET("/:folder_id/commits/diff", rbacPerm(common.PermDocumentRead), r.fileCommitHandler.DiffCommits)
+				commitWorkspace.GET("/:folder_id/commits/:commit_id", rbacPerm(common.PermDocumentRead), r.fileCommitHandler.GetCommit)
+				commitWorkspace.GET("/:folder_id/commits/:commit_id/files", rbacPerm(common.PermDocumentRead), r.fileCommitHandler.ListCommitFiles)
+				commitWorkspace.GET("/:folder_id/commits/:commit_id/tree", rbacPerm(common.PermDocumentRead), r.fileCommitHandler.GetCommitTree)
+				commitWorkspace.GET("/:folder_id/commits/:commit_id/files/:file_id/content", rbacPerm(common.PermDocumentRead), r.fileCommitHandler.GetCommitFileContent)
+				commitWorkspace.GET("/:folder_id/changes", rbacPerm(common.PermDocumentRead), r.fileCommitHandler.GetUncommittedChanges)
+			}
+
+			commitDatasets := v1.Group("/datasets/:dataset_id")
+			commitDatasets.Use(handler.CommitFolderResolver(r.fileCommitHandler, "datasets", "dataset_id"))
+			{
+				commitDatasets.POST("/commits", rbacPerm(common.PermDocumentCreate), r.fileCommitHandler.CreateCommit)
+				commitDatasets.GET("/commits", rbacPerm(common.PermDocumentRead), r.fileCommitHandler.ListCommits)
+				commitDatasets.GET("/commits/diff", rbacPerm(common.PermDocumentRead), r.fileCommitHandler.DiffCommits)
+				commitDatasets.GET("/commits/:commit_id", rbacPerm(common.PermDocumentRead), r.fileCommitHandler.GetCommit)
+				commitDatasets.GET("/commits/:commit_id/files", rbacPerm(common.PermDocumentRead), r.fileCommitHandler.ListCommitFiles)
+				commitDatasets.GET("/commits/:commit_id/tree", rbacPerm(common.PermDocumentRead), r.fileCommitHandler.GetCommitTree)
+				commitDatasets.GET("/commits/:commit_id/files/:file_id/content", rbacPerm(common.PermDocumentRead), r.fileCommitHandler.GetCommitFileContent)
+				commitDatasets.GET("/changes", rbacPerm(common.PermDocumentRead), r.fileCommitHandler.GetUncommittedChanges)
 			}
 
 			// Author-scoped document listing.
@@ -251,19 +401,27 @@ func (r *Router) Setup(engine *gin.Engine) {
 				memory.GET("/:memory_id", rbacPerm(common.PermAgentRead), r.memoryHandler.GetMemoryMessages)
 			}
 
-			// TODO: Message routes - Implementation pending - depends on CanvasService, TaskService and embedding engine
-			// message := v1.Group("/messages")
-			// {
-			// 	message.POST("", r.memoryHandler.AddMessage)
-			// 	message.DELETE("/:memory_id/:message_id", r.memoryHandler.ForgetMessage)
-			// 	message.PUT("/:memory_id/:message_id", r.memoryHandler.UpdateMessage)
-			// 	message.GET("/search", r.memoryHandler.SearchMessage)
-			// 	message.GET("", r.memoryHandler.GetMessages)
-			// 	message.GET("/:memory_id/:message_id/content", r.memoryHandler.GetMessageContent)
-			// }
+			// Message routes
+			message := v1.Group("/messages")
+			{
+				message.DELETE("/:memory_message", r.memoryHandler.ForgetMessage)
+			}
 
-			// Skills — Go-only feature (no Python equivalent). The whole subtree
-			// is gated by DATASET_* permissions because a skill space behaves as
+			// MCP servers — mirrors restful_apis/mcp_api.py which gates every
+			// route with @require_permission(Permission.MCP_CONFIGURE).
+			mcp := v1.Group("/mcp")
+			{
+				mcp.POST("/servers", rbacPerm(common.PermMCPConfigure), r.mcpHandler.CreateMCPServer)
+				mcp.GET("/servers", rbacPerm(common.PermMCPConfigure), r.mcpHandler.ListMCPServers)
+				mcp.PUT("/servers/:mcp_id", rbacPerm(common.PermMCPConfigure), r.mcpHandler.UpdateMCPServer)
+				mcp.DELETE("/servers/:mcp_id", rbacPerm(common.PermMCPConfigure), r.mcpHandler.DeleteMCPServer)
+				// upstream 2026-06-08 added bulk import + per-server connectivity test (#15281).
+				mcp.POST("/servers/import", rbacPerm(common.PermMCPConfigure), r.mcpHandler.ImportMCPServers)
+				mcp.POST("/servers/:mcp_id/test", rbacPerm(common.PermMCPConfigure), r.mcpHandler.TestMCPServer)
+			}
+
+			// Skill search routes — Go-only feature (no Python equivalent).
+			// Gated by DATASET_* permissions because a skill space behaves as
 			// a dataset for the user (it indexes content and feeds retrieval).
 			skills := v1.Group("/skills")
 			{
@@ -303,14 +461,22 @@ func (r *Router) Setup(engine *gin.Engine) {
 				provider.GET("/:provider_name/instances", rbacPerm(common.PermChatUse), r.providerHandler.ListProviderInstances)
 				provider.GET("/:provider_name/instances/:instance_name", rbacPerm(common.PermChatUse), r.providerHandler.ShowProviderInstance)
 				provider.GET("/:provider_name/instances/:instance_name/balance", rbacPerm(common.PermLLMConfigure), r.providerHandler.ShowInstanceBalance)
-				provider.GET("/:provider_name/instances/:instance_name/connection", rbacPerm(common.PermLLMConfigure), r.providerHandler.CheckProviderConnection)
+				provider.GET("/:provider_name/instances/:instance_name/connection", rbacPerm(common.PermLLMConfigure), r.providerHandler.CheckInstanceConnection)
+				// upstream 2026-06-13 flipped /providers/:name/connection from GET to POST
+				// to match the Python route (api/apps/restful_apis/provider_api.py:359 + the
+				// web front-end posts {api_key, base_url, region, model_info} via
+				// web/src/services/llm-service.ts:45-48 method:'post'). The Go handler body
+				// was already POST-shaped (ShouldBindJSON against CheckConnectionRequest);
+				// the only missing piece was the routing method.
+				provider.POST("/:provider_name/connection", rbacPerm(common.PermLLMConfigure), r.providerHandler.CheckConnection)
 				provider.GET("/:provider_name/instances/:instance_name/tasks", rbacPerm(common.PermLLMConfigure), r.providerHandler.ListTasks)
 				provider.GET("/:provider_name/instances/:instance_name/tasks/:task_id", rbacPerm(common.PermLLMConfigure), r.providerHandler.ShowTask)
 				provider.PUT("/:provider_name/instances/:instance_name", rbacPerm(common.PermLLMConfigure), r.providerHandler.AlterProviderInstance)
 				provider.DELETE("/:provider_name/instances", rbacPerm(common.PermLLMConfigure), r.providerHandler.DropProviderInstance)
 				provider.GET("/:provider_name/instances/:instance_name/models", rbacPerm(common.PermChatUse), r.providerHandler.ListInstanceModels)
 				provider.PATCH("/:provider_name/instances/:instance_name/models/*model_name", rbacPerm(common.PermLLMConfigure), r.providerHandler.EnableOrDisableModel)
-				provider.POST("/:provider_name/instances/:instance_name/models", rbacPerm(common.PermLLMConfigure), r.providerHandler.AddCustomModel)
+				// upstream 2026-06-04 renamed AddCustomModel → AddModel.
+				provider.POST("/:provider_name/instances/:instance_name/models", rbacPerm(common.PermLLMConfigure), r.providerHandler.AddModel)
 				provider.DELETE("/:provider_name/instances/:instance_name/models", rbacPerm(common.PermLLMConfigure), r.providerHandler.DropInstanceModels)
 
 				// OpenAI-compatible inference endpoints — anyone who can use chat
@@ -329,15 +495,88 @@ func (r *Router) Setup(engine *gin.Engine) {
 			// (the chat picker needs it); writing is LLM_CONFIGURE (ws_admin).
 			model := v1.Group("/models")
 			{
-				model.GET("/", rbacPerm(common.PermChatUse), r.tenantHandler.GetModels)
+				// upstream 2026-06-13: GET /models now returns tenant added models
+				// via providerHandler.ListTenantAddedModels (mirrors Python
+				// models_api_service.list_tenant_added_models). The /default
+				// endpoints back the agent page's useFetchDefaultModels hook.
+				model.GET("/", rbacPerm(common.PermChatUse), r.providerHandler.ListTenantAddedModels)
 				model.PATCH("/", rbacPerm(common.PermLLMConfigure), r.tenantHandler.SetModels)
+				model.GET("/default", rbacPerm(common.PermChatUse), r.tenantHandler.GetDefaultModels)
+				model.PATCH("/default", rbacPerm(common.PermLLMConfigure), r.tenantHandler.SetDefaultModels)
 			}
+
+			// upstream 2026-06-09 added a global /all-models listing for the unified
+			// model-provider modal. Read-only listing, gated by chat_use.
+			allModels := v1.Group("/all-models")
+			{
+				allModels.GET("", rbacPerm(common.PermChatUse), r.modelHandler.ListAllModels)
+			}
+
+			// Agent routes — mirror Python's agent_api.py (PermAgentRead for read).
+			agents := v1.Group("/agents")
+			{
+				// CUSTOM B2B SaaS: don't use RegisterAgentRoutes (helper added in
+				// upstream 2026-06-15 #15952) because it applies no rbacPerm — would
+				// open every agent endpoint to any authenticated user. Re-declare
+				// explicitly with the right perm per route. New routes from #15952:
+				// /tags, POST/PUT/DELETE on /:canvas_id, /run, /publish, versions DELETE,
+				// sessions POST/DELETE.
+				agents.GET("", rbacPerm(common.PermAgentRead), r.agentHandler.ListAgents)
+				agents.POST("", rbacPerm(common.PermAgentCreate), r.agentHandler.CreateAgent)
+				agents.GET("/templates", rbacPerm(common.PermAgentRead), r.agentHandler.ListAgentTemplates)
+				agents.GET("/prompts", rbacPerm(common.PermAgentRead), r.agentHandler.Prompts)
+				agents.GET("/tags", rbacPerm(common.PermAgentRead), r.agentHandler.ListAgentTags)
+				agents.POST("/test_db_connection", rbacPerm(common.PermAgentUpdate), r.agentHandler.TestDBConnection)
+				// Canvas-level CRUD (upstream #15952).
+				agents.GET("/:canvas_id", rbacPerm(common.PermAgentRead), r.agentHandler.GetAgent)
+				agents.PUT("/:canvas_id", rbacPerm(common.PermAgentUpdate), r.agentHandler.UpdateAgent)
+				agents.DELETE("/:canvas_id", rbacPerm(common.PermAgentDelete), r.agentHandler.DeleteAgent)
+				agents.POST("/:canvas_id/run", rbacPerm(common.PermChatUse), r.agentHandler.RunAgent)
+				agents.DELETE("/:canvas_id/run", rbacPerm(common.PermChatUse), r.agentHandler.CancelAgent)
+				agents.POST("/:canvas_id/publish", rbacPerm(common.PermAgentUpdate), r.agentHandler.PublishAgent)
+				// upstream 2026-06-15 removed agentHandler.UploadAgentFile entirely as part of #15952.
+				// Frontend now uses the generic /files upload then attaches the file via canvas update.
+				agents.PUT("/:canvas_id/tags", rbacPerm(common.PermAgentUpdate), r.agentHandler.UpdateAgentTags)
+				// Versions.
+				agents.GET("/:canvas_id/versions", rbacPerm(common.PermAgentRead), r.agentHandler.ListVersions)
+				agents.GET("/:canvas_id/versions/:version_id", rbacPerm(common.PermAgentRead), r.agentHandler.GetVersion)
+				agents.DELETE("/:canvas_id/versions/:version_id", rbacPerm(common.PermAgentDelete), r.agentHandler.DeleteVersion)
+				// Sessions.
+				agents.GET("/:canvas_id/sessions", rbacPerm(common.PermChatRead), r.agentHandler.ListAgentSessions)
+				agents.POST("/:canvas_id/sessions", rbacPerm(common.PermChatUse), r.agentHandler.CreateAgentSession)
+				agents.GET("/:canvas_id/sessions/:session_id", rbacPerm(common.PermChatRead), r.agentHandler.GetAgentSession)
+				agents.DELETE("/:canvas_id/sessions", rbacPerm(common.PermChatDelete), r.agentHandler.DeleteAgentSession)
+				agents.DELETE("/:canvas_id/sessions/:session_id", rbacPerm(common.PermChatDelete), r.agentHandler.DeleteAgentSession)
+			}
+
+			// Plugin routes
+			plugin := v1.Group("/plugin")
+			{
+				plugin.GET("/tools", rbacPerm(common.PermChatUse), r.pluginHandler.ListLLMTools)
+			}
+
+			// Admin routes — Phase 6 per-tenant canvas runtime override.
+			// RegisterAdminRuntimeRoutes lives in admin_routes.go; a nil
+			// handler is tolerated and yields a no-op registration.
+			// upstream 2026-06-15 added this. We don't gate it with rbacPerm at the
+			// group level — the helper itself decides; per-route audit needed at
+			// next pass if it gets used by our admin panel.
+			admin := v1.Group("/admin")
+			RegisterAdminRuntimeRoutes(admin, r.adminRuntimeHandler)
 
 			// Connectors — see legacy /v1/connector above for the rationale
 			// (DATASOURCE_CONFIGURE = ws_admin only because credentials live here).
 			connector := v1.Group("/connectors")
 			{
 				connector.GET("/", rbacPerm(common.PermDatasourceConfigure), r.connectorHandler.ListConnectors)
+				connector.POST("/", rbacPerm(common.PermDatasourceConfigure), r.connectorHandler.CreateConnector)
+				connector.POST("/google/oauth/web/start", rbacPerm(common.PermDatasourceConfigure), r.connectorHandler.StartGoogleWebOAuth)
+				connector.POST("/google/oauth/web/result", rbacPerm(common.PermDatasourceConfigure), r.connectorHandler.PollGoogleWebOAuthResult)
+				connector.GET("/:connector_id", rbacPerm(common.PermDatasourceConfigure), r.connectorHandler.GetConnector)
+				connector.GET("/:connector_id/logs", rbacPerm(common.PermDatasourceConfigure), r.connectorHandler.ListLogs)
+				connector.DELETE("/:connector_id", rbacPerm(common.PermDatasourceConfigure), r.connectorHandler.DeleteConnector)
+				connector.POST("/:connector_id/rebuild", rbacPerm(common.PermDatasourceConfigure), r.connectorHandler.RebuildConnector)
+				connector.POST("/:connector_id/test", rbacPerm(common.PermDatasourceConfigure), r.connectorHandler.TestConnector)
 			}
 
 			// System config / log / tokens.
@@ -348,11 +587,31 @@ func (r *Router) Setup(engine *gin.Engine) {
 			system := v1.Group("/system")
 			{
 				system.GET("/configs", rbacPerm(common.PermChatUse), r.systemHandler.GetConfigs)
+				// /status + /stats — open to any authenticated user (mirrors Python's
+				// system_api.py which leaves these without @require_permission).
+				system.GET("/status", r.systemHandler.GetStatus)
+				system.GET("/stats", r.systemHandler.GetStats)
+				// Legacy /system/log group — keep the RBAC gating (AUDIT_READ for read,
+				// LLM_CONFIGURE for write). Upstream moved to /system/config/log; we
+				// mirror that too so frontend clients pinned on either path resolve.
 				log := system.Group("/log")
 				{
 					log.GET("", rbacPerm(common.PermAuditRead), r.systemHandler.GetLogLevel)
 					log.PUT("", rbacPerm(common.PermLLMConfigure), r.systemHandler.SetLogLevel)
 				}
+				config := system.Group("/config")
+				{
+					config.GET("/log", rbacPerm(common.PermAuditRead), r.systemHandler.GetLogLevel)
+					config.PUT("/log", rbacPerm(common.PermLLMConfigure), r.systemHandler.SetLogLevel)
+				}
+
+				//log := system.Group("/log")
+				//{
+				//	// /api/v1/system/log GET
+				//	log.GET("", r.systemHandler.GetLogLevel)
+				//	// /api/v1/system/log PUT
+				//	log.PUT("", r.systemHandler.SetLogLevel)
+				//}
 
 				tokens := system.Group("/tokens")
 				{
@@ -365,8 +624,8 @@ func (r *Router) Setup(engine *gin.Engine) {
 
 		// ---------------------------------------------------------------
 		// Legacy /v1/* groups — same handlers, kept for backward compat
-		// with the Python web-app frontend. Permissions mirror the new
-		// /api/v1/* routes above.
+		// with the Python web-app frontend (web/src/utils/api.ts pins
+		// `restAPIv1 = /v1`). Permissions mirror the new /api/v1/* routes.
 		// ---------------------------------------------------------------
 
 		// Knowledge base — datasets viewed through the legacy POST-everything API.
@@ -380,17 +639,19 @@ func (r *Router) Setup(engine *gin.Engine) {
 			kb.GET("/tags", rbacPerm(common.PermDatasetRead), r.knowledgebaseHandler.ListTagsFromKbs)
 			kb.GET("/get_meta", rbacPerm(common.PermDatasetRead), r.knowledgebaseHandler.GetMeta)
 			kb.GET("/basic_info", rbacPerm(common.PermDatasetRead), r.knowledgebaseHandler.GetBasicInfo)
-			// Internal Go-only doc-engine helpers — only ws_admin can configure
-			// the underlying index (treat as DATASOURCE_CONFIGURE).
-			kb.POST("/doc_engine_table", rbacPerm(common.PermDatasourceConfigure), r.knowledgebaseHandler.CreateDatasetInDocEngine)
-			kb.DELETE("/doc_engine_table", rbacPerm(common.PermDatasourceConfigure), r.knowledgebaseHandler.DeleteDatasetInDocEngine)
-			kb.POST("/insert_from_file", rbacPerm(common.PermDocumentCreate), r.knowledgebaseHandler.InsertDatasetFromFile)
+			// upstream 2026-06-04 removed knowledgebaseHandler.CreateDatasetInDocEngine,
+			// DeleteDatasetInDocEngine, InsertDatasetFromFile and RemoveTags — their
+			// underlying Go internals were refactored. The corresponding Go routes
+			// (kb.POST/doc_engine_table, kb.DELETE/doc_engine_table,
+			// kb.POST/insert_from_file, kbByID.POST/rm_tags) are dropped here.
+			// The Python `/v1/kb` and `/v1/llm/factories` endpoints still serve the
+			// same surface, and nothing in our frontend/sdk/test references the Go
+			// variants directly, so this is a safe removal.
 
 			// KB ID specific routes
 			kbByID := kb.Group("/:kb_id")
 			{
 				kbByID.GET("/tags", rbacPerm(common.PermDatasetRead), r.knowledgebaseHandler.ListTags)
-				kbByID.POST("/rm_tags", rbacPerm(common.PermDatasetUpdate), r.knowledgebaseHandler.RemoveTags)
 				kbByID.POST("/rename_tag", rbacPerm(common.PermDatasetUpdate), r.knowledgebaseHandler.RenameTag)
 				kbByID.GET("/knowledge_graph", rbacPerm(common.PermDatasetRead), r.knowledgebaseHandler.KnowledgeGraph)
 				kbByID.DELETE("/knowledge_graph", rbacPerm(common.PermDatasetDelete), r.knowledgebaseHandler.DeleteKnowledgeGraph)
@@ -406,6 +667,18 @@ func (r *Router) Setup(engine *gin.Engine) {
 			tenant.POST("/insert_metadata_from_file", rbacPerm(common.PermDocumentCreate), r.tenantHandler.InsertMetadataFromFile)
 		}
 
+		// New /api/v1/tenant — Go-internal upstream additions, all gated by
+		// DATASOURCE_CONFIGURE (chunk/metadata stores rewrite doc-engine layouts).
+		tenantV1 := v1.Group("/tenant")
+		{
+			tenantV1.POST("/chunk_store", rbacPerm(common.PermDatasourceConfigure), r.tenantHandler.CreateChunkStore)
+			tenantV1.DELETE("/chunk_store", rbacPerm(common.PermDatasourceConfigure), r.tenantHandler.DeleteChunkStore)
+			tenantV1.POST("/metadata_store", rbacPerm(common.PermDatasourceConfigure), r.tenantHandler.CreateMetadataStore)
+			tenantV1.DELETE("/metadata_store", rbacPerm(common.PermDatasourceConfigure), r.tenantHandler.DeleteMetadataStore)
+			tenantV1.POST("/insert_chunks_from_file", rbacPerm(common.PermDocumentCreate), r.tenantHandler.InsertChunksFromFile)
+			tenantV1.POST("/insert_metadata_from_file", rbacPerm(common.PermDocumentCreate), r.tenantHandler.InsertMetadataFromFile)
+		}
+
 		// Document — legacy listing and metadata operations.
 		doc := authorized.Group("/v1/document")
 		{
@@ -413,6 +686,17 @@ func (r *Router) Setup(engine *gin.Engine) {
 			doc.POST("/metadata/summary", rbacPerm(common.PermDocumentRead), r.documentHandler.MetadataSummary)
 			doc.POST("/set_meta", rbacPerm(common.PermDocumentCreate), r.documentHandler.SetMeta)
 		}
+
+		// New /api/v1/document RESTful surface — adds delete_meta vs legacy.
+		docV1 := v1.Group("/document")
+		{
+			docV1.POST("/list", rbacPerm(common.PermDocumentRead), r.documentHandler.ListDocuments)
+			docV1.POST("/metadata/summary", rbacPerm(common.PermDocumentRead), r.documentHandler.MetadataSummary)
+			docV1.POST("/set_meta", rbacPerm(common.PermDocumentCreate), r.documentHandler.SetMeta)
+			docV1.POST("/delete_meta", rbacPerm(common.PermDocumentDelete), r.documentHandler.DeleteMeta)
+		}
+
+		v1.GET("/thumbnails", rbacPerm(common.PermDocumentRead), r.documentHandler.GetThumbnail)
 
 		// Chunk — retrieval test reads dataset; update/rm are document-level edits.
 		// The Internal Go-only /update is gated by ws_admin via DATASOURCE_CONFIGURE
@@ -426,12 +710,20 @@ func (r *Router) Setup(engine *gin.Engine) {
 			chunk.POST("/rm", rbacPerm(common.PermDocumentDelete), r.chunkHandler.Remove)
 		}
 
+		// New /api/v1/chunk RESTful surface for the Python list + Go-internal update.
+		chunkV1 := v1.Group("/chunk")
+		{
+			chunkV1.POST("/list", rbacPerm(common.PermDocumentRead), r.chunkHandler.List)
+			chunkV1.POST("/update", rbacPerm(common.PermDatasourceConfigure), r.chunkHandler.UpdateChunk)
+		}
+
 		// LLM — Python LLM_CONFIGURE is ws_admin-only. Reads (my_llms, factories,
 		// list) are visible to anyone with chat usage so the dropdown works.
 		llm := authorized.Group("/v1/llm")
 		{
 			llm.GET("/my_llms", rbacPerm(common.PermChatUse), r.llmHandler.GetMyLLMs)
-			llm.GET("/factories", rbacPerm(common.PermChatUse), r.llmHandler.Factories)
+			// upstream 2026-06-04 removed llmHandler.Factories; Python /v1/llm/factories
+			// in api/apps/llm_app.py still serves the same payload.
 			llm.GET("/list", rbacPerm(common.PermChatUse), r.llmHandler.ListApp)
 			llm.POST("/set_api_key", rbacPerm(common.PermLLMConfigure), r.llmHandler.SetAPIKey)
 		}
@@ -461,6 +753,8 @@ func (r *Router) Setup(engine *gin.Engine) {
 		connector := authorized.Group("/v1/connector")
 		{
 			connector.GET("/list", rbacPerm(common.PermDatasourceConfigure), r.connectorHandler.ListConnectors)
+			connector.GET("/:connector_id", rbacPerm(common.PermDatasourceConfigure), r.connectorHandler.GetConnector)
+			connector.POST("/:connector_id/rebuild", rbacPerm(common.PermDatasourceConfigure), r.connectorHandler.RebuildConnector)
 		}
 
 		// File folder lookups — pure read access on the workspace file tree.
@@ -472,6 +766,14 @@ func (r *Router) Setup(engine *gin.Engine) {
 		}
 
 	}
+
+	// Dify retrieval routes
+	dify := authorized.Group("/api/v1/dify")
+	{
+		dify.POST("/retrieval", r.difyRetrievalHandler.Retrieval)
+		dify.GET("/retrieval", r.difyRetrievalHandler.Retrieval)
+	}
+	apiNoAuth.GET("/dify/retrieval/health", r.difyRetrievalHandler.HealthCheck)
 
 	// Handle undefined routes
 	engine.NoRoute(handler.HandleNoRoute)

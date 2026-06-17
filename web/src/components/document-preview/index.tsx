@@ -1,5 +1,6 @@
 import { lazy, memo, Suspense } from 'react';
 
+import { Images } from '@/constants/common';
 import CSVFileViewer from './csv-preview';
 import { DocPreviewer } from './doc-preview';
 import { ExcelCsvPreviewer } from './excel-preview';
@@ -19,13 +20,13 @@ type PreviewProps = {
   className?: string;
   url: string;
 };
-const Preview = ({
+const DocumentPreview = function ({
   fileType,
   className,
   highlights,
   setWidthAndHeight,
   url,
-}: PreviewProps & Partial<IProps>) => {
+}: PreviewProps & Partial<IProps>) {
   return (
     <>
       {fileType === 'pdf' && highlights && setWidthAndHeight && (
@@ -50,9 +51,7 @@ const Preview = ({
           <TxtPreviewer className={className} url={url} />
         </section>
       )}
-      {['jpg', 'png', 'gif', 'jpeg', 'svg', 'bmp', 'ico', 'tif'].indexOf(
-        fileType,
-      ) > -1 && (
+      {Images.indexOf(fileType) > -1 && (
         <section>
           <ImagePreviewer className={className} url={url} />
         </section>
@@ -97,4 +96,4 @@ const Preview = ({
     </>
   );
 };
-export default memo(Preview);
+export default memo(DocumentPreview);

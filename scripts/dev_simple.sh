@@ -29,7 +29,10 @@ pkill -f "hypercorn.*api.asgi" 2>/dev/null || true
 sleep 2
 
 echo "[dev_simple] starting task_executor (1 worker)"
-nohup uv run python rag/svr/task_executor.py dev_worker_1 \
+# upstream 2026-06-02 switched from a positional worker name to argparse
+# flags `-i <index> -t <type>`. CONSUMER_NAME becomes
+# `task_executor_common_<index>`.
+nohup uv run python rag/svr/task_executor.py -i 0 \
   > /tmp/ragflow_task_executor.log 2>&1 &
 
 echo "[dev_simple] starting ragflow_server (single process, hot-reload)"

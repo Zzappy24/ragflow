@@ -46,6 +46,7 @@ export enum Routes {
   DataSource = '/data-source',
   DataSourceDetailPage = '/data-source-detail-page',
   ApiKeys = '/api-keys',
+  ChatChannel = '/chat-channel',
   ProfileMcp = `${ProfileSetting}${Mcp}`,
   ProfileTeam = `${ProfileSetting}${Team}`,
   ProfilePlan = `${ProfileSetting}${Plan}`,
@@ -310,6 +311,10 @@ const routeConfigOptions = [
           {
             path: `${Routes.UserSetting}${Routes.ApiKeys}`,
             Component: () => import('@/pages/user-setting/api-keys'),
+          },
+          {
+            path: `${Routes.UserSetting}${Routes.ChatChannel}`,
+            Component: () => import('@/pages/user-setting/chat-channel'),
           },
         ],
       },

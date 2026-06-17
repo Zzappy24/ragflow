@@ -244,3 +244,5 @@ bin/*
 
 # pyinstrument scratch HTML reports from scripts/profile_endpoints.py
 .profile_*.html
+
+.run/

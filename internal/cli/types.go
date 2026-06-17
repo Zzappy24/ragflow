@@ -42,12 +42,15 @@ const (
 	TokenAlter
 	TokenActive
 	TokenAdmin
+	TokenServer
+	TokenAPI
 	TokenAdd
+	TokenHost
 	TokenDelete
 	TokenPassword
 	TokenDataset
 	TokenDatasets
-	TokenDatasetTable
+	TokenChunkStore
 	TokenOf
 	TokenAgents
 	TokenRole
@@ -68,6 +71,7 @@ const (
 	TokenVar
 	TokenVars
 	TokenConfigs
+	TokenConfig
 	TokenEnvs
 	TokenKey
 	TokenKeys
@@ -91,10 +95,12 @@ const (
 	TokenParse
 	TokenImport
 	TokenInto
+	TokenIn
 	TokenWith
 	TokenParser
 	TokenPipeline
 	TokenSearch
+	TokenRetrieve
 	TokenCurrent
 	TokenVision
 	TokenEmbedding
@@ -102,6 +108,7 @@ const (
 	TokenASR
 	TokenTTS
 	TokenOCR
+	TokenDocParse
 	TokenEmbed
 	TokenText
 	TokenQuery
@@ -121,6 +128,7 @@ const (
 	TokenIndex
 	TokenVector
 	TokenSize
+	TokenStore
 	TokenName // For ALTER PROVIDER <name> NAME <new_name>
 	TokenBalance
 	TokenInstance
@@ -144,8 +152,10 @@ const (
 	TokenFile
 	TokenMetadata
 	TokenTable
+	TokenGet
 	TokenUpdate
 	TokenRemove
+	TokenExplain
 	TokenChunk
 	TokenChunks
 	TokenDocument
@@ -155,6 +165,16 @@ const (
 	TokenURL
 	TokenTask
 	TokenTasks
+	TokenIngestor
+	TokenIngestors
+	TokenStart
+	TokenStop
+	TokenIngestion
+	TokenMQ
+	TokenPublish
+	TokenPull
+	TokenPending
+	TokenNoACK
 	TokenLog
 	TokenLevel
 	TokenDebug
@@ -171,12 +191,15 @@ const (
 	TokenNumber = TokenInteger // Alias for integer tokens in path parsing (e.g., version numbers like 1.0.0)
 
 	// Special
+	_ = iota
 	TokenSemicolon
 	TokenComma
 	TokenSlash
 	TokenEOF
 	TokenDash
 	TokenIllegal
+	TokenLBracket // '['
+	TokenRBracket // ']'
 )
 
 // Token represents a lexical token

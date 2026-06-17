@@ -62,7 +62,10 @@ spawn_detached() {
 }
 
 echo "[dev_up] starting task_executor (1 worker)"
-spawn_detached /tmp/ragflow_task_executor.log uv run python rag/svr/task_executor.py dev_worker_1
+# upstream 2026-06-02 switched task_executor CLI from a positional worker
+# name to argparse flags `-i <index> -t <type>`; passing the old positional
+# `dev_worker_1` is now a hard error.
+spawn_detached /tmp/ragflow_task_executor.log uv run python rag/svr/task_executor.py -i 0
 
 echo "[dev_up] starting ragflow_server (single process, hot-reload)"
 spawn_detached /tmp/ragflow_server.log uv run python api/ragflow_server.py

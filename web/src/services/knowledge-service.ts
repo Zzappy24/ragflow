@@ -286,7 +286,6 @@ export const listDocument = (
 export const documentFilter = (kb_id: string) =>
   request.get(api.getDatasetFilter(kb_id), { params: {} });
 
-// Custom upload function that handles dynamic URL using axios directly
 export const uploadDocument = async (datasetId: string, formData: FormData) => {
   const url = api.documentUpload(datasetId);
   const activeWorkspaceId = localStorage.getItem('active_workspace_id');
