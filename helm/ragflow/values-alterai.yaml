@@ -44,10 +44,6 @@ ragflow-api:
     limits:
       cpu: "1"
       memory: "8Gi"
-  tolerations:
-    - key: nvidia.com/gpu
-      operator: Exists
-      effect: NoSchedule
 
   tolerations:
     - key: node-role
@@ -63,11 +59,11 @@ ragflow-task-executor:
   replicas: 1
   resources:
     requests:
-      cpu: "250m"
-      memory: "512Mi"
-    limits:
       cpu: "1000m"
-      memory: "2Gi"
+      memory: "4Gi"
+    limits:
+      cpu: "2000m"
+      memory: "12Gi"
   keda:
     minReplicas: 1
     maxReplicas: 2
@@ -122,11 +118,11 @@ infinity:
   storage: "100Gi"
   resources:
     requests:
-      cpu: "250m"
-      memory: "512Mi"
-    limits:
-      cpu: "1000m"
+      cpu: "500m"
       memory: "2Gi"
+    limits:
+      cpu: "2000m"
+      memory: "8Gi"
 
 monitoring:
   serviceMonitor:
@@ -151,5 +147,5 @@ vllm:
   embedBaseUrl: "http://vllm-router-service.vllm.svc.cluster.local/v1"
   rerankBaseUrl: "http://vllm-router-service.vllm.svc.cluster.local/v1"
   chatModel: "Qwen/Qwen3.6-27B-FP8"
-  embedModel: "Qwen/Qwen3.6-27B-FP8"
-  rerankModel: "Qwen/Qwen3.6-27B-FP8"
+  embedModel: "BAAI/bge-m3"                  # ← vrai embedding
+  rerankModel: "BAAI/bge-reranker-v2-m3"     # ← vrai rerank
