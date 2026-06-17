@@ -59,27 +59,22 @@ ragflow-task-executor:
   replicas: 1
   resources:
     requests:
-      cpu: "500m"
-      memory: "2Gi"    # passe le scheduling sans bloquer
+      cpu: "1000m"
+      memory: "4Gi"
     limits:
       cpu: "4000m"
-      memory: "16Gi"   # marge confortable, le GPU node a 787Gi
+      memory: "16Gi"
   affinity:
     nodeAffinity:
-      preferredDuringSchedulingIgnoredDuringExecution:
-        - weight: 100
-          preference:
-            matchExpressions:
+      requiredDuringSchedulingIgnoredDuringExecution:
+        nodeSelectorTerms:
+          - matchExpressions:
               - key: node-role.kubernetes.io/gpt
                 operator: In
                 values: ["true"]
   tolerations:
     - key: nvidia.com/gpu
       operator: Exists
-      effect: NoSchedule
-    - key: node-role
-      operator: Equal
-      value: gpu
       effect: NoSchedule
   keda:
     minReplicas: 1
@@ -142,20 +137,15 @@ infinity:
       memory: "8Gi"
   affinity:
     nodeAffinity:
-      preferredDuringSchedulingIgnoredDuringExecution:
-        - weight: 100
-          preference:
-            matchExpressions:
+      requiredDuringSchedulingIgnoredDuringExecution:
+        nodeSelectorTerms:
+          - matchExpressions:
               - key: node-role.kubernetes.io/gpt
                 operator: In
                 values: ["true"]
   tolerations:
     - key: nvidia.com/gpu
       operator: Exists
-      effect: NoSchedule
-    - key: node-role
-      operator: Equal
-      value: gpu
       effect: NoSchedule
 
 monitoring:
