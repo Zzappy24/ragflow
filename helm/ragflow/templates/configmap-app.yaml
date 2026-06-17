@@ -101,6 +101,6 @@ data:
       password: ${REDIS_PASSWORD}
       db: 1
     infinity:
-      uri: {{ .Release.Name }}-infinity.{{ .Release.Namespace }}.svc.cluster.local:23817
+      uri: {{ .Release.Name }}-infinity.{{ .Release.Namespace }}.svc.cluster.local
       postgres_port: 5432
       db_name: default_db
