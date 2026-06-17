@@ -1,0 +1,9 @@
+apiVersion: v2
+name: ragflow-management-backend
+description: |
+  Management backend for the Cyllene RAGFlow fork.
+  Runs a uvicorn ASGI server using the same application image as the other
+  RAGFlow components.
+type: application
+version: 1.0.0
+appVersion: "cyllene-1.0.0"

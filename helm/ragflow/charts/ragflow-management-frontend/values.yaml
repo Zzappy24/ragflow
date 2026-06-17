@@ -1,0 +1,35 @@
+replicas: 1
+
+image:
+  repository: harbor.cylndata.cyllene.pro/data/ragflow
+  tag: v0.3
+  pullPolicy: IfNotPresent
+  imagePullSecrets:
+    - name: harbor-pull-secret
+
+hostnameOverride: "ragflow-management.cyllene.cloud"
+
+backend:
+  port: 8000
+
+resources:
+  requests:
+    cpu: 50m
+    memory: 64Mi
+  limits:
+    cpu: 250m
+    memory: 256Mi
+
+service:
+  type: ClusterIP
+  port: 80
+
+probes:
+  liveness:
+    enabled: true
+    initialDelaySeconds: 5
+    periodSeconds: 10
+  readiness:
+    enabled: true
+    initialDelaySeconds: 2
+    periodSeconds: 5

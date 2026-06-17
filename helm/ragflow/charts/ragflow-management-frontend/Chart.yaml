@@ -1,0 +1,8 @@
+apiVersion: v2
+name: ragflow-management-frontend
+description: |
+  Stateless nginx serving the management React/vite bundle from the shared
+  ragflow image. Proxies /api/admin to the management backend service.
+type: application
+version: 1.0.0
+appVersion: "cyllene-1.0.0"

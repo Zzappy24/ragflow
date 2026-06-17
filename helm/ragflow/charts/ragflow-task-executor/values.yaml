@@ -3,10 +3,15 @@
 replicas: 4
 
 image:
-  repository: harbor.cyllene.local/ragflow/ragflow
-  tag: cyllene-1.0.0
+  repository: harbor.cylndata.cyllene.pro/data/ragflow
+  tag: v0.3
   pullPolicy: IfNotPresent
+  imagePullSecrets:
+    - name: harbor-pull-secret
 
+externalSecrets:
+  enabled: false
+  
 # Workers are heavier than the api: they load embedding models, OCR weights,
 # Infinity client buffers, etc. Per-pod budget reflects that.
 resources:
@@ -57,10 +62,11 @@ recycleAfterTasks: 200
 # Liveness probe — exec'd by kubelet, fails if the heartbeat file's mtime
 # is older than 90s (workers touch it at the end of every report_status
 # loop, period 30s; 90s = 3 missed iterations).
+#
 livenessProbe:
-  enabled: true
-  heartbeatFile: "/tmp/k8s_heartbeat"
-  maxAgeSeconds: 90
-  initialDelaySeconds: 60       # let model loading finish first
-  periodSeconds: 30
-  failureThreshold: 2
+  enabled: false
+#  heartbeatFile: "/tmp/k8s_heartbeat"
+#  maxAgeSeconds: 90
+#  initialDelaySeconds: 60       # let model loading finish first
+#  periodSeconds: 30
+#  failureThreshold: 2

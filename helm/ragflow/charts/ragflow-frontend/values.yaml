@@ -3,9 +3,14 @@
 replicas: 2
 
 image:
-  repository: harbor.cyllene.local/ragflow/ragflow
-  tag: cyllene-1.0.0
+  repository: harbor.cylndata.cyllene.pro/data/ragflow
+  tag: v0.3
   pullPolicy: IfNotPresent
+  imagePullSecrets:
+    - name: harbor-pull-secret
+
+externalSecrets:
+  enabled: false
 
 # Tiny — nginx serves static files, doesn't proxy.
 resources:
@@ -23,10 +28,12 @@ service:
 
 probes:
   liveness:
-    path: /
-    initialDelaySeconds: 5
-    periodSeconds: 10
+    enabled: false
+    #path: /
+    #initialDelaySeconds: 5
+    #periodSeconds: 10
   readiness:
-    path: /
-    initialDelaySeconds: 2
-    periodSeconds: 5
+    enabled: false
+    #path: /
+    #initialDelaySeconds: 2
+    #periodSeconds: 5

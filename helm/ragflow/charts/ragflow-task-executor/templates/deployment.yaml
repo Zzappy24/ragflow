@@ -69,6 +69,8 @@ spec:
               apk add --no-cache gettext >/dev/null 2>&1 || true
               envsubst < /conf-template/service_conf.yaml.template > /conf-rendered/local.service_conf.yaml
           envFrom:
+            - configMapRef:
+                name: {{ .Release.Name }}-app-config
             - secretRef:
                 name: ragflow-app-secrets
           volumeMounts:

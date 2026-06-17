@@ -1,0 +1,16 @@
+{{- $service := .Values.service | default dict -}}
+apiVersion: v1
+kind: Service
+metadata:
+  name: {{ include "ragflow-management-frontend.fullname" . }}
+  labels:
+    {{- include "ragflow-management-frontend.labels" . | nindent 4 }}
+spec:
+  type: {{ $service.type | default "ClusterIP" }}
+  selector:
+    {{- include "ragflow-management-frontend.selectorLabels" . | nindent 4 }}
+  ports:
+    - name: http
+      port: {{ $service.port | default 80 }}
+      targetPort: http
+      protocol: TCP

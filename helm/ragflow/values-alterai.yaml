@@ -1,0 +1,155 @@
+# =============================================================================
+#  Cyllene production overrides — alterai-prod cluster (RKE2 + odiso.net)
+# -----------------------------------------------------------------------------
+#  This file holds ONLY the deltas vs values.yaml. Read both together.
+# =============================================================================
+
+global:
+  imageRegistry: "harbor.cylndata.cyllene.pro"
+  imageRepository: "data/ragflow"
+  imageTag: "v0.3"
+  hostname: "ragflow.cyllene.cloud"
+  imagePullSecrets:
+    - name: harbor-pull-secret
+
+externalSecrets:
+  enabled: false
+
+ # Envoy Gateway is the cluster ingress controller. Templates render
+  # `Gateway` + `HTTPRoute` resources rather than legacy `Ingress`.
+  gatewayClassName: "envoy"
+  # Gateway resource the HTTPRoutes attach to. Created cluster-wide once.
+  gatewayName: "envoy-gateway"
+  gatewayNamespace: "envoy-gateway-system"
+
+# Reduced bootstrap sizing for constrained cluster capacity.
+ragflow-api:
+  replicas: 1
+  hpa:
+    minReplicas: 1
+    maxReplicas: 2
+  affinity:
+    nodeAffinity:
+      requiredDuringSchedulingIgnoredDuringExecution:
+        nodeSelectorTerms:
+          - matchExpressions:
+              - key: node-role.kubernetes.io/gpt
+                operator: In
+                values:
+                  - "true"
+  resources:
+    requests:
+      cpu: "1"
+      memory: "4Gi"
+    limits:
+      cpu: "1"
+      memory: "8Gi"
+  tolerations:
+    - key: nvidia.com/gpu
+      operator: Exists
+      effect: NoSchedule
+
+  tolerations:
+    - key: node-role
+      operator: Equal
+      value: gpu
+      effect: NoSchedule
+    - key: nvidia.com/gpu
+      operator: Exists
+      effect: NoSchedule
+
+ragflow-task-executor:
+  enabled: true
+  replicas: 1
+  resources:
+    requests:
+      cpu: "250m"
+      memory: "512Mi"
+    limits:
+      cpu: "1000m"
+      memory: "2Gi"
+  keda:
+    minReplicas: 1
+    maxReplicas: 2
+
+mariadb:
+  enabled: true
+  storage: "50Gi"
+  replicas: 1
+  galera: false
+  metrics: false
+  rootPasswordSecretRef: "ragflow-mariadb-root"
+  databaseSecretRef: "ragflow-mariadb-app"
+  resources:
+    requests:
+      cpu: "250m"
+      memory: "256Mi"
+    limits:
+      cpu: "1000m"
+      memory: "1Gi"
+
+redis:
+  enabled: true
+  storage: "10Gi"
+  masterReplicas: 1
+  slaveReplicas: 0
+  sentinelReplicas: 0
+  authSecretRef: "ragflow-redis-auth"
+  resources:
+    requests:
+      cpu: "50m"
+      memory: "128Mi"
+    limits:
+      cpu: "500m"
+      memory: "512Mi"
+
+minio:
+  enabled: true
+  host: "minio-hl.rag-new2.svc.cluster.local:9000"
+  servers: 1
+  volumesPerServer: 1
+  size: "200Gi"
+  rootCredentialsSecretRef: "ragflow-minio-root"
+  resources:
+    requests:
+      cpu: "100m"
+      memory: "256Mi"
+    limits:
+      cpu: "1000m"
+      memory: "1Gi"
+
+infinity:
+  storage: "100Gi"
+  resources:
+    requests:
+      cpu: "250m"
+      memory: "512Mi"
+    limits:
+      cpu: "1000m"
+      memory: "2Gi"
+
+monitoring:
+  serviceMonitor:
+    namespace: "monitoring"
+
+networkPolicy:
+  enabled: false
+
+ragflow-frontend:
+  enabled: true
+  replicas: 1
+  resources:
+    requests:
+      cpu: "100m"
+      memory: "128Mi"
+    limits:
+      cpu: "500m"
+      memory: "512Mi"
+
+vllm:
+  chatBaseUrl: "http://vllm-router-service.vllm.svc.cluster.local/v1"
+  embedBaseUrl: "http://vllm-router-service.vllm.svc.cluster.local/v1"
+  rerankBaseUrl: "http://vllm-router-service.vllm.svc.cluster.local/v1"
+  chatModel: "Qwen/Qwen3.6-27B-FP8"
+  embedModel: "Qwen/Qwen3.6-27B-FP8"
+  rerankModel: "Qwen/Qwen3.6-27B-FP8"

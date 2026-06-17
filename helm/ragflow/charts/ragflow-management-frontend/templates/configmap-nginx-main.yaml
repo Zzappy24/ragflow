@@ -1,0 +1,9 @@
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: {{ include "ragflow-management-frontend.fullname" . }}-nginx-main
+  labels:
+    {{- include "ragflow-management-frontend.labels" . | nindent 4 }}
+data:
+  nginx.conf: |
+    {{- include "ragflow-management-frontend.nginxMainConfig" . | nindent 4 }}
