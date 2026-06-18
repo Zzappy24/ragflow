@@ -57,6 +57,10 @@ ragflow-api:
 ragflow-task-executor:
   enabled: true
   replicas: 1
+  # Tells DeepDoc / pip_install_torch to install torch and use the
+  # CUDAExecutionProvider in onnxruntime. Without it, onnxruntime falls
+  # back to CPU even when the pod has nvidia.com/gpu allocated.
+  device: "gpu"
   resources:
     requests:
       cpu: "1000m"
