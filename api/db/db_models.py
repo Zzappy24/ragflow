@@ -613,19 +613,38 @@ class MysqlDatabaseLock:
         self.timeout = int(timeout)
         self.db = db if db else DB
 
-    @with_retry(max_retries=3, retry_delay=1.0)
+    # CUSTOM B2B SaaS — bumped retries 3 → 10 and added pool reconnect on NULL
+    # return from GET_LOCK. NULL from MariaDB means an internal error (commonly
+    # a session that died between `execute_sql` and `fetchone`, or a peewee
+    # pool checkout that handed us a dead connection). Reconnecting forces a
+    # fresh socket for the next attempt and unblocks the worker's set_progress.
+    @with_retry(max_retries=10, retry_delay=2.0)
     def lock(self):
         # SQL parameters only support %s format placeholders
-        cursor = self.db.execute_sql("SELECT GET_LOCK(%s, %s)", (self.lock_name, self.timeout))
-        ret = cursor.fetchone()
+        try:
+            cursor = self.db.execute_sql("SELECT GET_LOCK(%s, %s)", (self.lock_name, self.timeout))
+            ret = cursor.fetchone()
+        except Exception:
+            # Connection dropped between query and fetchone — close so peewee
+            # checks out a fresh one on the retry.
+            try:
+                self.db.close()
+            except Exception:
+                pass
+            raise
         if ret[0] == 0:
             raise Exception(f"acquire mysql lock {self.lock_name} timeout")
         elif ret[0] == 1:
             return True
         else:
+            # NULL = internal MariaDB error. Force pool reconnect for next try.
+            try:
+                self.db.close()
+            except Exception:
+                pass
             raise Exception(f"failed to acquire lock {self.lock_name}")
 
-    @with_retry(max_retries=3, retry_delay=1.0)
+    @with_retry(max_retries=10, retry_delay=2.0)
     def unlock(self):
         cursor = self.db.execute_sql("SELECT RELEASE_LOCK(%s)", (self.lock_name,))
         ret = cursor.fetchone()
