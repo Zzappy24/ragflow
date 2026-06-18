@@ -1,7 +1,19 @@
 # base stage
-FROM ubuntu:24.04 AS base
+# CUDA 12.5.1 runtime on Ubuntu 24.04 — required for onnxruntime-gpu 1.23.x
+# (DeepDoc OCR / layout models) and for CV/embedding workloads on Blackwell
+# (Compute Capability 10.0+) and Hopper. Driver >= 555 on the node is required.
+# Switching from ubuntu:24.04 to nvidia/cuda costs ~150MB on the image but
+# gives GPU OCR (5-10s/page vs 4-5min/page on CPU).
+FROM nvidia/cuda:12.5.1-runtime-ubuntu24.04 AS base
 USER root
 SHELL ["/bin/bash", "-c"]
+
+# Expose all visible GPUs to the runtime (default for K8s pods with
+# resources.limits.nvidia.com/gpu) and request compute+utility capabilities
+# so the CUDA libraries shipped by onnxruntime-gpu can dlopen libcuda.so /
+# libcudart.so from the driver mount.
+ENV NVIDIA_VISIBLE_DEVICES=all
+ENV NVIDIA_DRIVER_CAPABILITIES=compute,utility
 
 ARG NEED_MIRROR=0
 
