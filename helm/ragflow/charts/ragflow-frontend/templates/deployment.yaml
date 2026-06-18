@@ -40,6 +40,24 @@ spec:
                   matchLabels:
                     {{- include "ragflow-frontend.selectorLabels" . | nindent 20 }}
                 topologyKey: kubernetes.io/hostname
+        {{- with .Values.affinity }}
+        {{- if .nodeAffinity }}
+        nodeAffinity:
+          {{- toYaml .nodeAffinity | nindent 10 }}
+        {{- end }}
+        {{- if .podAffinity }}
+        podAffinity:
+          {{- toYaml .podAffinity | nindent 10 }}
+        {{- end }}
+        {{- end }}
+      {{- with .Values.tolerations }}
+      tolerations:
+        {{- toYaml . | nindent 8 }}
+      {{- end }}
+      {{- with .Values.nodeSelector }}
+      nodeSelector:
+        {{- toYaml . | nindent 8 }}
+      {{- end }}
 
       containers:
         - name: nginx
