@@ -1,10 +1,14 @@
 # base stage
-# CUDA 12.5.1 runtime on Ubuntu 24.04 — required for onnxruntime-gpu 1.23.x
-# (DeepDoc OCR / layout models) and for CV/embedding workloads on Blackwell
-# (Compute Capability 10.0+) and Hopper. Driver >= 555 on the node is required.
+# CUDA 12.8.1 runtime on Ubuntu 24.04 — required for onnxruntime-gpu 1.23.x
+# (DeepDoc OCR / layout models) and Blackwell GPUs:
+#   - B200 / B100              Compute Capability 10.0  (CUDA 12.4+)
+#   - RTX PRO 6000 Blackwell   Compute Capability 12.0  (CUDA 12.8+)
+# We pick 12.8.1 as the lowest CUDA that has pre-compiled kernels for sm_120
+# (the prod cluster runs RTX PRO 6000 Blackwell Server Edition). Driver >= 555
+# on the node is required; the alterai prod cluster runs 580+ which is fine.
 # Switching from ubuntu:24.04 to nvidia/cuda costs ~150MB on the image but
-# gives GPU OCR (5-10s/page vs 4-5min/page on CPU).
-FROM nvidia/cuda:12.5.1-runtime-ubuntu24.04 AS base
+# gives GPU OCR (5-10s/page vs 4-5min/page on CPU, ~30x speedup).
+FROM nvidia/cuda:12.8.1-runtime-ubuntu24.04 AS base
 USER root
 SHELL ["/bin/bash", "-c"]
 
