@@ -134,6 +134,13 @@ spec:
               value: "/ragflow"
             - name: TASK_EXECUTOR_METRICS_PORT
               value: "9381"
+            # DEVICE controls whether DeepDoc / pip_install_torch picks GPU.
+            # `cpu` (default) skips torch install → cuda_is_available() False
+            # → onnxruntime stuck on CPUExecutionProvider even when the pod
+            # has a GPU allocated. Set to "gpu" when nvidia.com/gpu is
+            # requested in resources. Override via .Values.device.
+            - name: DEVICE
+              value: {{ .Values.device | default "cpu" | quote }}
             # WORKER_RECYCLE_AFTER_TASKS — graceful exit threshold (see
             # rag/svr/task_executor.py for behaviour). 0 = disabled.
             # Distinct from upstream's WORKER_MAX_TASKS which controls
