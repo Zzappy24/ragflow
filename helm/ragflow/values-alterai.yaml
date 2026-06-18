@@ -7,7 +7,7 @@
 global:
   imageRegistry: "harbor.cylndata.cyllene.pro"
   imageRepository: "data/ragflow"
-  imageTag: "v0.4"
+  imageTag: "v0.5"
   hostname: "ragflow.cyllene.cloud"
   imagePullSecrets:
     - name: harbor-pull-secret
@@ -61,9 +61,11 @@ ragflow-task-executor:
     requests:
       cpu: "1000m"
       memory: "4Gi"
+      nvidia.com/gpu: 1
     limits:
       cpu: "4000m"
       memory: "16Gi"
+      nvidia.com/gpu: 1
   affinity:
     nodeAffinity:
       requiredDuringSchedulingIgnoredDuringExecution:
@@ -76,9 +78,11 @@ ragflow-task-executor:
     - key: nvidia.com/gpu
       operator: Exists
       effect: NoSchedule
+  # Node alteraiworkergpt1 has 4x RTX PRO 6000 Blackwell — scale up to
+  # 4 workers in parallel (1 GPU per pod). Beyond 4 = Pending.
   keda:
     minReplicas: 1
-    maxReplicas: 2
+    maxReplicas: 4
 
 mariadb:
   enabled: true
