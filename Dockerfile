@@ -2,7 +2,15 @@
 FROM infiniflow/ragflow_deps:latest AS deps
 
 # base stage
-FROM ubuntu:24.04 AS base
+# CUDA 12.8.1 runtime on Ubuntu 24.04 — required for onnxruntime-gpu 1.23.x
+# (DeepDoc OCR / layout models) and Blackwell GPUs:
+#   - B200 / B100              Compute Capability 10.0  (CUDA 12.4+)
+#   - RTX PRO 6000 Blackwell   Compute Capability 12.0  (CUDA 12.8+)
+# alterai prod runs RTX PRO 6000 Blackwell Server Edition (sm_120). Driver
+# >= 555 on the node is required; alterai prod runs 580+ which is fine.
+# Switching from ubuntu:24.04 to nvidia/cuda costs ~150MB on the image but
+# gives GPU OCR (5-10s/page vs 4-5min/page on CPU, ~30x speedup).
+FROM nvidia/cuda:12.8.1-runtime-ubuntu24.04 AS base
 USER root
 SHELL ["/bin/bash", "-c"]
 
@@ -11,6 +19,12 @@ ARG NGINX_VERSION=1.29.5-1~noble
 ARG VERSION_INFO=dev
 
 WORKDIR /ragflow
+
+# Expose all visible GPUs to the runtime (default for K8s pods with
+# resources.limits.nvidia.com/gpu) and request compute+utility capabilities
+# so onnxruntime-gpu can dlopen libcuda.so / libcudart.so from the driver mount.
+ENV NVIDIA_VISIBLE_DEVICES=all
+ENV NVIDIA_DRIVER_CAPABILITIES=compute,utility
 
 ENV DEBIAN_FRONTEND=noninteractive
 ENV TIKA_SERVER_JAR="file:///ragflow/tika-server-standard-3.3.0.jar"
