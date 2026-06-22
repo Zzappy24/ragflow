@@ -1,0 +1,42 @@
+# syntax=docker/dockerfile:1.6
+
+# =============================================================================
+#  Dockerfile.management-frontend — nginx serving the admin SPA.
+#  ~50 MB image instead of pulling the 10 GB fat ragflow image just to
+#  serve a few MB of compiled React.
+#
+#  Custom (does not exist upstream). Built and deployed separately.
+#  Image identifier: ${REGISTRY}/data/ragflow-mgmt-frontend:${TAG}
+# =============================================================================
+
+# --- builder stage ----------------------------------------------------------
+FROM node:20-alpine AS builder
+
+WORKDIR /app
+
+# Install npm deps first for better layer caching — manifest changes
+# rarely; source changes often.
+COPY management/web/package*.json ./
+RUN NODE_OPTIONS="--max-old-space-size=4096" npm ci
+
+# Build the SPA. NODE_OPTIONS bumps Node heap for the bundler.
+COPY management/web ./
+RUN NODE_OPTIONS="--max-old-space-size=4096" npm run build
+
+# --- production stage -------------------------------------------------------
+FROM nginx:1.29-alpine AS production
+
+ARG VERSION_INFO=dev
+LABEL org.opencontainers.image.title="ragflow-mgmt-frontend" \
+      org.opencontainers.image.description="Cyllene B2B SaaS admin panel — static SPA served by nginx" \
+      org.opencontainers.image.version="${VERSION_INFO}"
+
+# Copy the built SPA. The Helm chart renders an nginx vhost config that
+# proxies /api/admin/ to the management-backend service and serves
+# /usr/share/nginx/html for everything else.
+COPY --from=builder /app/dist /usr/share/nginx/html
+
+EXPOSE 80
+
+# nginx alpine ships its own entrypoint.sh that handles config templating
+# from /etc/nginx/templates/. The chart writes its vhost there.

@@ -85,3 +85,39 @@ kaniko_build_mgmt_prd:
           --dockerfile "Dockerfile.management" \
           --destination "goharbor-cylndata-prod-core.goharbor.svc.cluster.local:80/${HARBOR_PROJECT}/${IMAGE_NAME}-mgmt:${IMAGE_TAG}"
   when: manual
+
+# =============================================================================
+#  kaniko_build_mgmt_frontend_prd
+#  -----------------------------------------------------------------------------
+#  Builds the slim management frontend (~50 MB nginx:alpine + compiled SPA).
+#  Was previously embedded in the fat ragflow image which made the build
+#  exceed the runner's ephemeral-storage limit.
+# =============================================================================
+kaniko_build_mgmt_frontend_prd:
+  stage: build_prd
+  tags:
+    - cylndata-prod
+  script:
+      - |
+        if [ -n "$CI_COMMIT_TAG" ]; then
+          IMAGE_TAG="$CI_COMMIT_TAG"
+        else
+          IMAGE_TAG="$CI_COMMIT_SHORT_SHA"
+        fi
+      - set -x
+      - echo "{\"auths\":{\"goharbor-cylndata-prod-core.goharbor.svc.cluster.local:80\":{\"username\":\"$HARBOR_CYLNDATA_ROBOT_PRD\",\"password\":\"$HARBOR_CYLNDATA_ROBOT_PWD_PRD\"}}}" > /kaniko/.docker/config.json
+      - |
+        /kaniko/executor \
+          --cache=true \
+          --cache-repo "goharbor-cylndata-prod-core.goharbor.svc.cluster.local:80/${HARBOR_PROJECT}/${IMAGE_NAME}-mgmt-frontend/cache" \
+          --compressed-caching=false \
+          --insecure=true \
+          --skip-tls-verify=true \
+          --snapshot-mode=redo \
+          --use-new-run \
+          --cleanup \
+          --build-arg VERSION_INFO="${IMAGE_TAG}" \
+          --context "${CI_PROJECT_DIR}" \
+          --dockerfile "Dockerfile.management-frontend" \
+          --destination "goharbor-cylndata-prod-core.goharbor.svc.cluster.local:80/${HARBOR_PROJECT}/${IMAGE_NAME}-mgmt-frontend:${IMAGE_TAG}"
+  when: manual

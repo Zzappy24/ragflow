@@ -262,13 +262,13 @@ RUN NODE_OPTIONS="--max-old-space-size=8192" npm ci
 COPY web /ragflow/web
 RUN NODE_OPTIONS="--max-old-space-size=8192" VITE_BUILD_SOURCEMAP=false VITE_MINIFY=esbuild npm run build
 
-# Management frontend: same optimization
-COPY management/web/package*.json /ragflow/management/web/
-WORKDIR /ragflow/management/web
-RUN NODE_OPTIONS="--max-old-space-size=4096" npm ci
-
-COPY management/web /ragflow/management/web
-RUN NODE_OPTIONS="--max-old-space-size=4096" npm run build
+# CUSTOM B2B SaaS — the management frontend + backend now live in their
+# own slim image (Dockerfile.management). They used to be built and
+# embedded here, but doing both in one image was bloating the runner
+# pod past its 31 GB ephemeral-storage limit during the Kaniko snapshot
+# step. The mgmt subchart now references data/ragflow-mgmt:<tag>
+# instead of the fat data/ragflow:<tag>. See helm/.../ragflow-management-
+# backend/values.yaml.
 
 WORKDIR /ragflow
 RUN echo "RAGFlow version: $VERSION_INFO" && \
@@ -294,7 +294,8 @@ COPY rag rag
 COPY agent agent
 COPY pyproject.toml uv.lock ./
 COPY mcp mcp
-COPY management management
+# CUSTOM B2B SaaS — management/ removed from the fat image (now in
+# ragflow-mgmt). See helper above for context.
 COPY common common
 COPY memory memory
 COPY bin bin
@@ -313,7 +314,7 @@ RUN mv /etc/nginx/ragflow.conf.golang /etc/nginx/conf.d/ragflow.conf.golang && \
 
 # Copy compiled web pages
 COPY --from=builder /ragflow/web/dist /ragflow/web/dist
-COPY --from=builder /ragflow/management/web/dist /ragflow/management/web/dist
+# CUSTOM B2B SaaS — management/web/dist removed (now in ragflow-mgmt).
 COPY --from=builder /ragflow/VERSION /ragflow/VERSION
 
 # CUSTOM B2B SaaS — create non-root user (uid 10001) for future hardening
