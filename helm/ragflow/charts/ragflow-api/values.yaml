@@ -11,7 +11,7 @@ hypercornWorkers: 1
 
 image:
   repository: harbor.cylndata.cyllene.pro/data/ragflow
-  tag: v0.6
+  tag: v0.7
   pullPolicy: IfNotPresent
   imagePullSecrets:
     - name: harbor-pull-secret
