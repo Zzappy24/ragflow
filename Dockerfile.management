@@ -17,11 +17,14 @@ FROM python:3.13-slim AS builder
 
 ARG DEBIAN_FRONTEND=noninteractive
 
-# gcc + libc6-dev are needed by some wheels (cryptography, pycryptodomex)
-# during the install step. They're discarded in the production stage.
+# Build toolchain — needed by a few wheels that compile small C
+# extensions during install (cryptography, pycryptodomex). Numpy stays
+# on a prebuilt cp313 wheel (2.x) so no C++ compiler is needed.
+# All build tools are dropped in the production stage.
 RUN apt-get update && apt-get install -y --no-install-recommends \
     gcc \
     libc6-dev \
+    libffi-dev \
     && rm -rf /var/lib/apt/lists/*
 
 WORKDIR /build
@@ -54,7 +57,7 @@ RUN python -m venv /opt/venv && \
         "quart-auth>=0.11.0" \
         "itsdangerous>=2.2.0" \
         "langfuse>=4.0.1" \
-        "numpy>=1.26.0,<2.0.0" \
+        "numpy>=2.0.0,<3.0.0" \
         "pandas>=2.0.0,<3.0.0" \
         "pymysql>=1.1.0,<2.0.0" \
         "elasticsearch-dsl==8.12.0" \
