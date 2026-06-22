@@ -159,8 +159,10 @@ spec:
             # in-pod CONCURRENCY (asyncio semaphore size).
             - name: WORKER_RECYCLE_AFTER_TASKS
               value: {{ .Values.recycleAfterTasks | quote }}
+            {{- if .Values.livenessProbe.enabled }}
             - name: WORKER_HEARTBEAT_FILE
               value: {{ .Values.livenessProbe.heartbeatFile | quote }}
+            {{- end }}
 
           resources:
             {{- toYaml .Values.resources | nindent 12 }}
