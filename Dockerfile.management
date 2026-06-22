@@ -13,7 +13,7 @@
 # =============================================================================
 
 # --- builder stage ----------------------------------------------------------
-FROM python:3.13-slim AS builder
+FROM python:3.12-slim AS builder
 
 ARG DEBIAN_FRONTEND=noninteractive
 
@@ -75,7 +75,14 @@ RUN python -m venv /opt/venv && \
         "pyobvector==0.2.22"
 
 # --- production stage -------------------------------------------------------
-FROM python:3.13-slim AS production
+# NOTE: Python 3.12 here (vs 3.13 in the main image). Pin reason: numpy
+# 1.26.4 — required transitively via common/doc_store/doc_store_base.py
+# and rag/utils/ob_conn.py — has no cp313 wheel on PyPI and tries to
+# build from source (which would need g++, meson, ninja, and 5-10 min
+# of build time). Pinning to 3.12 picks the prebuilt cp312 wheel and
+# keeps the build fast. The mgmt service is fully isolated from the
+# main image so the Python version diff has no cross-impact.
+FROM python:3.12-slim AS production
 
 ARG VERSION_INFO=dev
 LABEL org.opencontainers.image.title="ragflow-management" \
