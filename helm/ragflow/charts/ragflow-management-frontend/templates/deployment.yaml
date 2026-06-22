@@ -74,7 +74,10 @@ spec:
         - name: nginx
           image: {{ include "ragflow-management-frontend.image" . }}
           imagePullPolicy: {{ .Values.global.imagePullPolicy | default .Values.image.pullPolicy }}
-          command: ["/bin/bash", "-lc"]
+          # nginx:alpine has /bin/sh (busybox) but NOT /bin/bash. Use sh.
+          # The old `bash -lc` pattern was inherited from the fat-image days
+          # when nginx ran on a Debian-based ragflow image.
+          command: ["/bin/sh", "-c"]
           args:
             - |
               exec nginx -g 'daemon off;'
