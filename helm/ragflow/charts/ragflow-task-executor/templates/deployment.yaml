@@ -196,10 +196,16 @@ spec:
       # Cache emptyDirs sized for 1× model weights worst-case (BGE-M3 ~2GB,
       # NLTK punkt etc < 100MB). On hot pod the cache is reused across tasks
       # so we don't redownload between Redis poll cycles.
+      # tmp bumped 2Gi → 8Gi because pip_install_torch() at first OCR writes
+      # ~1.5GB of wheel artifacts to /tmp during the install. With only 2Gi
+      # the pod gets evicted by kubelet ("Usage of EmptyDir volume 'tmp'
+      # exceeds the limit '2Gi'"). Pre-installing torch in the image (see
+      # Dockerfile) makes this much less critical, but keep 8Gi for headroom
+      # because matplotlib/pdfminer/etc. also pile up in /tmp at runtime.
       volumes:
         - name: tmp
           emptyDir:
-            sizeLimit: 2Gi
+            sizeLimit: 8Gi
         - name: hf-cache
           emptyDir:
             sizeLimit: 4Gi
