@@ -343,6 +343,22 @@ async def verify_workspace_model(
     """
     require_ws_admin(ws_id, user_id)
 
+    # CUSTOM B2B SaaS — when running in the slim management image
+    # (Dockerfile.management), rag.llm and its torch/litellm dependencies
+    # are NOT installed. Setting MGMT_DISABLE_MODEL_VERIFY=1 (or running on
+    # a deployment that pins the slim image) skips the connectivity test
+    # and returns a friendly 501 instead of an opaque ImportError. The
+    # admin can still save the model — verification is best-effort.
+    if os.environ.get("MGMT_DISABLE_MODEL_VERIFY", "").lower() in ("1", "true", "yes"):
+        raise HTTPException(
+            status_code=501,
+            detail=(
+                "Model verification is disabled on this deployment "
+                "(slim management image). Save without verify, or call "
+                "this endpoint against the main ragflow-api service."
+            ),
+        )
+
     stored_name = _stored_name(body.llm_factory, body.llm_name)
     api_key = body.api_key or "x"
     api_base = body.api_base or ""

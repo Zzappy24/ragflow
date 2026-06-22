@@ -16,10 +16,24 @@ app.kubernetes.io/name: ragflow-management-backend
 app.kubernetes.io/instance: {{ .Release.Name }}
 {{- end -}}
 
+{{- /*
+  CUSTOM B2B SaaS — the management backend ships in its own slim image
+  (Dockerfile.management) to avoid pulling the 10 GB main image just to
+  serve the admin panel. To share the umbrella's global.imageRegistry +
+  global.imageTag while pointing at a different repo, the subchart
+  optionally appends `.Values.image.repositorySuffix` to the global repo.
+  Example: global.imageRepository=data/ragflow + suffix=-mgmt →
+  data/ragflow-mgmt. Without the suffix, falls back to the previous
+  behaviour (single fat image).
+*/}}
 {{- define "ragflow-management-backend.image" -}}
 {{- $g := .Values.global | default dict -}}
 {{- if and $g.imageRegistry $g.imageRepository -}}
-{{ $g.imageRegistry }}/{{ $g.imageRepository }}:{{ default .Values.image.tag $g.imageTag }}
+{{- $repo := $g.imageRepository -}}
+{{- with .Values.image.repositorySuffix -}}
+{{- $repo = printf "%s%s" $repo . -}}
+{{- end -}}
+{{ $g.imageRegistry }}/{{ $repo }}:{{ default .Values.image.tag $g.imageTag }}
 {{- else -}}
 {{ .Values.image.repository }}:{{ .Values.image.tag }}
 {{- end -}}
