@@ -230,7 +230,14 @@ RUN --mount=type=cache,id=ragflow_uv,target=/root/.cache/uv,sharing=locked \
     # the locked version avoids serving a half-broken cached copy.
     uv sync --python 3.13 --frozen --refresh-package litellm && \
     # Ensure pip is available in the venv for runtime package installation (fixes #12651)
-    .venv/bin/python3 -m ensurepip --upgrade
+    .venv/bin/python3 -m ensurepip --upgrade && \
+    # CUSTOM B2B SaaS — pre-install torch at build time instead of at first
+    # OCR call. Upstream's common/misc_utils.py:pip_install_torch() runs
+    # subprocess pip install on the very first request, which means each
+    # cold-start pod pays a ~5-10 min penalty (download ~750MB + install)
+    # before any DeepDoc inference. With torch baked into the image the
+    # pod is GPU-ready as soon as it boots.
+    .venv/bin/python3 -m pip install --no-cache-dir "torch>=2.5.0,<3.0.0"
 
 # Install frontend dependencies — depends only on package manifests so
 # web source / docs changes don't invalidate this layer.
