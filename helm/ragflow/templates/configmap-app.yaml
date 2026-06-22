@@ -16,6 +16,11 @@ data:
   DOC_ENGINE: {{ .Values.global.env.DOC_ENGINE | quote }}
   LIGHTEN: {{ .Values.global.env.LIGHTEN | default "0" | quote }}
   TZ: {{ .Values.global.env.TZ | default "Europe/Paris" | quote }}
+  # 0 = disable /register endpoint so only admin-panel-created users exist.
+  # Critical for B2B SaaS: a self-registered user lands without org/ws
+  # membership and ends up invisible to the admin panel while blocking
+  # re-creation under the same email.
+  REGISTER_ENABLED: {{ .Values.global.env.REGISTER_ENABLED | default "0" | quote }}
 
   # --- MariaDB (mariadb-operator) ------------------------------------------
   # Operator publishes a Service named exactly after the MariaDB CR
