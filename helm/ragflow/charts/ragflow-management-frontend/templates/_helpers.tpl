@@ -16,10 +16,21 @@ app.kubernetes.io/name: ragflow-management-frontend
 app.kubernetes.io/instance: {{ .Release.Name }}
 {{- end -}}
 
+{{- /*
+  CUSTOM B2B SaaS — same repositorySuffix pattern as the management-
+  backend subchart: with global.imageRepository=data/ragflow and
+  .Values.image.repositorySuffix=-mgmt-frontend the rendered image
+  becomes data/ragflow-mgmt-frontend:<global.imageTag>. Without a
+  suffix the chart falls through to single-fat-image mode.
+*/}}
 {{- define "ragflow-management-frontend.image" -}}
 {{- $g := .Values.global | default dict -}}
 {{- if and $g.imageRegistry $g.imageRepository -}}
-{{ $g.imageRegistry }}/{{ $g.imageRepository }}:{{ default .Values.image.tag $g.imageTag }}
+{{- $repo := $g.imageRepository -}}
+{{- with .Values.image.repositorySuffix -}}
+{{- $repo = printf "%s%s" $repo . -}}
+{{- end -}}
+{{ $g.imageRegistry }}/{{ $repo }}:{{ default .Values.image.tag $g.imageTag }}
 {{- else -}}
 {{ .Values.image.repository }}:{{ .Values.image.tag }}
 {{- end -}}
@@ -68,7 +79,10 @@ upstream management_backend {
 server {
   listen 80;
   server_name _;
-  root /ragflow/management/web/dist;
+  # CUSTOM B2B SaaS — the slim mgmt-frontend image copies the built
+  # SPA to /usr/share/nginx/html (standard nginx:alpine path), not to
+  # /ragflow/management/web/dist as it used to in the fat image.
+  root /usr/share/nginx/html;
   index index.html;
 
   location /assets/ {

@@ -240,7 +240,19 @@ RUN --mount=type=cache,id=ragflow_uv,target=/root/.cache/uv,sharing=locked \
     .venv/bin/python3 -m pip install --no-cache-dir \
         --index-url https://download.pytorch.org/whl/cu128 \
         --extra-index-url https://pypi.org/simple \
-        "torch>=2.5.0,<3.0.0"
+        "torch>=2.5.0,<3.0.0" && \
+    # CUSTOM B2B SaaS — post-install cleanup. ~700 MB saved on the final
+    # image AND on the Kaniko snapshot transient cost (the snapshot
+    # tarball is computed AFTER this cleanup, so the deleted bytes never
+    # end up in the layer). Each find runs independently so a missing
+    # dir doesn't fail the build.
+    find /ragflow/.venv -type d -name "__pycache__" -exec rm -rf {} + 2>/dev/null || true && \
+    find /ragflow/.venv -type d -name "tests" -exec rm -rf {} + 2>/dev/null || true && \
+    find /ragflow/.venv -type d -name "test" -exec rm -rf {} + 2>/dev/null || true && \
+    find /ragflow/.venv -name "*.pyc" -delete 2>/dev/null || true && \
+    find /ragflow/.venv -path "*nvidia*" -name "*.a" -delete 2>/dev/null || true && \
+    find /ragflow/.venv -name "*.so*" -exec strip --strip-unneeded {} + 2>/dev/null || true && \
+    rm -rf /root/.cache/pip /tmp/* /var/tmp/*
 
 # Install frontend dependencies — depends only on package manifests so
 # web source / docs changes don't invalidate this layer.
@@ -262,13 +274,13 @@ RUN NODE_OPTIONS="--max-old-space-size=8192" npm ci
 COPY web /ragflow/web
 RUN NODE_OPTIONS="--max-old-space-size=8192" VITE_BUILD_SOURCEMAP=false VITE_MINIFY=esbuild npm run build
 
-# Management frontend: same optimization
-COPY management/web/package*.json /ragflow/management/web/
-WORKDIR /ragflow/management/web
-RUN NODE_OPTIONS="--max-old-space-size=4096" npm ci
-
-COPY management/web /ragflow/management/web
-RUN NODE_OPTIONS="--max-old-space-size=4096" npm run build
+# CUSTOM B2B SaaS — the management frontend + backend now live in their
+# own slim image (Dockerfile.management). They used to be built and
+# embedded here, but doing both in one image was bloating the runner
+# pod past its 31 GB ephemeral-storage limit during the Kaniko snapshot
+# step. The mgmt subchart now references data/ragflow-mgmt:<tag>
+# instead of the fat data/ragflow:<tag>. See helm/.../ragflow-management-
+# backend/values.yaml.
 
 WORKDIR /ragflow
 RUN echo "RAGFlow version: $VERSION_INFO" && \
@@ -294,7 +306,8 @@ COPY rag rag
 COPY agent agent
 COPY pyproject.toml uv.lock ./
 COPY mcp mcp
-COPY management management
+# CUSTOM B2B SaaS — management/ removed from the fat image (now in
+# ragflow-mgmt). See helper above for context.
 COPY common common
 COPY memory memory
 COPY bin bin
@@ -313,7 +326,7 @@ RUN mv /etc/nginx/ragflow.conf.golang /etc/nginx/conf.d/ragflow.conf.golang && \
 
 # Copy compiled web pages
 COPY --from=builder /ragflow/web/dist /ragflow/web/dist
-COPY --from=builder /ragflow/management/web/dist /ragflow/management/web/dist
+# CUSTOM B2B SaaS — management/web/dist removed (now in ragflow-mgmt).
 COPY --from=builder /ragflow/VERSION /ragflow/VERSION
 
 # CUSTOM B2B SaaS — create non-root user (uid 10001) for future hardening
