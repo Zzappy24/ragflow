@@ -26,9 +26,16 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
 
 WORKDIR /build
 
-# Install only the deps the management backend actually needs. Versions
-# pinned to match pyproject.toml of the main ragflow image so a service
-# upgraded on either side stays compatible.
+# Install the deps the management backend needs. Versions pinned to match
+# pyproject.toml of the main ragflow image so a service upgraded on either
+# side stays compatible.
+#
+# Wider than ideal because `common/settings.py` (imported by every service)
+# eagerly imports rag.utils.{es,infinity,opensearch,minio,redis,s3,
+# azure,gcs,opendal,ob,oss}_conn at the top level. That pulls all cloud
+# SDKs even though the management backend only ever talks to MySQL/Redis.
+# Refactoring settings.py to lazy-load would be cleaner but would conflict
+# at every upstream merge — accept ~600 MB image instead.
 RUN python -m venv /opt/venv && \
     /opt/venv/bin/pip install --no-cache-dir --upgrade pip && \
     /opt/venv/bin/pip install --no-cache-dir \
@@ -43,7 +50,29 @@ RUN python -m venv /opt/venv && \
         "pycryptodomex==3.20.0" \
         "Werkzeug>=3.0.0" \
         "python-dateutil>=2.8.0" \
-        "PyYAML>=6.0.0"
+        "PyYAML>=6.0.0" \
+        "quart-auth>=0.11.0" \
+        "itsdangerous>=2.2.0" \
+        "langfuse>=4.0.1" \
+        "numpy>=1.26.0,<2.0.0" \
+        "pandas>=2.0.0,<3.0.0" \
+        "pymysql>=1.1.0,<2.0.0" \
+        "elasticsearch-dsl==8.12.0" \
+        "elasticsearch>=8.12.0,<9.0.0" \
+        "opensearch-py==2.7.1" \
+        "infinity-sdk==0.7.0" \
+        "minio==7.2.4" \
+        "valkey>=6.0.0" \
+        "boto3>=1.28.0" \
+        "google-cloud-storage>=2.19.0,<3.0.0" \
+        "azure-storage-blob>=12.0.0" \
+        "azure-storage-file-datalake==12.16.0" \
+        "azure-identity>=1.25.3" \
+        "opendal>=0.45.0,<0.46.0" \
+        "pydantic>=2.0.0" \
+        "cryptography>=42.0.0" \
+        "tiktoken>=0.7.0" \
+        "pyobvector==0.2.22"
 
 # --- production stage -------------------------------------------------------
 FROM python:3.13-slim AS production
@@ -81,6 +110,13 @@ COPY --chown=ragflow:ragflow api/common /ragflow/api/common
 COPY --chown=ragflow:ragflow api/constants.py /ragflow/api/constants.py
 COPY --chown=ragflow:ragflow api/settings.py /ragflow/api/settings.py
 COPY --chown=ragflow:ragflow common /ragflow/common
+# rag/utils/ is needed because common/settings.py eagerly imports
+# rag.utils.{es,infinity,opensearch,minio,redis,s3,azure,gcs,opendal,
+# ob,oss}_conn at the top level. We copy the whole subdir (cheap) and
+# add a stub rag/__init__.py so 'import rag.utils' works without pulling
+# the full rag package (graphrag, llm, app, nlp, ...) which needs torch.
+COPY --chown=ragflow:ragflow rag/utils /ragflow/rag/utils
+RUN echo "" > /ragflow/rag/__init__.py && chown ragflow:ragflow /ragflow/rag/__init__.py
 COPY --chown=ragflow:ragflow management /ragflow/management
 
 # Dev RSA keys + config template. In prod the keys are overridden by a K8s
