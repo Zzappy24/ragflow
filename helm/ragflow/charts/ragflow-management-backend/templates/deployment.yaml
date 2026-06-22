@@ -69,10 +69,15 @@ spec:
           image: {{ include "ragflow-management-backend.image" . }}
           imagePullPolicy: {{ .Values.global.imagePullPolicy | default .Values.image.pullPolicy }}
 
-          command: ["/bin/bash", "-lc"]
+          # `bash -lc` (login shell) sources /etc/profile which resets PATH
+          # on Debian/Ubuntu (PATH=/usr/local/sbin:/usr/bin:/sbin:/bin),
+          # wiping the /opt/venv/bin prefix the Dockerfile sets via ENV.
+          # That makes `uvicorn` unreachable. Use the absolute path so we
+          # don't depend on the shell's PATH at all.
+          command: ["/bin/bash", "-c"]
           args:
             - |
-              exec uvicorn management.server.main:app \
+              exec /opt/venv/bin/uvicorn management.server.main:app \
                 --host 0.0.0.0 \
                 --port 8000 \
                 --loop uvloop \
