@@ -13,15 +13,23 @@
 # =============================================================================
 
 # --- builder stage ----------------------------------------------------------
-FROM python:3.12-slim AS builder
+FROM python:3.13-slim AS builder
 
 ARG DEBIAN_FRONTEND=noninteractive
 
-# gcc + libc6-dev are needed by some wheels (cryptography, pycryptodomex)
-# during the install step. They're discarded in the production stage.
+# Build toolchain — needed to compile native deps that don't ship cp313
+# wheels on PyPI:
+#   - numpy 1.26.4 (pinned by upstream pyproject.toml — no cp313 wheel,
+#     needs g++ + meson + ninja, both auto-installed by pip as build
+#     deps from the sdist)
+#   - cryptography, pycryptodomex (need gcc + libffi-dev)
+# All build tools are dropped in the production stage.
 RUN apt-get update && apt-get install -y --no-install-recommends \
     gcc \
+    g++ \
     libc6-dev \
+    libffi-dev \
+    pkg-config \
     && rm -rf /var/lib/apt/lists/*
 
 WORKDIR /build
@@ -75,14 +83,7 @@ RUN python -m venv /opt/venv && \
         "pyobvector==0.2.22"
 
 # --- production stage -------------------------------------------------------
-# NOTE: Python 3.12 here (vs 3.13 in the main image). Pin reason: numpy
-# 1.26.4 — required transitively via common/doc_store/doc_store_base.py
-# and rag/utils/ob_conn.py — has no cp313 wheel on PyPI and tries to
-# build from source (which would need g++, meson, ninja, and 5-10 min
-# of build time). Pinning to 3.12 picks the prebuilt cp312 wheel and
-# keeps the build fast. The mgmt service is fully isolated from the
-# main image so the Python version diff has no cross-impact.
-FROM python:3.12-slim AS production
+FROM python:3.13-slim AS production
 
 ARG VERSION_INFO=dev
 LABEL org.opencontainers.image.title="ragflow-management" \
