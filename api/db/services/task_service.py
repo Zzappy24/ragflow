@@ -353,7 +353,19 @@ class TaskService(CommonService):
             logging.warning("Update_progress error: task not found")
             return
 
-        if os.environ.get("MACOS"):
+        # CUSTOM B2B SaaS — the GET_LOCK('update_progress') path is a known
+        # source of stalls in our K8s deployment: orphan peewee connections
+        # held by previously-OOM-killed workers keep the application lock,
+        # MariaDB's wait_timeout (default 8h) keeps them around, and every
+        # set_progress retries 10× with exponential backoff (~17 min) and
+        # ends up failing. Each task is processed by exactly one worker
+        # (Redis consumer group) so concurrency on the same task_id is null;
+        # the lock guards against an interleaved progress_msg append that
+        # has never happened in our usage. Allow disabling via env var so
+        # production can opt out without patching upstream further.
+        skip_lock = bool(os.environ.get("MACOS") or os.environ.get("DISABLE_TASK_PROGRESS_LOCK"))
+
+        def _do_update():
             if info["progress_msg"]:
                 progress_msg = trim_header_by_lines(task.progress_msg + "\n" + info["progress_msg"], TASK_MAX_LOG_LENGTH)
                 cls.model.update(progress_msg=progress_msg).where(cls.model.id == id).execute()
@@ -364,18 +376,12 @@ class TaskService(CommonService):
                     ((prog >= 1) | ((cls.model.progress != -1) &
                     ((prog == -1) | (prog > cls.model.progress))))
                 ).execute()
+
+        if skip_lock:
+            _do_update()
         else:
             with DB.lock("update_progress", -1):
-                if info["progress_msg"]:
-                    progress_msg = trim_header_by_lines(task.progress_msg + "\n" + info["progress_msg"], TASK_MAX_LOG_LENGTH)
-                    cls.model.update(progress_msg=progress_msg).where(cls.model.id == id).execute()
-                if "progress" in info:
-                    prog = info["progress"]
-                    cls.model.update(progress=prog).where(
-                        (cls.model.id == id) &
-                        ((prog >= 1) | ((cls.model.progress != -1) &
-                        ((prog == -1) | (prog > cls.model.progress))))
-                    ).execute()
+                _do_update()
 
         begin_at = task.begin_at
         if begin_at is not None:

@@ -142,18 +142,17 @@ spec:
             - name: DEVICE
               value: {{ .Values.device | default "cpu" | quote }}
             # CUSTOM B2B SaaS — bypass the application-level GET_LOCK on
-            # `update_progress` in task_service.py. The lock is held by
-            # orphan peewee connections after worker OOMs/restarts, and
-            # MariaDB's wait_timeout default (8h) keeps them around so the
-            # whole set_progress path stalls until manual KILL.
-            # task_service.py:update_progress checks `if os.environ.get("MACOS")`
-            # to skip the lock — it is the ONLY consumer of this env var
-            # (verified by grep), so setting MACOS=1 here is safe in Linux
-            # pods. A proper fix (drop the lock entirely) would be a
-            # patched task_service.py and a rebuild — this is the no-rebuild
-            # workaround.
-            - name: MACOS
+            # `update_progress` (task_service.py). The lock is held by
+            # orphan peewee connections after worker OOMs, and MariaDB's
+            # wait_timeout (default 8h) keeps them around so set_progress
+            # stalls until manual KILL. Each task is processed by exactly
+            # one worker (Redis consumer group) so the lock is unnecessary.
+            # Enable via .Values.disableTaskProgressLock (default true in
+            # prod values).
+            {{- if .Values.disableTaskProgressLock | default true }}
+            - name: DISABLE_TASK_PROGRESS_LOCK
               value: "1"
+            {{- end }}
             # WORKER_RECYCLE_AFTER_TASKS — graceful exit threshold (see
             # rag/svr/task_executor.py for behaviour). 0 = disabled.
             # Distinct from upstream's WORKER_MAX_TASKS which controls
