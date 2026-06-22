@@ -16,11 +16,6 @@ image:
   imagePullSecrets:
     - name: harbor-pull-secret
 
-# CUSTOM B2B SaaS — the slim image doesn't include rag.llm, so the
-# /models/verify endpoint returns 501 instead of crashing. Set to "0"
-# only if you redeploy on the fat ragflow image (e.g. emergency rollback).
-disableModelVerify: "1"
-
 resources:
   requests:
     cpu: 250m
