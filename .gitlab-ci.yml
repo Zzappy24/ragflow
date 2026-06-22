@@ -43,3 +43,45 @@ kaniko_build_prd:
           #--cache-repo "${HARBOR_REGISTRY_PROD}/${HARBOR_PROJECT}/${IMAGE_NAME}/cache" \
           #--destination "${HARBOR_REGISTRY_PROD}/${HARBOR_PROJECT}/${IMAGE_NAME}:${IMAGE_TAG}"
   when: manual
+
+# =============================================================================
+#  kaniko_build_mgmt_prd
+#  -----------------------------------------------------------------------------
+#  Builds the slim management backend image (~250 MB) from Dockerfile.management.
+#  Custom B2B SaaS admin server only — no torch, no CUDA, no rag/, no deepdoc/.
+#  Pushes to data/ragflow-mgmt (separate from the main ragflow image).
+#
+#  Lightweight: this job avoids the ephemeral-storage saturation that affects
+#  the main image build because Dockerfile.management does NOT pip-install
+#  torch/CUDA wheels (≈5 GB transient disk usage avoided).
+# =============================================================================
+kaniko_build_mgmt_prd:
+  stage: build_prd
+  tags:
+    - cylndata-prod
+  script:
+      - |
+        if [ -n "$CI_COMMIT_TAG" ]; then
+          echo "Utilisation du tag Git comme tag d'image: $CI_COMMIT_TAG"
+          IMAGE_TAG="$CI_COMMIT_TAG"
+        else
+          echo "Pas de tag Git. Utilisation du SHA du commit comme tag d'image: $CI_COMMIT_SHORT_SHA"
+          IMAGE_TAG="$CI_COMMIT_SHORT_SHA"
+        fi
+      - set -x
+      - echo "{\"auths\":{\"goharbor-cylndata-prod-core.goharbor.svc.cluster.local:80\":{\"username\":\"$HARBOR_CYLNDATA_ROBOT_PRD\",\"password\":\"$HARBOR_CYLNDATA_ROBOT_PWD_PRD\"}}}" > /kaniko/.docker/config.json
+      - |
+        /kaniko/executor \
+          --cache=true \
+          --cache-repo "goharbor-cylndata-prod-core.goharbor.svc.cluster.local:80/${HARBOR_PROJECT}/${IMAGE_NAME}-mgmt/cache" \
+          --compressed-caching=false \
+          --insecure=true \
+          --skip-tls-verify=true \
+          --snapshot-mode=redo \
+          --use-new-run \
+          --cleanup \
+          --build-arg VERSION_INFO="${IMAGE_TAG}" \
+          --context "${CI_PROJECT_DIR}" \
+          --dockerfile "Dockerfile.management" \
+          --destination "goharbor-cylndata-prod-core.goharbor.svc.cluster.local:80/${HARBOR_PROJECT}/${IMAGE_NAME}-mgmt:${IMAGE_TAG}"
+  when: manual

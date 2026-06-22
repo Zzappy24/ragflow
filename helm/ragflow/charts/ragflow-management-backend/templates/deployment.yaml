@@ -110,6 +110,12 @@ spec:
               value: "{{ .Values.global.scheme | default "https" }}://{{ .Values.global.hostname }}"
             - name: ADMIN_CORS_ORIGINS
               value: '["{{ .Values.global.scheme | default "https" }}://ragflow-management.{{ trimPrefix "ragflow." .Values.global.hostname }}"]'
+            # CUSTOM B2B SaaS — slim management image doesn't ship rag.llm
+            # (no torch / no litellm). The /models/verify endpoint returns
+            # 501 instead of crashing on ImportError. To re-enable, deploy
+            # against the fat ragflow image and set this to "0".
+            - name: MGMT_DISABLE_MODEL_VERIFY
+              value: {{ .Values.disableModelVerify | default "1" | quote }}
 
           resources:
             {{- toYaml .Values.resources | nindent 12 }}
