@@ -110,12 +110,13 @@ spec:
               value: "{{ .Values.global.scheme | default "https" }}://{{ .Values.global.hostname }}"
             - name: ADMIN_CORS_ORIGINS
               value: '["{{ .Values.global.scheme | default "https" }}://ragflow-management.{{ trimPrefix "ragflow." .Values.global.hostname }}"]'
-            # CUSTOM B2B SaaS — slim management image doesn't ship rag.llm
-            # (no torch / no litellm). The /models/verify endpoint returns
-            # 501 instead of crashing on ImportError. To re-enable, deploy
-            # against the fat ragflow image and set this to "0".
-            - name: MGMT_DISABLE_MODEL_VERIFY
-              value: {{ .Values.disableModelVerify | default "1" | quote }}
+            # CUSTOM B2B SaaS — the slim management image doesn't ship
+            # rag.llm; /models/verify proxies to the main ragflow-api via
+            # /api/v1/internal/llm/verify. INTERNAL_API_SECRET (loaded
+            # automatically from the {{ .Release.Name }}-app-config
+            # ConfigMap via envFrom above) is the shared secret used in
+            # the X-Internal-Secret header. RAGFLOW_API_URL points at
+            # the api service.
 
           resources:
             {{- toYaml .Values.resources | nindent 12 }}
