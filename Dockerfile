@@ -237,7 +237,10 @@ RUN --mount=type=cache,id=ragflow_uv,target=/root/.cache/uv,sharing=locked \
     # cold-start pod pays a ~5-10 min penalty (download ~750MB + install)
     # before any DeepDoc inference. With torch baked into the image the
     # pod is GPU-ready as soon as it boots.
-    .venv/bin/python3 -m pip install --no-cache-dir "torch>=2.5.0,<3.0.0"
+    .venv/bin/python3 -m pip install --no-cache-dir \
+        --index-url https://download.pytorch.org/whl/cu128 \
+        --extra-index-url https://pypi.org/simple \
+        "torch>=2.5.0,<3.0.0"
 
 # Install frontend dependencies — depends only on package manifests so
 # web source / docs changes don't invalidate this layer.
