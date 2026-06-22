@@ -240,7 +240,19 @@ RUN --mount=type=cache,id=ragflow_uv,target=/root/.cache/uv,sharing=locked \
     .venv/bin/python3 -m pip install --no-cache-dir \
         --index-url https://download.pytorch.org/whl/cu128 \
         --extra-index-url https://pypi.org/simple \
-        "torch>=2.5.0,<3.0.0"
+        "torch>=2.5.0,<3.0.0" && \
+    # CUSTOM B2B SaaS — post-install cleanup. ~700 MB saved on the final
+    # image AND on the Kaniko snapshot transient cost (the snapshot
+    # tarball is computed AFTER this cleanup, so the deleted bytes never
+    # end up in the layer). Each find runs independently so a missing
+    # dir doesn't fail the build.
+    find /ragflow/.venv -type d -name "__pycache__" -exec rm -rf {} + 2>/dev/null || true && \
+    find /ragflow/.venv -type d -name "tests" -exec rm -rf {} + 2>/dev/null || true && \
+    find /ragflow/.venv -type d -name "test" -exec rm -rf {} + 2>/dev/null || true && \
+    find /ragflow/.venv -name "*.pyc" -delete 2>/dev/null || true && \
+    find /ragflow/.venv -path "*nvidia*" -name "*.a" -delete 2>/dev/null || true && \
+    find /ragflow/.venv -name "*.so*" -exec strip --strip-unneeded {} + 2>/dev/null || true && \
+    rm -rf /root/.cache/pip /tmp/* /var/tmp/*
 
 # Install frontend dependencies — depends only on package manifests so
 # web source / docs changes don't invalidate this layer.
