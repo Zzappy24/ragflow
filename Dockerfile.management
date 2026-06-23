@@ -99,7 +99,8 @@ RUN python -m venv /opt/venv && \
         "Pillow>=10.0.0" \
         "cn2an==0.5.22" \
         "word2number>=1.1" \
-        "roman-numbers>=1.0.2"
+        "roman-numbers>=1.0.2" \
+        "nltk>=3.8.0"
 
 # --- production stage -------------------------------------------------------
 FROM python:3.13-slim AS production
@@ -150,6 +151,9 @@ COPY --chown=ragflow:ragflow rag/utils /ragflow/rag/utils
 # in infinity-sdk) so no extra ML deps needed.
 COPY --chown=ragflow:ragflow rag/nlp /ragflow/rag/nlp
 RUN echo "" > /ragflow/rag/__init__.py && chown ragflow:ragflow /ragflow/rag/__init__.py
+# memory/ — boot chain pulls memory/utils/*_conn.py via common/settings.py.
+# Copy the whole subtree (small) instead of cherry-picking individual files.
+COPY --chown=ragflow:ragflow memory /ragflow/memory
 COPY --chown=ragflow:ragflow management /ragflow/management
 
 # Dev RSA keys + config template. In prod the keys are overridden by a K8s
