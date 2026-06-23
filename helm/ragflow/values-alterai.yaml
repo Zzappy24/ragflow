@@ -15,7 +15,8 @@ global:
   scheme: "http"
   imagePullSecrets:
     - name: harbor-pull-secret
-
+  env:
+    INTERNAL_API_SECRET: "bb147273319ee168e9825b94842ad048ba9d8e569164c4cbd90b0dfd97ffef06"
 externalSecrets:
   enabled: false
 
