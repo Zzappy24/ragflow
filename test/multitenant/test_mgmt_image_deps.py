@@ -284,3 +284,82 @@ def test_mgmt_image_has_all_boot_chain_deps():
         lines.append("hit at boot), add the module to BOOT_GLOBS exclusions or")
         lines.append("KNOWN_LAZY_IMPORTS in this test file.")
         raise AssertionError("\n".join(lines))
+
+
+# ============================================================================
+# File presence checks — config files that the boot code opens (not imports)
+# must be COPY'd into the image. Missed copies are the second most common
+# cause of mgmt pod boot failure (after missing pip deps).
+# ============================================================================
+
+# Files that common/* and api/* code opens at startup via os.path / open().
+# If they're not in the image at /ragflow/<path>, the boot crashes with
+# FileNotFoundError. Each entry is the path relative to repo root and
+# expected to land at the same relative path inside /ragflow in the image.
+REQUIRED_FILES_AT_BOOT = [
+    # common/config_utils.py:read_config() always opens conf/service_conf.yaml.
+    # conf/local.service_conf.yaml is optional and mounted by the chart via
+    # initContainer (envsubst on the .template), so we don't require it.
+    "conf/service_conf.yaml",
+    # api/utils/crypt.py loads RSA keys at module top level. Dev keys ship
+    # in the repo; prod overrides via K8s Secret mount.
+    "conf/private.pem",
+    "conf/public.pem",
+]
+
+
+def parse_dockerfile_copies() -> set[str]:
+    """Extract source paths from `COPY <src> <dst>` lines.
+
+    Returns the set of repo-relative source paths. Multi-source COPY
+    (e.g. `COPY a b c /dst/`) is handled — all but the last token are
+    treated as sources.
+    """
+    text = DOCKERFILE.read_text()
+    sources: set[str] = set()
+    for line in text.splitlines():
+        stripped = line.strip()
+        if not stripped.startswith("COPY"):
+            continue
+        # Strip `COPY` keyword and any `--chown=...` / `--from=...` flags.
+        tokens = stripped.split()
+        tokens = [t for t in tokens[1:] if not t.startswith("--")]
+        if len(tokens) < 2:
+            continue
+        # Skip COPY --from=builder (those reference build stage paths,
+        # not repo paths).
+        if "--from=" in stripped:
+            continue
+        # Everything except the last token is a source path.
+        for src in tokens[:-1]:
+            sources.add(src.lstrip("./"))
+    return sources
+
+
+def test_mgmt_image_has_required_boot_files():
+    """Files that the boot chain opens via open() (not import) must be
+    COPY'd into Dockerfile.management. Otherwise the pod crashes with
+    FileNotFoundError — which the import-deps test cannot catch."""
+    copied = parse_dockerfile_copies()
+    missing = []
+    for required in REQUIRED_FILES_AT_BOOT:
+        # COPY can list the source as `conf/service_conf.yaml` directly,
+        # or list the parent dir `conf/` which copies everything. Match
+        # either.
+        if required in copied:
+            continue
+        parent = required.split("/", 1)[0] + "/"
+        if parent in copied or parent.rstrip("/") in copied:
+            continue
+        missing.append(required)
+
+    if missing:
+        lines = ["The following files are opened at boot by the mgmt backend",
+                 "but NOT COPY'd into Dockerfile.management:",
+                 ""]
+        for f in missing:
+            lines.append(f"  - {f}")
+        lines.append("")
+        lines.append("Add a 'COPY --chown=ragflow:ragflow <file> /ragflow/<file>'")
+        lines.append("line to Dockerfile.management.")
+        raise AssertionError("\n".join(lines))
