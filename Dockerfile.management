@@ -95,7 +95,11 @@ RUN python -m venv /opt/venv && \
         "SQLAlchemy>=2.0.0" \
         "webdav4>=0.10.0" \
         "tenacity>=8.0.0" \
-        "json-repair>=0.30.0"
+        "json-repair>=0.30.0" \
+        "Pillow>=10.0.0" \
+        "cn2an==0.5.22" \
+        "word2number>=1.1" \
+        "roman-numbers>=1.0.2"
 
 # --- production stage -------------------------------------------------------
 FROM python:3.13-slim AS production
@@ -139,6 +143,12 @@ COPY --chown=ragflow:ragflow common /ragflow/common
 # add a stub rag/__init__.py so 'import rag.utils' works without pulling
 # the full rag package (graphrag, llm, app, nlp, ...) which needs torch.
 COPY --chown=ragflow:ragflow rag/utils /ragflow/rag/utils
+# rag/nlp/ is needed because common/doc_store/es_conn_base.py imports
+# `from rag.nlp import is_english, rag_tokenizer` at top level. We only
+# copy nlp/, NOT the full rag/ tree which would pull torch via rag/llm,
+# rag/graphrag, etc. rag_tokenizer wraps `infinity.rag_tokenizer` (already
+# in infinity-sdk) so no extra ML deps needed.
+COPY --chown=ragflow:ragflow rag/nlp /ragflow/rag/nlp
 RUN echo "" > /ragflow/rag/__init__.py && chown ragflow:ragflow /ragflow/rag/__init__.py
 COPY --chown=ragflow:ragflow management /ragflow/management
 

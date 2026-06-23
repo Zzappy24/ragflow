@@ -86,6 +86,12 @@ BOOT_GLOBS = [
     "rag/utils/azure_spn_conn.py",
     "rag/utils/gcs_conn.py",
     "rag/utils/opendal_conn.py",
+    # rag/nlp/ — only the files that common/doc_store/es_conn_base.py
+    # pulls at boot (`from rag.nlp import is_english, rag_tokenizer`).
+    # NOT scanning synonym.py / search.py / etc. — those have heavier
+    # deps (nltk) and aren't loaded at boot.
+    "rag/nlp/__init__.py",
+    "rag/nlp/rag_tokenizer.py",
     # api/db/ — db_models is imported by management.server.main:lifespan
     # via init_database_tables. services/__init__.py auto-loads user_service.
     "api/__init__.py",
@@ -157,6 +163,8 @@ IMPORT_TO_PIP = {
     "ruamel": "ruamel.yaml",
     "yaml": "PyYAML",
     "azure": "azure-storage-blob",      # multiple azure.* packages — pick most common
+    "word2number": "word2number",
+    "roman_numbers": "roman-numbers",
 }
 
 # Packages that we know are NOT in Dockerfile.management because they are
