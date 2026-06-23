@@ -30,7 +30,9 @@ app.kubernetes.io/instance: {{ .Release.Name }}
 {{- with .Values.image.repositorySuffix -}}
 {{- $repo = printf "%s%s" $repo . -}}
 {{- end -}}
-{{ $g.imageRegistry }}/{{ $repo }}:{{ default .Values.image.tag $g.imageTag }}
+{{- /* CUSTOM B2B SaaS — subchart tag prioritised over global; see
+   mgmt-backend helper for rationale. */ -}}
+{{- $g.imageRegistry -}}/{{- $repo -}}:{{- default $g.imageTag .Values.image.tag -}}
 {{- else -}}
 {{ .Values.image.repository }}:{{ .Values.image.tag }}
 {{- end -}}
