@@ -148,6 +148,11 @@ COPY --chown=ragflow:ragflow management /ragflow/management
 # service_conf.yaml.template lives under docker/ upstream — the Helm chart
 # renders it into /ragflow/conf/local.service_conf.yaml via initContainer.
 COPY --chown=ragflow:ragflow conf/private.pem conf/public.pem /ragflow/conf/
+# common/config_utils.py:read_config() ALWAYS loads conf/service_conf.yaml
+# (line 66 — not optional), then overlays conf/local.service_conf.yaml if
+# present. The Helm chart renders local.service_conf.yaml via initContainer
+# (envsubst on the .template), but the base file MUST be in the image.
+COPY --chown=ragflow:ragflow conf/service_conf.yaml /ragflow/conf/service_conf.yaml
 COPY --chown=ragflow:ragflow docker/service_conf.yaml.template /ragflow/conf/service_conf.yaml.template
 
 # Drop privileges.
