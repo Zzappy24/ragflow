@@ -23,95 +23,9 @@ REPO_ROOT = Path(__file__).resolve().parents[2]
 DOCKERFILE = REPO_ROOT / "Dockerfile.management"
 
 
-# Files in the management backend's BOOT CHAIN (loaded at module import time
-# when uvicorn imports management.server.main). Anything outside this list
-# can still be in the image but doesn't need its deps installed (the slim
-# image accepts ImportError on rarely-used paths — e.g. rag.utils.tavily_conn
-# would fail because we don't ship `tavily`, but it's never imported at boot).
-#
-# Glob patterns relative to repo root. Add a new entry when adding code that
-# runs at module-load time inside the mgmt process.
-BOOT_GLOBS = [
-    "management/server/main.py",
-    "management/server/*.py",
-    "management/server/auth/*.py",
-    "management/server/models/*.py",
-    "management/server/routers/*.py",
-    "management/server/services/*.py",
-    "management/server/config.py",
-    # common/ — settings.py is imported by main.py:lifespan and eagerly
-    # loads most of its siblings + every rag/utils/*_conn module.
-    "common/settings.py",
-    "common/__init__.py",
-    "common/config_utils.py",
-    "common/constants.py",
-    "common/decorator.py",
-    "common/file_utils.py",
-    "common/float_utils.py",
-    "common/misc_utils.py",
-    "common/time_utils.py",
-    "common/crypto_utils.py",
-    "common/encryption_utils.py",
-    "common/text_utils.py",
-    "common/metadata_utils.py",
-    "common/metadata_infinity_filter.py",
-    "common/network_utils.py",
-    "common/tag_feature_utils.py",
-    "common/token_utils.py",
-    # NOTE: common/data_source/* (sharepoint/dropbox/slack/jira/gitlab/
-    # google_drive/onedrive/airtable/notion/asana/zendesk/...) are LAZY —
-    # imported only when the admin actually configures that data source.
-    # They are NOT in the boot chain. Leaving them out of BOOT_GLOBS so
-    # the test doesn't flag their SDK deps as missing.
-    "common/doc_store/*.py",
-    # rag/utils/ — only the _conn.py files eagerly imported by
-    # common/settings.py. lazy_image / tavily_conn / file_utils are
-    # intentionally excluded: their imports (PIL / tavily / pypdf) aren't
-    # in the slim image, and these modules are never loaded at boot.
-    "rag/utils/__init__.py",
-    "rag/utils/encrypted_storage.py",
-    "rag/utils/storage_factory.py",
-    "rag/utils/table_es_metadata.py",
-    "rag/utils/raptor_utils.py",
-    "rag/utils/tts_cache.py",
-    "rag/utils/es_conn.py",
-    "rag/utils/infinity_conn.py",
-    "rag/utils/ob_conn.py",
-    "rag/utils/opensearch_conn.py",
-    "rag/utils/minio_conn.py",
-    "rag/utils/redis_conn.py",
-    "rag/utils/s3_conn.py",
-    "rag/utils/oss_conn.py",
-    "rag/utils/azure_sas_conn.py",
-    "rag/utils/azure_spn_conn.py",
-    "rag/utils/gcs_conn.py",
-    "rag/utils/opendal_conn.py",
-    # api/db/ — db_models is imported by management.server.main:lifespan
-    # via init_database_tables. services/__init__.py auto-loads user_service.
-    "api/__init__.py",
-    "api/constants.py",
-    "api/settings.py",
-    "api/db/__init__.py",
-    "api/db/db_models.py",
-    "api/db/services/__init__.py",
-    "api/db/services/common_service.py",
-    "api/db/services/user_service.py",
-    "api/db/services/tenant_llm_service.py",
-    "api/db/services/tenant_model_provider_service.py",
-    "api/db/services/tenant_model_instance_service.py",
-    "api/db/services/tenant_model_service.py",
-    "api/db/services/workspace_service.py",
-    "api/db/services/org_service.py",
-    "api/db/services/langfuse_service.py",
-    "api/db/joint_services/tenant_model_service.py",
-    "api/utils/__init__.py",
-    "api/utils/crypt.py",
-    "api/utils/tenant_utils.py",
-    "api/common/__init__.py",
-    "api/common/exceptions.py",
-    "api/common/base64.py",
-    "api/common/check_team_permission.py",
-]
+# Boot entry point — uvicorn imports this. We trace transitively all
+# local imports from here to build the full set of files loaded at boot.
+BOOT_ENTRY = "management/server/main.py"
 
 # Python stdlib (incomplete but covers everything we use). When an import
 # matches this set, it's not a pip dep.
@@ -157,6 +71,8 @@ IMPORT_TO_PIP = {
     "ruamel": "ruamel.yaml",
     "yaml": "PyYAML",
     "azure": "azure-storage-blob",      # multiple azure.* packages — pick most common
+    "word2number": "word2number",
+    "roman_numbers": "roman-numbers",
 }
 
 # Packages that we know are NOT in Dockerfile.management because they are
@@ -188,34 +104,113 @@ def parse_dockerfile_pip_deps() -> set[str]:
     return deps
 
 
-def extract_top_level_imports(path: Path) -> set[str]:
-    """Return the set of top-level Python imports in a source file.
+def extract_imports(path: Path, deep: bool = False) -> list[tuple[str, int]]:
+    """Return list of (full_dotted_module_name, level) for imports.
 
-    Use Python's ast module for reliable parsing — handles `import X as Y`,
-    `from X import A, B`, multi-line parenthesised imports, etc. Only
-    captures imports at module top level (not inside functions/classes).
+    level=0 absolute, level>0 relative.
+
+    deep=False: only top-level (module-load-time) imports.
+    deep=True: also imports nested inside functions/methods/conditionals.
+    Use deep=True for the boot entry point (management/server/main.py),
+    whose lifespan() function imports `common.settings` LAZILY when
+    uvicorn calls it at startup — that import IS part of the boot chain
+    and triggers transitive loading.
     """
     import ast
     if not path.exists():
-        return set()
+        return []
     try:
         tree = ast.parse(path.read_text(), filename=str(path))
     except SyntaxError:
-        return set()
-    imports: set[str] = set()
-    for node in tree.body:  # iterate top-level statements only
+        return []
+    out: list[tuple[str, int]] = []
+    nodes_to_scan = ast.walk(tree) if deep else tree.body
+    for node in nodes_to_scan:
         if isinstance(node, ast.Import):
             for alias in node.names:
-                imports.add(alias.name.split(".")[0])
+                out.append((alias.name, 0))
         elif isinstance(node, ast.ImportFrom):
-            # Skip relative imports — those resolve to local modules,
-            # not pip packages (`from . import X` has node.level >= 1,
-            # `from .foo import X` has module='foo' but level=1 too).
-            if node.level and node.level > 0:
+            # `from X.Y import Z, W` semantically may import X.Y.Z and X.Y.W
+            # as submodules (if they exist as .py files). Python's import
+            # machinery does this automatically — we must too, otherwise
+            # `from common import settings` resolves only `common/__init__.py`
+            # and never visits `common/settings.py`.
+            base = node.module or ""
+            level = node.level or 0
+            if base:
+                out.append((base, level))
+            for alias in node.names:
+                if alias.name == "*":
+                    continue
+                full = f"{base}.{alias.name}" if base else alias.name
+                out.append((full, level))
+    return out
+
+
+def resolve_local_module(dotted: str, level: int, from_path: Path) -> Path | None:
+    """Given a dotted import like `common.settings` (absolute, level=0) or
+    `foo.bar` from `level=2` relative, find the matching .py / __init__.py
+    file under repo root. Return None if it's not a local module (i.e. pip)
+    or doesn't exist."""
+    if level == 0:
+        # Absolute import — first part must be a known local top-level pkg.
+        top = dotted.split(".")[0]
+        if top not in LOCAL:
+            return None
+        base = REPO_ROOT
+        parts = dotted.split(".")
+    else:
+        # Relative import — anchor at from_path's package dir.
+        # level=1 = same dir, level=2 = parent dir, etc.
+        anchor = from_path.parent
+        for _ in range(level - 1):
+            anchor = anchor.parent
+        base = anchor
+        parts = dotted.split(".") if dotted else []
+
+    # Try as a .py module: parts[:-1] are dirs, parts[-1] is file
+    candidate_py = base.joinpath(*parts).with_suffix(".py")
+    if candidate_py.exists() and candidate_py.is_file():
+        return candidate_py
+    # Try as a package: parts/__init__.py
+    candidate_pkg = base.joinpath(*parts) / "__init__.py"
+    if candidate_pkg.exists() and candidate_pkg.is_file():
+        return candidate_pkg
+    return None
+
+
+def trace_boot_chain(entry: Path) -> tuple[set[Path], set[str]]:
+    """Walk all imports starting from `entry`. Follow local imports
+    transitively. For the boot ENTRY file (management/server/main.py),
+    we scan ALL imports including those inside lifespan() — they execute
+    at uvicorn startup and trigger the transitive chain. For other files,
+    we scan only top-level imports (those that run at module load time).
+    Return (visited_files, external_imports).
+    """
+    visited: set[Path] = set()
+    external: set[str] = set()
+    queue: list[Path] = [entry]
+    while queue:
+        path = queue.pop()
+        if path in visited:
+            continue
+        visited.add(path)
+        # ENTRY file — scan deep (capture imports inside lifespan() etc).
+        # All other files — only top-level (those execute on `import`).
+        deep = (path == entry)
+        for dotted, level in extract_imports(path, deep=deep):
+            local_path = resolve_local_module(dotted, level, path)
+            if local_path is not None:
+                if local_path not in visited:
+                    queue.append(local_path)
                 continue
-            if node.module:
-                imports.add(node.module.split(".")[0])
-    return imports
+            if level > 0:
+                continue
+            top = dotted.split(".")[0]
+            if top in STDLIB or top in LOCAL or top in KNOWN_LAZY_IMPORTS:
+                continue
+            external.add(top)
+    return visited, external
 
 
 def normalise_for_pip(import_name: str) -> str:
@@ -226,61 +221,171 @@ def normalise_for_pip(import_name: str) -> str:
 
 
 def test_mgmt_image_has_all_boot_chain_deps():
-    """Every external import in a boot file must have its pip dep in
-    Dockerfile.management. Adding a new import in common/ or api/db/
-    without updating the slim image causes a runtime crash in prod."""
+    """Every external import in the boot chain must have its pip dep in
+    Dockerfile.management. The boot chain is computed transitively from
+    management/server/main.py — no manual file list to maintain.
+
+    Adding a new import in common/, api/, or a transitively-loaded
+    rag/* module without updating the slim image causes a runtime
+    ModuleNotFoundError. This test catches the drift BEFORE deploy."""
     pip_deps = parse_dockerfile_pip_deps()
-    # Add a few transitive deps that pip installs automatically (we don't
-    # list them in Dockerfile.management but they ARE in the venv). These
-    # are deps-of-our-deps, not standalone imports we made.
+    # Transitives pip installs automatically when we declare the parent.
+    # These are NOT in Dockerfile.management explicitly but ARE in the venv.
     pip_deps.update({
-        # Transitives pip pulls automatically when we install the parents.
-        # Adding here keeps the test from flagging them as missing.
         "pydantic", "pydantic-core", "anyio", "starlette", "h11", "click",
         "typing-extensions", "annotated-types", "yarl", "aiohttp",
         "websocket-client", "websocket",
-        "google",         # via google-cloud-storage
-        "azure",          # via azure-* SDKs
-        "elasticsearch",  # via elasticsearch-dsl
+        "google",             # via google-cloud-storage
+        "azure",              # via azure-* SDKs
+        "elasticsearch",      # via elasticsearch-dsl
         "elastic-transport",  # via elasticsearch
-        "infinity",       # via infinity-sdk
-        "valkey",         # explicitly installed
-        "botocore",       # via boto3
-        "urllib3",        # via requests / boto3
-        "playhouse",      # subpkg of peewee
-        "requests",       # via several SDKs
+        "infinity",           # via infinity-sdk
+        "valkey",             # explicit pip install
+        "botocore",           # via boto3
+        "urllib3",            # via requests / boto3
+        "playhouse",          # subpkg of peewee
+        "requests",           # via several SDKs
     })
 
-    missing: dict[str, list[tuple[str, int]]] = {}
+    _, external_imports = trace_boot_chain(REPO_ROOT / BOOT_ENTRY)
 
-    for glob_pat in BOOT_GLOBS:
-        for path in REPO_ROOT.glob(glob_pat):
-            if path.name == "__pycache__":
-                continue
-            for imp in extract_top_level_imports(path):
-                if imp in STDLIB or imp in LOCAL or imp in KNOWN_LAZY_IMPORTS:
-                    continue
-                pip_name = normalise_for_pip(imp)
-                if pip_name in pip_deps:
-                    continue
-                # Found a top-level import not in the Dockerfile.
-                missing.setdefault(pip_name, []).append(
-                    (str(path.relative_to(REPO_ROOT)), imp),
-                )
+    missing: dict[str, str] = {}
+    for imp in external_imports:
+        pip_name = normalise_for_pip(imp)
+        if pip_name not in pip_deps:
+            missing[pip_name] = imp
 
     if missing:
-        lines = ["The following pip packages are imported at boot by the",
-                 "management backend but NOT installed in Dockerfile.management.",
-                 "Add them to the pip install block:",
-                 ""]
-        for pkg, sites in sorted(missing.items()):
-            lines.append(f"  - {pkg}")
-            for path, imp in sites[:3]:
-                lines.append(f"      (imported as `{imp}` in {path})")
-            if len(sites) > 3:
-                lines.append(f"      ... and {len(sites) - 3} more")
+        lines = [
+            "The following pip packages are imported at boot by the",
+            "management backend (traced transitively from",
+            f"{BOOT_ENTRY}) but NOT installed in Dockerfile.management.",
+            "Add them to the pip install block:",
+            "",
+        ]
+        for pkg, imp in sorted(missing.items()):
+            lines.append(f"  - {pkg}  (import name: `{imp}`)")
         lines.append("")
-        lines.append("If the import is genuinely lazy (inside a function, never")
-        lines.append("hit at boot), add the module to BOOT_GLOBS exclusions or")
-        lines.append("KNOWN_LAZY_IMPORTS in this test file.")
+        lines.append("If a real lazy import escaped detection (inside a")
+        lines.append("function/method), add it to KNOWN_LAZY_IMPORTS.")
+        raise AssertionError("\n".join(lines))
+
+
+# ============================================================================
+# File presence checks — config files that the boot code opens (not imports)
+# must be COPY'd into the image. Missed copies are the second most common
+# cause of mgmt pod boot failure (after missing pip deps).
+# ============================================================================
+
+# Files that common/* and api/* code opens at startup via os.path / open().
+# If they're not in the image at /ragflow/<path>, the boot crashes with
+# FileNotFoundError. Each entry is the path relative to repo root and
+# expected to land at the same relative path inside /ragflow in the image.
+REQUIRED_FILES_AT_BOOT = [
+    # common/config_utils.py:read_config() always opens conf/service_conf.yaml.
+    # conf/local.service_conf.yaml is optional and mounted by the chart via
+    # initContainer (envsubst on the .template), so we don't require it.
+    "conf/service_conf.yaml",
+    # api/utils/crypt.py loads RSA keys at module top level. Dev keys ship
+    # in the repo; prod overrides via K8s Secret mount.
+    "conf/private.pem",
+    "conf/public.pem",
+]
+
+
+def parse_dockerfile_copies() -> set[str]:
+    """Extract source paths from `COPY <src> <dst>` lines.
+
+    Returns the set of repo-relative source paths. Multi-source COPY
+    (e.g. `COPY a b c /dst/`) is handled — all but the last token are
+    treated as sources.
+    """
+    text = DOCKERFILE.read_text()
+    sources: set[str] = set()
+    for line in text.splitlines():
+        stripped = line.strip()
+        if not stripped.startswith("COPY"):
+            continue
+        # Strip `COPY` keyword and any `--chown=...` / `--from=...` flags.
+        tokens = stripped.split()
+        tokens = [t for t in tokens[1:] if not t.startswith("--")]
+        if len(tokens) < 2:
+            continue
+        # Skip COPY --from=builder (those reference build stage paths,
+        # not repo paths).
+        if "--from=" in stripped:
+            continue
+        # Everything except the last token is a source path.
+        for src in tokens[:-1]:
+            sources.add(src.lstrip("./"))
+    return sources
+
+
+def _is_path_covered_by_copy(rel_path: str, copied: set[str]) -> bool:
+    """A repo-relative path is 'covered' by a COPY directive if either:
+      - it's listed directly, or
+      - any of its parent dirs is COPY'd (recursive copy).
+    """
+    if rel_path in copied:
+        return True
+    parts = rel_path.split("/")
+    for i in range(1, len(parts)):
+        prefix = "/".join(parts[:i])
+        if prefix in copied or (prefix + "/") in copied:
+            return True
+    return False
+
+
+def test_mgmt_image_has_required_boot_files():
+    """Files that the boot chain opens via open() (not import) must be
+    COPY'd into Dockerfile.management. Otherwise the pod crashes with
+    FileNotFoundError — which the import-deps test cannot catch."""
+    copied = parse_dockerfile_copies()
+    missing = [f for f in REQUIRED_FILES_AT_BOOT if not _is_path_covered_by_copy(f, copied)]
+    if missing:
+        lines = ["The following files are opened at boot by the mgmt backend",
+                 "but NOT COPY'd into Dockerfile.management:",
+                 ""]
+        for f in missing:
+            lines.append(f"  - {f}")
+        lines.append("")
+        lines.append("Add a 'COPY --chown=ragflow:ragflow <file> /ragflow/<file>'")
+        lines.append("line to Dockerfile.management.")
+        raise AssertionError("\n".join(lines))
+
+
+def test_mgmt_image_copies_all_boot_chain_source_files():
+    """Every Python file visited by the transitive boot chain trace must
+    be COPY'd into the image. Otherwise the import fails at runtime with
+    ModuleNotFoundError even though the pip dep is installed.
+
+    This catches the case where we add a pip dep for `nltk` but forget
+    to COPY the directory that actually IMPORTS nltk (e.g. memory/services/
+    or rag/nlp/synonym.py)."""
+    copied = parse_dockerfile_copies()
+    visited, _ = trace_boot_chain(REPO_ROOT / BOOT_ENTRY)
+    missing: list[str] = []
+    for path in sorted(visited):
+        rel = str(path.relative_to(REPO_ROOT))
+        if not _is_path_covered_by_copy(rel, copied):
+            missing.append(rel)
+    if missing:
+        # Group by top-level directory for a more actionable message —
+        # usually the fix is to COPY the whole subdir.
+        by_dir: dict[str, list[str]] = {}
+        for f in missing:
+            top = f.split("/", 2)
+            key = "/".join(top[:2]) if len(top) >= 2 else top[0]
+            by_dir.setdefault(key, []).append(f)
+        lines = [
+            "The following Python files are loaded at boot (via transitive",
+            f"trace from {BOOT_ENTRY}) but NOT present in the slim image:",
+            "",
+        ]
+        for d, files in sorted(by_dir.items()):
+            lines.append(f"  COPY --chown=ragflow:ragflow {d} /ragflow/{d}")
+            for f in files[:3]:
+                lines.append(f"      ({f})")
+            if len(files) > 3:
+                lines.append(f"      ... +{len(files) - 3} more files")
         raise AssertionError("\n".join(lines))
