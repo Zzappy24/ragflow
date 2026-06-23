@@ -14,7 +14,7 @@ stages:
 kaniko_build_prd:
   stage: build_prd
   tags:
-    - cylndata-prod
+    - alterai-prod
   script:
       - |
         if [ -n "$CI_COMMIT_TAG" ]; then
@@ -58,7 +58,7 @@ kaniko_build_prd:
 kaniko_build_mgmt_prd:
   stage: build_prd
   tags:
-    - cylndata-prod
+    - alterai-prod
   script:
       - |
         if [ -n "$CI_COMMIT_TAG" ]; then
@@ -96,7 +96,7 @@ kaniko_build_mgmt_prd:
 kaniko_build_mgmt_frontend_prd:
   stage: build_prd
   tags:
-    - cylndata-prod
+    - alterai-prod
   script:
       - |
         if [ -n "$CI_COMMIT_TAG" ]; then
