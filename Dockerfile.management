@@ -48,59 +48,71 @@ WORKDIR /build
 # SDKs even though the management backend only ever talks to MySQL/Redis.
 # Refactoring settings.py to lazy-load would be cleaner but would conflict
 # at every upstream merge — accept ~600 MB image instead.
+# All versions pinned EXACTLY as they appear in uv.lock for the main
+# ragflow image. The previous loose pins (>=) let pip resolve to latest,
+# which broke pyobvector — upstream sqlglot >28.4 dropped the
+# `Expression` alias that pyobvector 0.2.22 imports. Strict pinning keeps
+# us aligned with what the main image was tested against.
+# When updating: cross-check uv.lock and bump only the deps that move.
 RUN python -m venv /opt/venv && \
     /opt/venv/bin/pip install --no-cache-dir --upgrade pip && \
     /opt/venv/bin/pip install --no-cache-dir \
-        "fastapi>=0.110.0" \
-        "uvicorn[standard]>=0.29.0" \
-        "pydantic-settings>=2.2.0" \
-        "PyJWT>=2.8.0" \
-        "httpx>=0.27.0" \
-        "peewee>=3.17.1,<4.0.0" \
-        "mysql-connector-python>=9.0.0,<10.0.0" \
-        "psycopg2-binary>=2.9.11,<3.0.0" \
+        "fastapi==0.137.0" \
+        "uvicorn[standard]==0.40.0" \
+        "pydantic-settings==2.12.0" \
+        "PyJWT==2.8.0" \
+        "httpx==0.28.1" \
+        "peewee==3.19.0" \
+        "mysql-connector-python==9.3.0" \
+        "psycopg2-binary==2.9.11" \
         "pycryptodomex==3.20.0" \
-        "Werkzeug>=3.0.0" \
-        "python-dateutil>=2.8.0" \
-        "PyYAML>=6.0.0" \
-        "quart-auth>=0.11.0" \
-        "itsdangerous>=2.2.0" \
-        "langfuse>=4.0.1" \
-        "numpy>=1.26.0,<2.0.0" \
-        "pandas>=2.0.0,<3.0.0" \
-        "pymysql>=1.1.0,<2.0.0" \
+        "Werkzeug==3.1.5" \
+        "python-dateutil==2.9.0.post0" \
+        "PyYAML==6.0.3" \
+        "quart-auth==0.11.0" \
+        "itsdangerous==2.2.0" \
+        "langfuse==4.7.1" \
+        "numpy==1.26.4" \
+        "pandas==2.3.3" \
+        "pymysql==1.1.2" \
         "elasticsearch-dsl==8.12.0" \
-        "elasticsearch>=8.12.0,<9.0.0" \
+        "elasticsearch==8.19.3" \
         "opensearch-py==2.7.1" \
         "infinity-sdk==0.7.0" \
         "minio==7.2.4" \
-        "valkey>=6.0.0" \
-        "boto3>=1.28.0" \
-        "google-cloud-storage>=2.19.0,<3.0.0" \
-        "azure-storage-blob>=12.0.0" \
+        "valkey==6.0.2" \
+        "boto3==1.42.25" \
+        "google-cloud-storage==2.19.0" \
+        "azure-storage-blob==12.28.0" \
         "azure-storage-file-datalake==12.16.0" \
-        "azure-identity>=1.25.3" \
-        "opendal>=0.45.0,<0.46.0" \
-        "pydantic>=2.0.0" \
-        "cryptography>=42.0.0" \
-        "tiktoken>=0.7.0" \
+        "azure-identity==1.25.3" \
+        "opendal==0.45.20" \
+        "pydantic==2.12.5" \
+        "cryptography==46.0.7" \
+        "tiktoken==0.12.0" \
         "pyobvector==0.2.22" \
-        "filelock>=3.13.0" \
-        "ruamel.yaml>=0.18.0" \
+        "sqlglot==28.4.0" \
+        "filelock==3.20.3" \
+        "ruamel.yaml==0.18.17" \
         "xxhash>=3.4.0" \
         "beautifulsoup4>=4.12.0" \
         "chardet>=5.2.0" \
         "feedparser>=6.0.0" \
         "markdownify>=0.12.0" \
-        "SQLAlchemy>=2.0.0" \
-        "webdav4>=0.10.0" \
-        "tenacity>=8.0.0" \
-        "json-repair>=0.30.0" \
-        "Pillow>=10.0.0" \
+        "SQLAlchemy==2.0.45" \
+        "webdav4==0.10.0" \
+        "tenacity==8.5.0" \
+        "json-repair==0.35.0" \
+        "Pillow==12.2.0" \
         "cn2an==0.5.22" \
-        "word2number>=1.1" \
-        "roman-numbers>=1.0.2" \
-        "nltk>=3.8.0"
+        "word2number==1.1" \
+        "roman-numbers==1.0.2" \
+        "nltk==3.9.2" \
+        "xxhash==3.6.0" \
+        "beautifulsoup4==4.13.5" \
+        "chardet==5.2.0" \
+        "feedparser==6.0.12" \
+        "markdownify==1.2.2"
 
 # --- production stage -------------------------------------------------------
 FROM python:3.13-slim AS production
