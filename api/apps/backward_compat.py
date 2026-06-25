@@ -50,6 +50,11 @@ from api.utils.api_utils import get_data_error_result, get_json_result, add_tena
 
 manager = Blueprint("backward_compat", __name__)
 document_download_manager = Blueprint("backward_compat_document_download", __name__)
+# CUSTOM B2B SaaS — upstream PR #16264 (June 2026) added new /v1 legacy
+# routes (e.g. /v1/document/upload_info) decorated with @legacy_v1_manager,
+# but they share the same Blueprint scope as our document_download_manager.
+# Aliasing keeps both naming conventions working without duplicating routes.
+legacy_v1_manager = document_download_manager
 
 
 # =============================================================================
