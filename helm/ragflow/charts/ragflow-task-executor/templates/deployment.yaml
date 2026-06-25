@@ -87,6 +87,8 @@ spec:
               apk add --no-cache gettext >/dev/null 2>&1 || true
               envsubst < /conf-template/service_conf.yaml.template > /conf-rendered/local.service_conf.yaml
           envFrom:
+            - configMapRef:
+                name: {{ .Release.Name }}-app-config
             - secretRef:
                 name: ragflow-app-secrets
           volumeMounts:
@@ -132,14 +134,35 @@ spec:
               value: "/ragflow"
             - name: TASK_EXECUTOR_METRICS_PORT
               value: "9381"
+            # DEVICE controls whether DeepDoc / pip_install_torch picks GPU.
+            # `cpu` (default) skips torch install → cuda_is_available() False
+            # → onnxruntime stuck on CPUExecutionProvider even when the pod
+            # has a GPU allocated. Set to "gpu" when nvidia.com/gpu is
+            # requested in resources. Override via .Values.device.
+            - name: DEVICE
+              value: {{ .Values.device | default "cpu" | quote }}
+            # CUSTOM B2B SaaS — bypass the application-level GET_LOCK on
+            # `update_progress` (task_service.py). The lock is held by
+            # orphan peewee connections after worker OOMs, and MariaDB's
+            # wait_timeout (default 8h) keeps them around so set_progress
+            # stalls until manual KILL. Each task is processed by exactly
+            # one worker (Redis consumer group) so the lock is unnecessary.
+            # Enable via .Values.disableTaskProgressLock (default true in
+            # prod values).
+            {{- if .Values.disableTaskProgressLock | default true }}
+            - name: DISABLE_TASK_PROGRESS_LOCK
+              value: "1"
+            {{- end }}
             # WORKER_RECYCLE_AFTER_TASKS — graceful exit threshold (see
             # rag/svr/task_executor.py for behaviour). 0 = disabled.
             # Distinct from upstream's WORKER_MAX_TASKS which controls
             # in-pod CONCURRENCY (asyncio semaphore size).
             - name: WORKER_RECYCLE_AFTER_TASKS
               value: {{ .Values.recycleAfterTasks | quote }}
+            {{- if .Values.livenessProbe.enabled }}
             - name: WORKER_HEARTBEAT_FILE
               value: {{ .Values.livenessProbe.heartbeatFile | quote }}
+            {{- end }}
 
           resources:
             {{- toYaml .Values.resources | nindent 12 }}
@@ -187,10 +210,16 @@ spec:
       # Cache emptyDirs sized for 1× model weights worst-case (BGE-M3 ~2GB,
       # NLTK punkt etc < 100MB). On hot pod the cache is reused across tasks
       # so we don't redownload between Redis poll cycles.
+      # tmp bumped 2Gi → 8Gi because pip_install_torch() at first OCR writes
+      # ~1.5GB of wheel artifacts to /tmp during the install. With only 2Gi
+      # the pod gets evicted by kubelet ("Usage of EmptyDir volume 'tmp'
+      # exceeds the limit '2Gi'"). Pre-installing torch in the image (see
+      # Dockerfile) makes this much less critical, but keep 8Gi for headroom
+      # because matplotlib/pdfminer/etc. also pile up in /tmp at runtime.
       volumes:
         - name: tmp
           emptyDir:
-            sizeLimit: 2Gi
+            sizeLimit: 8Gi
         - name: hf-cache
           emptyDir:
             sizeLimit: 4Gi

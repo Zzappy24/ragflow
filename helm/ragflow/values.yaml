@@ -32,7 +32,7 @@ global:
   # `Gateway` + `HTTPRoute` resources rather than legacy `Ingress`.
   gatewayClassName: "envoy"
   # Gateway resource the HTTPRoutes attach to. Created cluster-wide once.
-  gatewayName: "envoy-gateway-cyllene"
+  gatewayName: "envoy-gateway"
   gatewayNamespace: "envoy-gateway-system"
 
   # External hostname. Multi-tenant uses workspace selection via the
@@ -58,7 +58,7 @@ global:
 # `charts/ragflow-api/values.yaml` for rationale.
 ragflow-api:
   enabled: true
-  replicas: 4
+  replicas: 2
   hypercornWorkers: 1
   resources:
     requests:
@@ -113,7 +113,7 @@ ragflow-frontend:
 mariadb:
   enabled: true
   storage: "20Gi"
-  replicas: 3
+  replicas: 2
   galera: true
   metrics: true
   rootPasswordSecretRef: "ragflow-mariadb-root"
@@ -140,7 +140,7 @@ redis:
 # drive gets its own PVC (no RWX needed).
 minio:
   enabled: true
-  servers: 4
+  servers: 2
   volumesPerServer: 1
   size: "100Gi"
   rootCredentialsSecretRef: "ragflow-minio-root"

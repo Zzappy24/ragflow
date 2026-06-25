@@ -1,0 +1,203 @@
+# syntax=docker/dockerfile:1.6
+
+# =============================================================================
+#  Dockerfile.management — slim image for the custom B2B SaaS admin backend.
+#  Builds an isolated image (~250 MB) that does NOT include torch, CUDA,
+#  rag/, deepdoc/, nginx, or the main RAGFlow frontend.
+#
+#  Custom (does not exist upstream). Built and deployed separately from
+#  the main ragflow image (which stays heavy because task_executor needs
+#  GPU + OCR libraries).
+#
+#  Image identifier: ${REGISTRY}/data/ragflow-mgmt:${TAG}
+# =============================================================================
+
+# --- builder stage ----------------------------------------------------------
+FROM python:3.13-slim AS builder
+
+ARG DEBIAN_FRONTEND=noninteractive
+
+# Build toolchain — needed to compile native deps that don't ship cp313
+# wheels on PyPI:
+#   - numpy 1.26.4 (pinned by infinity-sdk 0.7.0 which requires
+#     numpy<2.0). No cp313 wheel exists for 1.26.4 so it builds from
+#     sdist via meson, which needs g++ + pkg-config (meson and ninja
+#     are pulled automatically by pip as build deps).
+#   - cryptography, pycryptodomex (need gcc + libffi-dev)
+# All build tools are dropped in the production stage.
+#
+# The main ragflow image gets g++ implicitly via texlive / jdk apt
+# packages, which is why it never hits this issue.
+RUN apt-get update && apt-get install -y --no-install-recommends \
+    gcc \
+    g++ \
+    libc6-dev \
+    libffi-dev \
+    pkg-config \
+    && rm -rf /var/lib/apt/lists/*
+
+WORKDIR /build
+
+# Install the deps the management backend needs. Versions pinned to match
+# pyproject.toml of the main ragflow image so a service upgraded on either
+# side stays compatible.
+#
+# Wider than ideal because `common/settings.py` (imported by every service)
+# eagerly imports rag.utils.{es,infinity,opensearch,minio,redis,s3,
+# azure,gcs,opendal,ob,oss}_conn at the top level. That pulls all cloud
+# SDKs even though the management backend only ever talks to MySQL/Redis.
+# Refactoring settings.py to lazy-load would be cleaner but would conflict
+# at every upstream merge — accept ~600 MB image instead.
+# All versions pinned EXACTLY as they appear in uv.lock for the main
+# ragflow image. The previous loose pins (>=) let pip resolve to latest,
+# which broke pyobvector — upstream sqlglot >28.4 dropped the
+# `Expression` alias that pyobvector 0.2.22 imports. Strict pinning keeps
+# us aligned with what the main image was tested against.
+# When updating: cross-check uv.lock and bump only the deps that move.
+RUN python -m venv /opt/venv && \
+    /opt/venv/bin/pip install --no-cache-dir --upgrade pip && \
+    /opt/venv/bin/pip install --no-cache-dir \
+        "fastapi==0.137.0" \
+        "uvicorn[standard]==0.40.0" \
+        "pydantic-settings==2.12.0" \
+        "PyJWT==2.8.0" \
+        "httpx==0.28.1" \
+        "peewee==3.19.0" \
+        "mysql-connector-python==9.3.0" \
+        "psycopg2-binary==2.9.11" \
+        "pycryptodomex==3.20.0" \
+        "Werkzeug==3.1.5" \
+        "python-dateutil==2.9.0.post0" \
+        "PyYAML==6.0.3" \
+        "quart-auth==0.11.0" \
+        "itsdangerous==2.2.0" \
+        "langfuse==4.7.1" \
+        "numpy==1.26.4" \
+        "pandas==2.3.3" \
+        "pymysql==1.1.2" \
+        "elasticsearch-dsl==8.12.0" \
+        "elasticsearch==8.19.3" \
+        "opensearch-py==2.7.1" \
+        "infinity-sdk==0.7.0" \
+        "minio==7.2.4" \
+        "valkey==6.0.2" \
+        "boto3==1.42.25" \
+        "google-cloud-storage==2.19.0" \
+        "azure-storage-blob==12.28.0" \
+        "azure-storage-file-datalake==12.16.0" \
+        "azure-identity==1.25.3" \
+        "opendal==0.45.20" \
+        "pydantic==2.12.5" \
+        "cryptography==46.0.7" \
+        "tiktoken==0.12.0" \
+        "pyobvector==0.2.22" \
+        "sqlglot==28.4.0" \
+        "filelock==3.20.3" \
+        "ruamel.yaml==0.18.17" \
+        "xxhash>=3.4.0" \
+        "beautifulsoup4>=4.12.0" \
+        "chardet>=5.2.0" \
+        "feedparser>=6.0.0" \
+        "markdownify>=0.12.0" \
+        "SQLAlchemy==2.0.45" \
+        "webdav4==0.10.0" \
+        "tenacity==8.5.0" \
+        "json-repair==0.35.0" \
+        "Pillow==12.2.0" \
+        "cn2an==0.5.22" \
+        "word2number==1.1" \
+        "roman-numbers==1.0.2" \
+        "nltk==3.9.2" \
+        "xxhash==3.6.0" \
+        "beautifulsoup4==4.13.5" \
+        "chardet==5.2.0" \
+        "feedparser==6.0.12" \
+        "markdownify==1.2.2"
+
+# --- production stage -------------------------------------------------------
+FROM python:3.13-slim AS production
+
+ARG VERSION_INFO=dev
+LABEL org.opencontainers.image.title="ragflow-management" \
+      org.opencontainers.image.description="Cyllene B2B SaaS admin backend (RBAC, workspaces, organizations) — custom fork" \
+      org.opencontainers.image.version="${VERSION_INFO}"
+
+# Runtime-only system libs (no compilers).
+# libpq5 is required by psycopg2-binary at runtime, even though the wheel
+# is precompiled — the wheel dynamically links to libpq.so.
+RUN apt-get update && apt-get install -y --no-install-recommends \
+    libpq5 \
+    && rm -rf /var/lib/apt/lists/* \
+    && groupadd -r ragflow && useradd -r -g ragflow -d /ragflow -m -s /bin/bash ragflow
+
+WORKDIR /ragflow
+
+# Pre-built venv from the builder stage.
+COPY --from=builder /opt/venv /opt/venv
+ENV PATH="/opt/venv/bin:${PATH}" \
+    VIRTUAL_ENV="/opt/venv" \
+    PYTHONPATH="/ragflow" \
+    PYTHONDONTWRITEBYTECODE=1 \
+    PYTHONUNBUFFERED=1
+
+# Copy only what management/server/main.py needs to import.
+# Keep this list minimal — every package added is a potential bug surface
+# and breaks the "no torch / no rag / no deepdoc" guarantee.
+COPY --chown=ragflow:ragflow api/__init__.py /ragflow/api/__init__.py
+COPY --chown=ragflow:ragflow api/db /ragflow/api/db
+COPY --chown=ragflow:ragflow api/utils /ragflow/api/utils
+COPY --chown=ragflow:ragflow api/common /ragflow/api/common
+COPY --chown=ragflow:ragflow api/constants.py /ragflow/api/constants.py
+COPY --chown=ragflow:ragflow api/settings.py /ragflow/api/settings.py
+COPY --chown=ragflow:ragflow common /ragflow/common
+# rag/utils/ is needed because common/settings.py eagerly imports
+# rag.utils.{es,infinity,opensearch,minio,redis,s3,azure,gcs,opendal,
+# ob,oss}_conn at the top level. We copy the whole subdir (cheap) and
+# add a stub rag/__init__.py so 'import rag.utils' works without pulling
+# the full rag package (graphrag, llm, app, nlp, ...) which needs torch.
+COPY --chown=ragflow:ragflow rag/utils /ragflow/rag/utils
+# rag/nlp/ is needed because common/doc_store/es_conn_base.py imports
+# `from rag.nlp import is_english, rag_tokenizer` at top level. We only
+# copy nlp/, NOT the full rag/ tree which would pull torch via rag/llm,
+# rag/graphrag, etc. rag_tokenizer wraps `infinity.rag_tokenizer` (already
+# in infinity-sdk) so no extra ML deps needed.
+COPY --chown=ragflow:ragflow rag/nlp /ragflow/rag/nlp
+RUN echo "" > /ragflow/rag/__init__.py && chown ragflow:ragflow /ragflow/rag/__init__.py
+# memory/ — boot chain pulls memory/utils/*_conn.py via common/settings.py.
+# Copy the whole subtree (small) instead of cherry-picking individual files.
+COPY --chown=ragflow:ragflow memory /ragflow/memory
+COPY --chown=ragflow:ragflow management /ragflow/management
+
+# Dev RSA keys + config template. In prod the keys are overridden by a K8s
+# secret mount; this gives a working default so the import of api.utils.crypt
+# (which loads the keys at module top level) succeeds at boot. The
+# service_conf.yaml.template lives under docker/ upstream — the Helm chart
+# renders it into /ragflow/conf/local.service_conf.yaml via initContainer.
+COPY --chown=ragflow:ragflow conf/private.pem conf/public.pem /ragflow/conf/
+# common/config_utils.py:read_config() ALWAYS loads conf/service_conf.yaml
+# (line 66 — not optional), then overlays conf/local.service_conf.yaml if
+# present. The Helm chart renders local.service_conf.yaml via initContainer
+# (envsubst on the .template), but the base file MUST be in the image.
+COPY --chown=ragflow:ragflow conf/service_conf.yaml /ragflow/conf/service_conf.yaml
+COPY --chown=ragflow:ragflow docker/service_conf.yaml.template /ragflow/conf/service_conf.yaml.template
+
+# Drop privileges.
+USER ragflow
+
+EXPOSE 8000
+
+# Lightweight healthcheck — relies on FastAPI's auto-generated /openapi.json
+# which is always available regardless of which routers are loaded. If the
+# admin app has a real /api/v1/health endpoint, prefer pointing the Helm
+# readinessProbe at it instead.
+HEALTHCHECK --interval=30s --timeout=5s --start-period=10s --retries=3 \
+  CMD python -c "import httpx,sys; r=httpx.get('http://127.0.0.1:8000/openapi.json',timeout=3); sys.exit(0 if r.status_code==200 else 1)" || exit 1
+
+# Default command — the Helm chart overrides this with its own uvicorn args,
+# so this is mostly for `docker run` smoke tests.
+CMD ["uvicorn", "management.server.main:app", \
+     "--host", "0.0.0.0", \
+     "--port", "8000", \
+     "--loop", "uvloop", \
+     "--http", "httptools", \
+     "--no-access-log"]

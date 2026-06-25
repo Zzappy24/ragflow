@@ -10,20 +10,25 @@ replicas: 4
 hypercornWorkers: 1
 
 image:
-  repository: harbor.cyllene.local/ragflow/ragflow
-  tag: cyllene-1.0.0
+  repository: harbor.cylndata.cyllene.pro/data/ragflow
+  tag: v0.7
   pullPolicy: IfNotPresent
+  imagePullSecrets:
+    - name: harbor-pull-secret
+
+externalSecrets:
+  enabled: false
 
 # Per-pod budget: 1 worker is fairly light. Hypercorn + Python stack ≈
 # 200-400 MB resident; the limits leave headroom for request handling
 # (Quart event loop, peewee connection pool, sentence-transformers cache).
 resources:
   requests:
-    cpu: 250m
-    memory: 512Mi
+    cpu: "250m"
+    memory: "1Gi"
   limits:
-    cpu: 1000m
-    memory: 2Gi
+    cpu: "1"
+    memory: "4Gi"
 
 hpa:
   enabled: true
@@ -50,11 +55,11 @@ probes:
   startup:
     path: /healthz
     periodSeconds: 10
-    failureThreshold: 60        # 600s total budget for first boot
+    failureThreshold: 600       # 600s total budget for first boot
   liveness:
     path: /healthz
     periodSeconds: 15
-    failureThreshold: 4         # 60s tolerance once started
+    failureThreshold: 60         # 60s tolerance once started
   readiness:
     path: /readyz               # checks Redis + MariaDB are reachable
     periodSeconds: 10

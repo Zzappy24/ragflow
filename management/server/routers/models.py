@@ -343,80 +343,74 @@ async def verify_workspace_model(
     """
     require_ws_admin(ws_id, user_id)
 
+    # CUSTOM B2B SaaS — the slim management image (Dockerfile.management)
+    # does NOT ship rag.llm (would pull litellm + ~200 MB of LLM SDKs).
+    # We delegate the verify to the main ragflow-api which has rag.llm
+    # installed. Internal call protected by a shared secret in the
+    # X-Internal-Secret header — see api/apps/restful_apis/internal_api.py.
+    import httpx
+
+    api_base_url = os.environ.get("RAGFLOW_API_URL", "").rstrip("/")
+    internal_secret = os.environ.get("INTERNAL_API_SECRET", "")
+    if not api_base_url or not internal_secret:
+        return WsLlmVerifyResponse(
+            ok=False,
+            message=(
+                "Verify proxy not configured: missing RAGFLOW_API_URL or "
+                "INTERNAL_API_SECRET. Save without verify, or contact ops."
+            ),
+        )
+
     stored_name = _stored_name(body.llm_factory, body.llm_name)
-    api_key = body.api_key or "x"
-    api_base = body.api_base or ""
-    model_type = body.model_type
+    payload = {
+        "llm_factory": body.llm_factory,
+        "llm_name": stored_name,
+        "api_key": body.api_key or "x",
+        "api_base": body.api_base or "",
+        "model_type": body.model_type,
+    }
+    # Timeout slightly longer than the api-side LLM_TIMEOUT_SECONDS (30s
+    # default) so we hear the api's own timeout message instead of cutting
+    # it off here.
+    proxy_timeout = float(os.environ.get("MGMT_VERIFY_PROXY_TIMEOUT_S", 60))
 
     try:
-        from rag.llm import EmbeddingModel, ChatModel, RerankModel, CvModel, TTSModel, Seq2txtModel
-        from common.constants import LLMType
-        import asyncio
+        async with httpx.AsyncClient(timeout=proxy_timeout) as client:
+            resp = await client.post(
+                f"{api_base_url}/api/v1/internal/llm/verify",
+                json=payload,
+                headers={"X-Internal-Secret": internal_secret},
+            )
+    except httpx.TimeoutException:
+        return WsLlmVerifyResponse(
+            ok=False,
+            message=f"Proxy timeout after {proxy_timeout}s — api unreachable.",
+        )
+    except httpx.HTTPError as e:
+        return WsLlmVerifyResponse(ok=False, message=f"Proxy error: {e}")
 
-        factory = body.llm_factory
+    if resp.status_code == 401:
+        return WsLlmVerifyResponse(
+            ok=False,
+            message="Verify proxy rejected: INTERNAL_API_SECRET mismatch between mgmt and api.",
+        )
+    if resp.status_code >= 500:
+        return WsLlmVerifyResponse(
+            ok=False,
+            message=f"Proxy returned {resp.status_code}: {resp.text[:200]}",
+        )
 
-        if model_type == LLMType.EMBEDDING.value:
-            mdl = EmbeddingModel[factory](api_key, stored_name, base_url=api_base)
-            await asyncio.to_thread(mdl.encode, ["Test if the api key is available"])
-
-        elif model_type == LLMType.RERANK.value:
-            mdl = RerankModel[factory](api_key, stored_name, base_url=api_base)
-            await asyncio.to_thread(mdl.similarity, "What is RAGFlow?", ["RAGFlow is a RAG engine."])
-
-        elif model_type == LLMType.IMAGE2TEXT.value:
-            from rag.utils.base64_image import test_image
-            mdl = CvModel[factory](api_key, stored_name, base_url=api_base)
-            await asyncio.to_thread(mdl.describe, test_image)
-
-        elif model_type == LLMType.TTS.value:
-            mdl = TTSModel[factory](api_key, stored_name, base_url=api_base)
-            for _ in mdl.tts("Test"):
-                break
-
-        elif model_type == LLMType.SPEECH2TEXT.value:
-            # RAGFlow itself has no verify for ASR — skip actual test
-            pass
-
-        else:
-            # Default: chat — mirror api/apps/llm_app.py::set_api_key.
-            # async_chat_streamly is the canonical chat entry point on Base.
-            mdl = ChatModel[factory](api_key, stored_name, base_url=api_base)
-            timeout_s = int(os.environ.get("LLM_TIMEOUT_SECONDS", 30))
-            received_chunk = False
-            error_text = ""
-
-            async def _check():
-                nonlocal received_chunk, error_text
-                async for chunk in mdl.async_chat_streamly(
-                    None,
-                    [{"role": "user", "content": "Hi"}],
-                    {"temperature": 0.7},
-                ):
-                    if not isinstance(chunk, str):
-                        continue
-                    if "**ERROR**" in chunk:
-                        error_text = chunk
-                        return
-                    if chunk.strip():
-                        received_chunk = True
-                        return
-
-            try:
-                await asyncio.wait_for(_check(), timeout=timeout_s)
-            except asyncio.TimeoutError:
-                return WsLlmVerifyResponse(
-                    ok=False,
-                    message=f"Timeout after {timeout_s}s — endpoint unreachable or model not warmed up.",
-                )
-            if error_text:
-                return WsLlmVerifyResponse(ok=False, message=error_text)
-            if not received_chunk:
-                return WsLlmVerifyResponse(ok=False, message="No response received from model.")
-
-        return WsLlmVerifyResponse(ok=True, message="Connection successful")
-
-    except Exception as e:
-        return WsLlmVerifyResponse(ok=False, message=str(e))
+    # The api wraps the payload in a {"data": ..., "code": 0} envelope
+    # via get_result(). Unwrap and return through the existing schema.
+    try:
+        envelope = resp.json()
+    except ValueError:
+        return WsLlmVerifyResponse(ok=False, message=f"Invalid proxy response: {resp.text[:200]}")
+    data = envelope.get("data", envelope)  # fall back to flat shape if needed
+    return WsLlmVerifyResponse(
+        ok=bool(data.get("ok")),
+        message=str(data.get("message", "")),
+    )
 
 
 # ---------------------------------------------------------------------------

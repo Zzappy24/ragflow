@@ -1,0 +1,11 @@
+apiVersion: policy/v1
+kind: PodDisruptionBudget
+metadata:
+  name: {{ include "ragflow-management-backend.fullname" . }}
+  labels:
+    {{- include "ragflow-management-backend.labels" . | nindent 4 }}
+spec:
+  minAvailable: 50%
+  selector:
+    matchLabels:
+      {{- include "ragflow-management-backend.selectorLabels" . | nindent 6 }}

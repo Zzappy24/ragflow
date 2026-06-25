@@ -1,0 +1,47 @@
+replicas: 2
+
+# CUSTOM B2B SaaS — the management backend ships in its own slim image
+# built from Dockerfile.management (~250 MB) to avoid pulling the 10 GB
+# main ragflow image just to serve the admin panel. The image helper
+# (_helper.tpl) reads `image.repositorySuffix` and appends it to the
+# umbrella global.imageRepository when set: e.g. with global
+# data/ragflow + suffix -mgmt → data/ragflow-mgmt:<global.imageTag>.
+# Keep image.repository as a fallback when globals are NOT defined
+# (e.g. local dev rendering against values.yaml alone).
+image:
+  repository: harbor.cylndata.cyllene.pro/data/ragflow-mgmt
+  repositorySuffix: "-mgmt"
+  tag: v0.7.5
+  pullPolicy: IfNotPresent
+  imagePullSecrets:
+    - name: harbor-pull-secret
+
+resources:
+  requests:
+    cpu: 250m
+    memory: 512Mi
+  limits:
+    cpu: 1000m
+    memory: 2Gi
+
+terminationGracePeriodSeconds: 60
+
+service:
+  type: ClusterIP
+  port: 8000
+
+readinessProbe:
+  enabled: false
+  path: /health
+  initialDelaySeconds: 15
+  periodSeconds: 10
+  failureThreshold: 3
+  timeoutSeconds: 2
+
+livenessProbe:
+  enabled: false
+  path: /health
+  initialDelaySeconds: 30
+  periodSeconds: 20
+  failureThreshold: 3
+  timeoutSeconds: 2

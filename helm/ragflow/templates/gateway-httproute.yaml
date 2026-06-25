@@ -18,7 +18,7 @@ spec:
   parentRefs:
     - name: {{ .Values.global.gatewayName }}
       namespace: {{ .Values.global.gatewayNamespace }}
-      sectionName: https        # named listener on the Gateway (TLS terminated)
+      sectionName: web        # named listener on the Gateway (TLS terminated)
   hostnames:
     - {{ .Values.global.hostname | quote }}
 
