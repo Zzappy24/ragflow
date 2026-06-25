@@ -28,14 +28,14 @@ kaniko_build_prd:
       - echo "{\"auths\":{\"harbor.cylndata.cyllene.pro\":{\"username\":\"$HARBOR_CYLNDATA_ROBOT_PRD\",\"password\":\"$HARBOR_CYLNDATA_ROBOT_PWD_PRD\"}}}" > /kaniko/.docker/config.json
       - |
         /kaniko/executor \
-          --cache=true \
-          --cache-repo "harbor.cylndata.cyllene.pro/${HARBOR_PROJECT}/${IMAGE_NAME}/cache" \
-          --compressed-caching=false \
+          #--cache=true \
+          #--cache-repo "harbor.cylndata.cyllene.pro/${HARBOR_PROJECT}/${IMAGE_NAME}/cache" \
+          #--compressed-caching=false \
           --insecure=true \
           --skip-tls-verify=true \
-          --snapshot-mode=redo \
-          --use-new-run \
-          --cleanup \
+          #--snapshot-mode=redo \
+          #--use-new-run \
+          #--cleanup \
           --build-arg VERSION_INFO="${IMAGE_TAG}" \
           --context "${CI_PROJECT_DIR}" \
           --dockerfile "Dockerfile" \
