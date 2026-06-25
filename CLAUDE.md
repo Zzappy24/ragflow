@@ -380,6 +380,25 @@ isolation. On every upstream merge that touches `internal/`:
    single `authorized.Use(middleware.NewWorkspaceMiddleware().Resolve())` line — no action needed
    unless upstream adds a new top-level group outside `authorized`.
 
+4. **Detect when upstream DELETES a Python equivalent**: once upstream removes a
+   `api/apps/restful_apis/<name>_api.py`, our Python implementation becomes the
+   only one in the codebase — but we've intentionally kept it as the "fallback"
+   while letting Go upstream catch up. When upstream deletes the Python:
+   ```bash
+   # After every merge, list Python files upstream has deleted vs us:
+   git diff <last_merge_base>..upstream/main --diff-filter=D --name-only -- api/apps/restful_apis/
+   ```
+   If anything appears: either (a) port the Go upstream impl to our fork and
+   wire it through our `rbacPerm` + `GetTenantID(c)` pattern, or (b) keep our
+   Python and document the divergence. As of 2026-06-25 merge:
+   - `api/apps/restful_apis/api_key_api.py`: deleted upstream. Our fork KEEPS
+     it (per-user API keys is our custom B2B SaaS feature, scope ≠ upstream's
+     tenant-scoped Go `api_token.go`). Routes `/api/v1/api_keys` are stable.
+   - `api/apps/restful_apis/chunk_api.py`: still present upstream (774 lines,
+     receives fix commits). Our Python is the fallback; the Go chunk routes
+     (`StopParsing`, `AddChunk`, `ListChunks`) added upstream are NOT ramené
+     in our fork yet. Watch for upstream deletion to trigger the port.
+
 Custom Go files (never conflict upstream):
 | File | What's custom |
 |------|--------------|
