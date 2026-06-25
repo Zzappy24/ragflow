@@ -1,4 +1,5 @@
 import Image, { AuthThumbnail } from '@/components/image';
+import { MarkdownRemarkPlugins } from '@/constants/markdown-remark-plugins';
 import { IReference, IReferenceChunk } from '@/interfaces/database/chat';
 import { citationMarkerReg } from '@/utils/citation-utils';
 import { getExtension } from '@/utils/document-util';
@@ -18,7 +19,6 @@ import typescript from 'react-syntax-highlighter/dist/esm/languages/hljs/typescr
 import xml from 'react-syntax-highlighter/dist/esm/languages/hljs/xml';
 import rehypeKatex from 'rehype-katex';
 import rehypeRaw from 'rehype-raw';
-import { MarkdownRemarkPlugins } from '@/constants/markdown-remark-plugins';
 import { visitParents } from 'unist-util-visit-parents';
 
 SyntaxHighlighter.registerLanguage('bash', bash);
@@ -94,7 +94,11 @@ const MarkdownContent = ({
       text = t('chat.searching');
     }
     const nextText = replaceTextByOldReg(text);
-    return pipe(replaceThinkToSection, replaceRetrievingToSection, preprocessLaTeX)(nextText);
+    return pipe(
+      replaceThinkToSection,
+      replaceRetrievingToSection,
+      preprocessLaTeX,
+    )(nextText);
   }, [content, t]);
 
   useEffect(() => {
@@ -275,7 +279,7 @@ const MarkdownContent = ({
   return (
     <div dir={dir} className={styles.markdownContentWrapper}>
       <Markdown
-        rehypePlugins={[rehypeWrapReference, rehypeKatex, rehypeRaw]}
+        rehypePlugins={[rehypeRaw, rehypeWrapReference, rehypeKatex]}
         remarkPlugins={MarkdownRemarkPlugins}
         components={
           {
