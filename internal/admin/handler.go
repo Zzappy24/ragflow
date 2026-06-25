@@ -22,14 +22,12 @@ import (
 	"fmt"
 	"net/http"
 	"ragflow/internal/common"
-	"ragflow/internal/dao"
 	"ragflow/internal/engine"
 	"ragflow/internal/engine/redis"
 	"ragflow/internal/server"
 	"ragflow/internal/service"
 	"ragflow/internal/utility"
 	"strconv"
-	"strings"
 	"time"
 
 	"github.com/gin-gonic/gin"
@@ -297,7 +295,7 @@ func (h *Handler) CreateUser(c *gin.Context) {
 // GetUser handle get user
 func (h *Handler) GetUser(c *gin.Context) {
 	encodedUsername := c.Param("username")
-	username, err := common.DecodeEmail(encodedUsername)
+	username, err := common.DecodeFromBase64(encodedUsername)
 	if err != nil {
 		errorResponse(c, err.Error(), 400)
 		return
@@ -323,7 +321,7 @@ func (h *Handler) GetUser(c *gin.Context) {
 // DeleteUser handle delete user
 func (h *Handler) DeleteUser(c *gin.Context) {
 	encodedUsername := c.Param("username")
-	username, err := common.DecodeEmail(encodedUsername)
+	username, err := common.DecodeFromBase64(encodedUsername)
 	if err != nil {
 		errorResponse(c, err.Error(), 400)
 		return
@@ -355,7 +353,7 @@ type ChangePasswordHTTPRequest struct {
 // ChangePassword handle change password
 func (h *Handler) ChangePassword(c *gin.Context) {
 	encodedUsername := c.Param("username")
-	username, err := common.DecodeEmail(encodedUsername)
+	username, err := common.DecodeFromBase64(encodedUsername)
 	if err != nil {
 		errorResponse(c, err.Error(), 400)
 		return
@@ -387,7 +385,7 @@ type UpdateActivateStatusHTTPRequest struct {
 // UpdateUserActivateStatus handle update user activate status
 func (h *Handler) UpdateUserActivateStatus(c *gin.Context) {
 	encodedUsername := c.Param("username")
-	username, err := common.DecodeEmail(encodedUsername)
+	username, err := common.DecodeFromBase64(encodedUsername)
 	if err != nil {
 		errorResponse(c, err.Error(), 400)
 		return
@@ -420,7 +418,7 @@ func (h *Handler) UpdateUserActivateStatus(c *gin.Context) {
 // GrantAdmin handle grant admin role
 func (h *Handler) GrantAdmin(c *gin.Context) {
 	encodedUsername := c.Param("username")
-	username, err := common.DecodeEmail(encodedUsername)
+	username, err := common.DecodeFromBase64(encodedUsername)
 	if err != nil {
 		errorResponse(c, err.Error(), 400)
 		return
@@ -448,7 +446,7 @@ func (h *Handler) GrantAdmin(c *gin.Context) {
 // RevokeAdmin handle revoke admin role
 func (h *Handler) RevokeAdmin(c *gin.Context) {
 	encodedUsername := c.Param("username")
-	username, err := common.DecodeEmail(encodedUsername)
+	username, err := common.DecodeFromBase64(encodedUsername)
 	if err != nil {
 		errorResponse(c, err.Error(), 400)
 		return
@@ -476,7 +474,7 @@ func (h *Handler) RevokeAdmin(c *gin.Context) {
 // ListUserAPITokens handle get user API keys
 func (h *Handler) ListUserAPITokens(c *gin.Context) {
 	encodedUsername := c.Param("username")
-	username, err := common.DecodeEmail(encodedUsername)
+	username, err := common.DecodeFromBase64(encodedUsername)
 	if err != nil {
 		errorResponse(c, err.Error(), 400)
 		return
@@ -498,7 +496,7 @@ func (h *Handler) ListUserAPITokens(c *gin.Context) {
 // GenerateUserAPIToken handle generate user API key
 func (h *Handler) GenerateUserAPIToken(c *gin.Context) {
 	encodedUsername := c.Param("username")
-	username, err := common.DecodeEmail(encodedUsername)
+	username, err := common.DecodeFromBase64(encodedUsername)
 	if err != nil {
 		errorResponse(c, err.Error(), 400)
 		return
@@ -520,7 +518,7 @@ func (h *Handler) GenerateUserAPIToken(c *gin.Context) {
 // DeleteUserAPIToken handle delete user API key
 func (h *Handler) DeleteUserAPIToken(c *gin.Context) {
 	encodedUsername := c.Param("username")
-	username, err := common.DecodeEmail(encodedUsername)
+	username, err := common.DecodeFromBase64(encodedUsername)
 	if err != nil {
 		errorResponse(c, err.Error(), 400)
 		return
@@ -622,6 +620,23 @@ func (h *Handler) ShutdownService(c *gin.Context) {
 	success(c, result, "")
 }
 
+// StartService handle start service
+func (h *Handler) StartService(c *gin.Context) {
+	serviceID := c.Param("service_id")
+	if serviceID == "" {
+		errorResponse(c, "Service ID is required", 400)
+		return
+	}
+
+	result, err := h.service.StartService(serviceID)
+	if err != nil {
+		errorResponse(c, err.Error(), 500)
+		return
+	}
+
+	success(c, result, "")
+}
+
 // RestartService handle restart service
 func (h *Handler) RestartService(c *gin.Context) {
 	serviceID := c.Param("service_id")
@@ -637,115 +652,6 @@ func (h *Handler) RestartService(c *gin.Context) {
 	}
 
 	success(c, result, "")
-}
-
-func (h *Handler) ListProviders(c *gin.Context) {
-
-	keywords := ""
-	if queryKeywords := c.Query("available"); queryKeywords != "" {
-		keywords = queryKeywords
-	}
-
-	// convert keywords to small case
-	keywords = strings.ToLower(keywords)
-	if keywords == "true" {
-		// list pool providers
-		providers, err := dao.GetModelProviderManager().ListProviders()
-		if err != nil {
-			c.JSON(http.StatusOK, gin.H{
-				"code":    common.CodeNotFound,
-				"message": err.Error(),
-			})
-			return
-		}
-
-		c.JSON(http.StatusOK, gin.H{
-			"code":    0,
-			"message": "success",
-			"data":    providers,
-		})
-	}
-}
-
-func (h *Handler) ShowProvider(c *gin.Context) {
-	providerName := c.Param("provider_name")
-	if providerName == "" {
-		c.JSON(http.StatusBadRequest, gin.H{
-			"code":    400,
-			"message": "Provider name is required",
-		})
-		return
-	}
-
-	provider, err := dao.GetModelProviderManager().GetProviderByName(providerName)
-	if err != nil {
-		c.JSON(http.StatusOK, gin.H{
-			"code":    common.CodeNotFound,
-			"message": err.Error(),
-		})
-		return
-	}
-	c.JSON(http.StatusOK, gin.H{
-		"code":    0,
-		"message": "success",
-		"data":    provider,
-	})
-}
-
-func (h *Handler) ListModels(c *gin.Context) {
-	providerName := c.Param("provider_name")
-	if providerName == "" {
-		c.JSON(http.StatusBadRequest, gin.H{
-			"code":    400,
-			"message": "Provider name is required",
-		})
-		return
-	}
-	models, err := dao.GetModelProviderManager().ListModels(providerName)
-	if err != nil {
-		c.JSON(http.StatusOK, gin.H{
-			"code":    common.CodeNotFound,
-			"message": err.Error(),
-		})
-		return
-	}
-	c.JSON(http.StatusOK, gin.H{
-		"code":    0,
-		"message": "success",
-		"data":    models,
-	})
-}
-
-func (h *Handler) ShowModel(c *gin.Context) {
-	providerName := c.Param("provider_name")
-	if providerName == "" {
-		c.JSON(http.StatusBadRequest, gin.H{
-			"code":    400,
-			"message": "Provider name is required",
-		})
-		return
-	}
-	modelName := c.Param("model_name")
-	if modelName == "" {
-		c.JSON(http.StatusBadRequest, gin.H{
-			"code":    400,
-			"message": "Model name is required",
-		})
-		return
-	}
-	model, err := dao.GetModelProviderManager().GetModelByName(providerName, modelName)
-	if err != nil {
-		c.JSON(http.StatusOK, gin.H{
-			"code":    common.CodeNotFound,
-			"message": err.Error(),
-		})
-		return
-	}
-	c.JSON(http.StatusOK, gin.H{
-		"code":    0,
-		"message": "success",
-		"data":    model,
-	})
 }
 
 // ListVariables handle list variables
