@@ -1296,8 +1296,8 @@ class ChatChannel(DataBaseModel):
     name = CharField(max_length=128, null=False, help_text="Bot name", index=False)
     channel = CharField(max_length=128, null=False, help_text="Chat channel type", index=True)
     config = JSONField(null=False, default={}, help_text="Channel credential & settings")
-    dialog_id = CharField(max_length=32, null=True, default=None, help_text="connected dialog id", index=True)
-    status = CharField(max_length=16, null=True, help_text="1: valid, 0: invalid", default="1", index=True)
+    chat_id = CharField(max_length=32, null=True, default=None, help_text="connected chat id", index=True)
+    status = IntegerField(default=1, index=True)
 
     def __str__(self):
         return self.name
@@ -1984,6 +1984,8 @@ def migrate_db():
     _init_org_billing_periods()
     # Upstream TenantModel* migrations.
     alter_db_add_column(migrator, "tenant", "ocr_id", CharField(max_length=128, null=True, help_text="default ocr model ID", index=True))
+    alter_db_column_type(migrator, "chat_channel", "status", IntegerField(default=1, index=True))
+    alter_db_rename_column(migrator, "chat_channel", "dialog_id", "chat_id")
     # Drop both the explicit "idx_*" name from later migrations AND the
     # Peewee-auto-derived "<table-as-classname>_<col1>_<col2>" name from the
     # original TenantModelInstance definition (commit dc4b82523). Databases
