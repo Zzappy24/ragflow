@@ -159,6 +159,27 @@ spec:
             # in-pod CONCURRENCY (asyncio semaphore size).
             - name: WORKER_RECYCLE_AFTER_TASKS
               value: {{ .Values.recycleAfterTasks | quote }}
+            # WORKER_MAX_TASKS — asyncio semaphore size, controls how many
+            # tasks the pod processes in parallel. Upstream default = 16,
+            # which is FATAL with the OCR_GPU_MEM_LIMIT_MB default of 2GB
+            # — 2+ parallel tasks ONNX-OOM on a 96 GB Blackwell. Tune
+            # together with OCR_GPU_MEM_LIMIT_MB below: each task can
+            # use up to 4 × OCR_GPU_MEM_LIMIT_MB (det/rec/layout/tsr
+            # sessions), so the pod's max GPU footprint =
+            # WORKER_MAX_TASKS × 4 × OCR_GPU_MEM_LIMIT_MB. Keep that
+            # under the available GPU memory per slot (24 GB with
+            # time-slicing replicas=4 on a 96 GB Blackwell).
+            - name: WORKER_MAX_TASKS
+              value: {{ .Values.workerMaxTasks | default "1" | quote }}
+            # OCR_GPU_MEM_LIMIT_MB — DeepDoc env var (deepdoc/vision/
+            # ocr.py:107) that caps the BFC arena per ONNX session.
+            # Default 2048 (2 GB) is the source of the recurring OOM on
+            # Blackwell when several tasks run in parallel. Bumping to
+            # 8192 gives each session 8 GB headroom; arenas grow
+            # power-of-two on demand and stay small in practice
+            # (~500 MB per session), so this is a cap, not a reserve.
+            - name: OCR_GPU_MEM_LIMIT_MB
+              value: {{ .Values.ocrGpuMemLimitMb | default "8192" | quote }}
             {{- if .Values.livenessProbe.enabled }}
             - name: WORKER_HEARTBEAT_FILE
               value: {{ .Values.livenessProbe.heartbeatFile | quote }}
