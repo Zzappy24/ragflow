@@ -25,7 +25,7 @@ kaniko_build_prd:
           IMAGE_TAG="$CI_COMMIT_SHORT_SHA"
         fi
       - set -x
-      - echo "{\"auths\":{\"goharbor-cylndata-prod-core.goharbor.svc.cluster.local:80\":{\"username\":\"$HARBOR_CYLNDATA_ROBOT_PRD\",\"password\":\"$HARBOR_CYLNDATA_ROBOT_PWD_PRD\"}}}" > /kaniko/.docker/config.json
+      - echo "{\"auths\":{\"harbor.cylndata.cyllene.pro\":{\"username\":\"$HARBOR_CYLNDATA_ROBOT_PRD\",\"password\":\"$HARBOR_CYLNDATA_ROBOT_PWD_PRD\"}}}" > /kaniko/.docker/config.json
       # Cache désactivé pour le main job : le transfert du cache (10 GB
        # d'image fat) vers Harbor prend >2h alors que sans cache le build
        # tourne en ~1h10. Le bottleneck est la bande passante Harbor, pas
@@ -52,7 +52,7 @@ kaniko_build_prd:
           --build-arg VERSION_INFO="${IMAGE_TAG}" \
           --context "${CI_PROJECT_DIR}" \
           --dockerfile "Dockerfile" \
-          --destination "goharbor-cylndata-prod-core.goharbor.svc.cluster.local:80/${HARBOR_PROJECT}/${IMAGE_NAME}:${IMAGE_TAG}"
+          --destination "harbor.cylndata.cyllene.pro/${HARBOR_PROJECT}/${IMAGE_NAME}:${IMAGE_TAG}"
   when: manual
 
 # =============================================================================
@@ -80,11 +80,11 @@ kaniko_build_mgmt_prd:
           IMAGE_TAG="$CI_COMMIT_SHORT_SHA"
         fi
       - set -x
-      - echo "{\"auths\":{\"goharbor-cylndata-prod-core.goharbor.svc.cluster.local:80\":{\"username\":\"$HARBOR_CYLNDATA_ROBOT_PRD\",\"password\":\"$HARBOR_CYLNDATA_ROBOT_PWD_PRD\"}}}" > /kaniko/.docker/config.json
+      - echo "{\"auths\":{\"harbor.cylndata.cyllene.pro\":{\"username\":\"$HARBOR_CYLNDATA_ROBOT_PRD\",\"password\":\"$HARBOR_CYLNDATA_ROBOT_PWD_PRD\"}}}" > /kaniko/.docker/config.json
       - |
         /kaniko/executor \
           --cache=true \
-          --cache-repo "goharbor-cylndata-prod-core.goharbor.svc.cluster.local:80/${HARBOR_PROJECT}/${IMAGE_NAME}-mgmt/cache" \
+          --cache-repo "harbor.cylndata.cyllene.pro/${HARBOR_PROJECT}/${IMAGE_NAME}-mgmt/cache" \
           --compressed-caching=false \
           --insecure=true \
           --skip-tls-verify=true \
@@ -94,7 +94,7 @@ kaniko_build_mgmt_prd:
           --build-arg VERSION_INFO="${IMAGE_TAG}" \
           --context "${CI_PROJECT_DIR}" \
           --dockerfile "Dockerfile.management" \
-          --destination "goharbor-cylndata-prod-core.goharbor.svc.cluster.local:80/${HARBOR_PROJECT}/${IMAGE_NAME}-mgmt:${IMAGE_TAG}"
+          --destination "harbor.cylndata.cyllene.pro/${HARBOR_PROJECT}/${IMAGE_NAME}-mgmt:${IMAGE_TAG}"
   when: manual
 
 # =============================================================================
@@ -116,11 +116,11 @@ kaniko_build_mgmt_frontend_prd:
           IMAGE_TAG="$CI_COMMIT_SHORT_SHA"
         fi
       - set -x
-      - echo "{\"auths\":{\"goharbor-cylndata-prod-core.goharbor.svc.cluster.local:80\":{\"username\":\"$HARBOR_CYLNDATA_ROBOT_PRD\",\"password\":\"$HARBOR_CYLNDATA_ROBOT_PWD_PRD\"}}}" > /kaniko/.docker/config.json
+      - echo "{\"auths\":{\"harbor.cylndata.cyllene.pro\":{\"username\":\"$HARBOR_CYLNDATA_ROBOT_PRD\",\"password\":\"$HARBOR_CYLNDATA_ROBOT_PWD_PRD\"}}}" > /kaniko/.docker/config.json
       - |
         /kaniko/executor \
           --cache=true \
-          --cache-repo "goharbor-cylndata-prod-core.goharbor.svc.cluster.local:80/${HARBOR_PROJECT}/${IMAGE_NAME}-mgmt-frontend/cache" \
+          --cache-repo "harbor.cylndata.cyllene.pro/${HARBOR_PROJECT}/${IMAGE_NAME}-mgmt-frontend/cache" \
           --compressed-caching=false \
           --insecure=true \
           --skip-tls-verify=true \
@@ -130,7 +130,7 @@ kaniko_build_mgmt_frontend_prd:
           --build-arg VERSION_INFO="${IMAGE_TAG}" \
           --context "${CI_PROJECT_DIR}" \
           --dockerfile "Dockerfile.management-frontend" \
-          --destination "goharbor-cylndata-prod-core.goharbor.svc.cluster.local:80/${HARBOR_PROJECT}/${IMAGE_NAME}-mgmt-frontend:${IMAGE_TAG}"
+          --destination "harbor.cylndata.cyllene.pro/${HARBOR_PROJECT}/${IMAGE_NAME}-mgmt-frontend:${IMAGE_TAG}"
   when: manual
 
 # =============================================================================
