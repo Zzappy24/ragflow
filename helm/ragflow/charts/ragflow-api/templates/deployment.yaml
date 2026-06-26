@@ -102,7 +102,15 @@ spec:
               apk add --no-cache gettext >/dev/null 2>&1 || true
               envsubst < /conf-template/service_conf.yaml.template > /conf-rendered/local.service_conf.yaml
               echo "rendered:" && cat /conf-rendered/local.service_conf.yaml
+          # Charge ConfigMap + Secret pour qu'envsubst voie TOUTES les
+          # variables du template (MINIO_HOST, MYSQL_HOST, INFINITY_HOST,
+          # REDIS_HOST viennent du ConfigMap ; seuls les mots de passe
+          # viennent du Secret). Sans configMapRef ici, ${MINIO_HOST}
+          # restait vide → host=null parsé en YAML → TypeError dans
+          # Minio() au premier accès objet. task-executor a déjà les 2.
           envFrom:
+            - configMapRef:
+                name: {{ .Release.Name }}-app-config
             - secretRef:
                 name: ragflow-app-secrets
           volumeMounts:
