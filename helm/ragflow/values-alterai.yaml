@@ -65,6 +65,18 @@ ragflow-task-executor:
   # CUDAExecutionProvider in onnxruntime. Without it, onnxruntime falls
   # back to CPU even when the pod has nvidia.com/gpu allocated.
   device: "gpu"
+  # 4 tasks parallèles par pod. Possible parce qu'on bump
+  # OCR_GPU_MEM_LIMIT_MB à 8192 (8 GB par session ONNX, arena BFC).
+  # Footprint max théorique = 4 tasks × 4 sessions × 8 GB = 128 GB cap,
+  # mais en pratique ~10-20 GB réel (arenas grossissent à la demande).
+  # Tient large dans un slot 24 GB time-slicing (4 GPUs × 4 replicas).
+  workerMaxTasks: "4"
+  # Bumpe le cap arena BFC par session ONNX de 2 GB (default DeepDoc)
+  # à 8 GB. C'est le fix au problème "Available memory of 1048576 is
+  # smaller than requested bytes of N" qu'on voyait sur les PDFs un
+  # peu lourds. C'est un PLAFOND, pas une réservation — les arenas
+  # grossissent power-of-two à la demande.
+  ocrGpuMemLimitMb: "8192"
   resources:
     requests:
       cpu: "1000m"
@@ -86,8 +98,15 @@ ragflow-task-executor:
     - key: nvidia.com/gpu
       operator: Exists
       effect: NoSchedule
-  # Node alteraiworkergpt1 has 4x RTX PRO 6000 Blackwell — scale up to
-  # 4 workers in parallel (1 GPU per pod). Beyond 4 = Pending.
+  # Node alteraiworkergpt1 has 4x RTX PRO 6000 Blackwell (96 GB each).
+  # Sans time-slicing GPU activé sur le node, K8s alloue chaque GPU en
+  # exclusif. Comme vLLM occupe déjà 3 GPUs (qwen + bge-m3 + reranker),
+  # seul 1 GPU est dispo pour ragflow → maxReplicas effectif = 1.
+  # Une fois time-slicing activé (devops, sharing.timeSlicing.replicas=4),
+  # le node expose 16 slots GPU virtuels et ragflow peut scale à 4.
+  # En attendant, on garde minReplicas=1 (1 task à la fois, mais pas
+  # d'OOM 2GB) et maxReplicas=4 pour ne pas avoir à re-déployer après
+  # le fix devops.
   keda:
     minReplicas: 1
     maxReplicas: 4

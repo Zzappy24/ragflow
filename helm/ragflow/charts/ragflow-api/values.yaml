@@ -56,11 +56,14 @@ probes:
     path: /healthz
     periodSeconds: 10
     failureThreshold: 600       # 600s total budget for first boot
+    timeoutSeconds: 5           # K8s default 1s is too tight under load
   liveness:
     path: /healthz
     periodSeconds: 15
     failureThreshold: 60         # 60s tolerance once started
+    timeoutSeconds: 5
   readiness:
     path: /readyz               # checks Redis + MariaDB are reachable
     periodSeconds: 10
     failureThreshold: 3
+    timeoutSeconds: 5
