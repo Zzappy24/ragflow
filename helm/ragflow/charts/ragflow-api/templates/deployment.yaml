@@ -114,12 +114,18 @@ spec:
           resources:
             {{- toYaml .Values.resources | nindent 12 }}
 
+          # timeoutSeconds: K8s default is 1s, far too tight when the
+          # single hypercorn worker is also serving real traffic. A long
+          # /api/v1/* request blocks the probe in queue → kubelet marks
+          # the pod NotReady even though it's healthy. 5s gives enough
+          # slack without masking a real crash.
           startupProbe:
             httpGet:
               path: {{ .Values.probes.startup.path }}
               port: http
             periodSeconds: {{ .Values.probes.startup.periodSeconds }}
             failureThreshold: {{ .Values.probes.startup.failureThreshold }}
+            timeoutSeconds: {{ .Values.probes.startup.timeoutSeconds | default 5 }}
 
           livenessProbe:
             httpGet:
@@ -127,6 +133,7 @@ spec:
               port: http
             periodSeconds: {{ .Values.probes.liveness.periodSeconds }}
             failureThreshold: {{ .Values.probes.liveness.failureThreshold }}
+            timeoutSeconds: {{ .Values.probes.liveness.timeoutSeconds | default 5 }}
 
           readinessProbe:
             httpGet:
@@ -134,6 +141,7 @@ spec:
               port: http
             periodSeconds: {{ .Values.probes.readiness.periodSeconds }}
             failureThreshold: {{ .Values.probes.readiness.failureThreshold }}
+            timeoutSeconds: {{ .Values.probes.readiness.timeoutSeconds | default 5 }}
 
           securityContext:
             allowPrivilegeEscalation: false
