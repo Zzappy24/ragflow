@@ -196,6 +196,18 @@ EXEMPT: set[tuple[str, str]] = {
     ("api/apps/backward_compat.py", "deprecated_file_upload_info"),
     ("api/apps/backward_compat.py", "deprecated_related_questions"),
     ("api/apps/backward_compat.py", "deprecated_update_chunk"),
+    # Upstream-added (PR #16263) legacy alias for document upload info —
+    # delegates to the modern route which IS @require_permission-gated,
+    # so the backward-compat wrapper inherits the same guard at runtime.
+    ("api/apps/backward_compat.py", "deprecated_legacy_document_upload_info"),
+
+    # --- internal service-to-service endpoints ---
+    # CUSTOM B2B SaaS — protected by X-Internal-Secret shared secret (not
+    # user JWT). Called by the slim ragflow-mgmt image to delegate /verify
+    # to the main api which has rag.llm installed. Auth is enforced inside
+    # the handler via _check_internal_secret() with hmac.compare_digest;
+    # bypassing @require_permission is intentional (no user session).
+    ("api/apps/restful_apis/internal_api.py", "internal_llm_verify"),
 }
 
 

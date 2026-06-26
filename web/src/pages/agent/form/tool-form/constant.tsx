@@ -8,9 +8,8 @@ import ExeSQLForm from './exesql-form';
 import GithubForm from './github-form';
 import GoogleForm from './google-form';
 import GoogleScholarForm from './google-scholar-form';
+import KeenableForm from './keenable-form';
 import PubMedForm from './pubmed-form';
-// CUSTOM B2B SaaS
-import RenderDocxTemplateForm from './render-docx-template-form';
 import RetrievalForm from './retrieval-form';
 import SearXNGForm from './searxng-form';
 import TavilyForm from './tavily-form';
@@ -37,6 +36,5 @@ export const ToolFormConfigMap = {
   [Operator.TavilyExtract]: TavilyForm,
   [Operator.WenCai]: WenCaiForm,
   [Operator.SearXNG]: SearXNGForm,
-  // CUSTOM B2B SaaS
-  [Operator.RenderDocxTemplate]: RenderDocxTemplateForm,
+  [Operator.KeenableSearch]: KeenableForm,
 };

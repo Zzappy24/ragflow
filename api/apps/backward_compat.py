@@ -27,6 +27,7 @@ Deprecated APIs and their replacements:
 - PUT /api/v1/chats/{chat_id}/sessions/{session_id} -> PATCH /api/v1/chats/{chat_id}/sessions/{session_id}
 - DELETE /api/v1/chats -> DELETE /api/v1/chats/{chat_id} (with body)
 - POST /api/v1/file/convert -> POST /api/v1/files/link-to-datasets
+- POST /v1/document/upload_info -> POST /api/v1/documents/upload
 - GET /api/v1/file/* -> GET /api/v1/files*
 - POST /api/v1/file/* -> POST /api/v1/files*
 - GET /api/v1/document/get/{doc_id} -> GET /api/v1/documents/{doc_id}/preview
@@ -49,6 +50,11 @@ from api.utils.api_utils import get_data_error_result, get_json_result, add_tena
 
 manager = Blueprint("backward_compat", __name__)
 document_download_manager = Blueprint("backward_compat_document_download", __name__)
+# CUSTOM B2B SaaS — upstream PR #16264 (June 2026) added new /v1 legacy
+# routes (e.g. /v1/document/upload_info) decorated with @legacy_v1_manager,
+# but they share the same Blueprint scope as our document_download_manager.
+# Aliasing keeps both naming conventions working without duplicating routes.
+legacy_v1_manager = document_download_manager
 
 
 # =============================================================================
@@ -398,6 +404,25 @@ async def deprecated_file_upload_info():
     )
     # Forward to the new API implementation
     # Need to pass tenant_id explicitly since we're calling the function directly
+    tenant_id = current_user.id
+    return await document_api.upload_info(tenant_id=tenant_id)
+
+
+@legacy_v1_manager.route("/document/upload_info", methods=["POST"])
+@login_required
+async def deprecated_legacy_document_upload_info():
+    """
+    Deprecated: Use POST /api/v1/documents/upload instead.
+
+    Old path: POST /v1/document/upload_info
+    New path: POST /api/v1/documents/upload
+    """
+    from api.apps import current_user
+
+    logging.warning(
+        "API endpoint /v1/document/upload_info is deprecated. "
+        "Please use POST /api/v1/documents/upload instead."
+    )
     tenant_id = current_user.id
     return await document_api.upload_info(tenant_id=tenant_id)
 
