@@ -57,6 +57,15 @@ EXEMPT_FRONTEND_ENDPOINTS: set[str] = {
     "googleWebAuthResult",
     "boxWebAuthStart",
     "boxWebAuthResult",
+
+    # chatChannelRuntime: upstream PR (June 2026) introduced a chat-channels
+    # feature (connect chat assistants to Slack/Discord/Teams/etc.) — the
+    # frontend hook /api/v1/chat-channels/{id}/runtime is shipped but the
+    # corresponding backend route is not yet wired in upstream. We don't
+    # surface chat-channels in the Cyllene UI (gated behind unset
+    # CHAT_CHANNELS_ENABLED env), so a 404 is the expected behaviour for us.
+    # Re-enable when upstream wires the backend route.
+    "chatChannelRuntime",
     # deleteMemoryMessage / getMessageContent / updateMessageState:
     # URL contains a colon-separated composite ID (memory_id:message_id).
     # Substituting with UUID:UUID produces a URL the Flask router sees as a

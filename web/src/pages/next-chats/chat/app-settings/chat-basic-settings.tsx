@@ -12,38 +12,48 @@ import {
 } from '@/components/ui/form';
 import { Textarea } from '@/components/ui/textarea';
 import { useTranslate } from '@/hooks/common-hooks';
-import { useFetchUserInfo } from '@/hooks/use-user-setting-request';
+import { prefixName } from '@/utils/form';
 import { getDirAttribute } from '@/utils/text-direction';
 import { useFormContext, useWatch } from 'react-hook-form';
 
-export default function ChatBasicSetting() {
+interface ChatBasicSettingProps {
+  prefix?: string;
+  option?: Record<string, any>;
+  hideName?: boolean;
+}
+
+export default function ChatBasicSetting({
+  prefix = '',
+  hideName = false,
+}: ChatBasicSettingProps) {
   const { t } = useTranslate('chat');
   const form = useFormContext();
-  // CUSTOM B2B SaaS — model settings are restricted to workspace admins
-  // (mirrors the previous wrap around the legacy ChatModelSettings component
-  // that upstream merged into ChatBasicSetting in #16024).
-  const { data: userInfo } = useFetchUserInfo();
-  const isWsAdmin = userInfo?.ws_role === 'ws_admin';
 
   const prologueValue = useWatch({
     control: form.control,
-    name: 'prompt_config.prologue',
+    name: prefixName(prefix, 'prompt_config.prologue'),
   });
+
+  const llmSettingPrefix = prefixName(prefix, 'llm_setting');
 
   return (
     <div className="space-y-8">
-      <AvatarNameDescription />
-      {isWsAdmin && (
-        <LlmSettingFieldItems
-          prefix="llm_setting"
-          llmId="llm_id"
-          showCollapse
-        ></LlmSettingFieldItems>
+      {hideName || (
+        <AvatarNameDescription
+          avatarField={prefixName(prefix, 'icon')}
+          nameField={prefixName(prefix, 'name')}
+          descriptionField={prefixName(prefix, 'description')}
+        />
       )}
+      <LlmSettingFieldItems
+        prefix={llmSettingPrefix}
+        llmId={prefixName(prefix, 'llm_id')}
+        showCollapse
+      ></LlmSettingFieldItems>
 
       <FormField
         control={form.control}
-        name={'prompt_config.prologue'}
+        name={prefixName(prefix, 'prompt_config.prologue')}
         render={({ field }) => (
           <FormItem>
             <FormLabel tooltip={t('setAnOpenerTip')}>
@@ -59,8 +69,9 @@ export default function ChatBasicSetting() {
           </FormItem>
         )}
       />
-
-      <KnowledgeBaseFormField></KnowledgeBaseFormField>
+      <KnowledgeBaseFormField
+        name={prefixName(prefix, 'dataset_ids')}
+      ></KnowledgeBaseFormField>
     </div>
   );
 }
