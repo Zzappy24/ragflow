@@ -43,6 +43,14 @@ export function useImageBlobUrl(id: string, t?: string | number) {
   return useAuthBlobUrl(`/api/v1/documents/images/${id}${t ? `?_t=${t}` : ''}`);
 }
 
+// CUSTOM B2B SaaS — alias compatible avec l'export upstream `useDocumentImageUrl`
+// introduit dans #16152. Upstream construit l'URL et fait un fetch direct ;
+// notre version (`useImageBlobUrl`) fait un fetch authentifié et renvoie un
+// blob URL pour respecter le contrat X-Workspace-Id du middleware api. Le
+// résultat (string URL utilisable dans <img src>) est identique côté
+// consommateurs (`reference-image-list.tsx` et autres).
+export const useDocumentImageUrl = useImageBlobUrl;
+
 export function useThumbnailBlobUrl(thumbnailUrl: string) {
   return useAuthBlobUrl(thumbnailUrl);
 }
