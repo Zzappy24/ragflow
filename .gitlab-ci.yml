@@ -14,34 +14,29 @@ stages:
 kaniko_build_prd:
   stage: build_prd
   tags:
-    - cylndata-prod
+    - alterai-prod
   script:
-      - |
-        if [ -n "$CI_COMMIT_TAG" ]; then
-          echo "Utilisation du tag Git comme tag d'image: $CI_COMMIT_TAG"
-          IMAGE_TAG="$CI_COMMIT_TAG"
-        else
-          echo "Pas de tag Git. Utilisation du SHA du commit comme tag d'image: $CI_COMMIT_SHORT_SHA"
-          IMAGE_TAG="$CI_COMMIT_SHORT_SHA"
-        fi
-      - set -x
-      - echo "{\"auths\":{\"goharbor-cylndata-prod-core.goharbor.svc.cluster.local:80\":{\"username\":\"$HARBOR_CYLNDATA_ROBOT_PRD\",\"password\":\"$HARBOR_CYLNDATA_ROBOT_PWD_PRD\"}}}" > /kaniko/.docker/config.json
-      - |
-        /kaniko/executor \
-          --cache=true \
-          --cache-repo "goharbor-cylndata-prod-core.goharbor.svc.cluster.local:80/${HARBOR_PROJECT}/${IMAGE_NAME}/cache" \
-          --compressed-caching=false \
-          --insecure=true \
-          --skip-tls-verify=true \
-          --snapshot-mode=redo \
-          --use-new-run \
-          --cleanup \
-          --build-arg VERSION_INFO="${IMAGE_TAG}" \
-          --context "${CI_PROJECT_DIR}" \
-          --dockerfile "Dockerfile" \
-          --destination "goharbor-cylndata-prod-core.goharbor.svc.cluster.local:80/${HARBOR_PROJECT}/${IMAGE_NAME}:${IMAGE_TAG}"
-          #--cache-repo "${HARBOR_REGISTRY_PROD}/${HARBOR_PROJECT}/${IMAGE_NAME}/cache" \
-          #--destination "${HARBOR_REGISTRY_PROD}/${HARBOR_PROJECT}/${IMAGE_NAME}:${IMAGE_TAG}"
+    - |
+      if [ -n "$CI_COMMIT_TAG" ]; then
+        echo "Utilisation du tag Git comme tag d'image: $CI_COMMIT_TAG"
+        IMAGE_TAG="$CI_COMMIT_TAG"
+      else
+        echo "Pas de tag Git. Utilisation du SHA du commit comme tag d'image: $CI_COMMIT_SHORT_SHA"
+        IMAGE_TAG="$CI_COMMIT_SHORT_SHA"
+      fi
+
+    - set -x
+
+    - echo "{\"auths\":{\"harbor.cylndata.cyllene.pro\":{\"username\":\"$HARBOR_CYLNDATA_ROBOT_PRD\",\"password\":\"$HARBOR_CYLNDATA_ROBOT_PWD_PRD\"}}}" > /kaniko/.docker/config.json
+
+    - |
+      /kaniko/executor \
+        --insecure=true \
+        --skip-tls-verify=true \
+        --build-arg VERSION_INFO="${IMAGE_TAG}" \
+        --context "${CI_PROJECT_DIR}" \
+        --dockerfile "Dockerfile" \
+        --destination "harbor.cylndata.cyllene.pro/${HARBOR_PROJECT}/${IMAGE_NAME}:${IMAGE_TAG}"
   when: manual
 
 # =============================================================================
@@ -58,7 +53,7 @@ kaniko_build_prd:
 kaniko_build_mgmt_prd:
   stage: build_prd
   tags:
-    - cylndata-prod
+    - alterai-prod
   script:
       - |
         if [ -n "$CI_COMMIT_TAG" ]; then
@@ -69,11 +64,11 @@ kaniko_build_mgmt_prd:
           IMAGE_TAG="$CI_COMMIT_SHORT_SHA"
         fi
       - set -x
-      - echo "{\"auths\":{\"goharbor-cylndata-prod-core.goharbor.svc.cluster.local:80\":{\"username\":\"$HARBOR_CYLNDATA_ROBOT_PRD\",\"password\":\"$HARBOR_CYLNDATA_ROBOT_PWD_PRD\"}}}" > /kaniko/.docker/config.json
+      - echo "{\"auths\":{\"harbor.cylndata.cyllene.pro\":{\"username\":\"$HARBOR_CYLNDATA_ROBOT_PRD\",\"password\":\"$HARBOR_CYLNDATA_ROBOT_PWD_PRD\"}}}" > /kaniko/.docker/config.json
       - |
         /kaniko/executor \
           --cache=true \
-          --cache-repo "goharbor-cylndata-prod-core.goharbor.svc.cluster.local:80/${HARBOR_PROJECT}/${IMAGE_NAME}-mgmt/cache" \
+          --cache-repo "harbor.cylndata.cyllene.pro/${HARBOR_PROJECT}/${IMAGE_NAME}-mgmt/cache" \
           --compressed-caching=false \
           --insecure=true \
           --skip-tls-verify=true \
@@ -83,7 +78,7 @@ kaniko_build_mgmt_prd:
           --build-arg VERSION_INFO="${IMAGE_TAG}" \
           --context "${CI_PROJECT_DIR}" \
           --dockerfile "Dockerfile.management" \
-          --destination "goharbor-cylndata-prod-core.goharbor.svc.cluster.local:80/${HARBOR_PROJECT}/${IMAGE_NAME}-mgmt:${IMAGE_TAG}"
+          --destination "harbor.cylndata.cyllene.pro/${HARBOR_PROJECT}/${IMAGE_NAME}-mgmt:${IMAGE_TAG}"
   when: manual
 
 # =============================================================================
@@ -96,7 +91,7 @@ kaniko_build_mgmt_prd:
 kaniko_build_mgmt_frontend_prd:
   stage: build_prd
   tags:
-    - cylndata-prod
+    - alterai-prod
   script:
       - |
         if [ -n "$CI_COMMIT_TAG" ]; then
@@ -105,11 +100,11 @@ kaniko_build_mgmt_frontend_prd:
           IMAGE_TAG="$CI_COMMIT_SHORT_SHA"
         fi
       - set -x
-      - echo "{\"auths\":{\"goharbor-cylndata-prod-core.goharbor.svc.cluster.local:80\":{\"username\":\"$HARBOR_CYLNDATA_ROBOT_PRD\",\"password\":\"$HARBOR_CYLNDATA_ROBOT_PWD_PRD\"}}}" > /kaniko/.docker/config.json
+      - echo "{\"auths\":{\"harbor.cylndata.cyllene.pro\":{\"username\":\"$HARBOR_CYLNDATA_ROBOT_PRD\",\"password\":\"$HARBOR_CYLNDATA_ROBOT_PWD_PRD\"}}}" > /kaniko/.docker/config.json
       - |
         /kaniko/executor \
           --cache=true \
-          --cache-repo "goharbor-cylndata-prod-core.goharbor.svc.cluster.local:80/${HARBOR_PROJECT}/${IMAGE_NAME}-mgmt-frontend/cache" \
+          --cache-repo "harbor.cylndata.cyllene.pro/${HARBOR_PROJECT}/${IMAGE_NAME}-mgmt-frontend/cache" \
           --compressed-caching=false \
           --insecure=true \
           --skip-tls-verify=true \
@@ -119,59 +114,5 @@ kaniko_build_mgmt_frontend_prd:
           --build-arg VERSION_INFO="${IMAGE_TAG}" \
           --context "${CI_PROJECT_DIR}" \
           --dockerfile "Dockerfile.management-frontend" \
-          --destination "goharbor-cylndata-prod-core.goharbor.svc.cluster.local:80/${HARBOR_PROJECT}/${IMAGE_NAME}-mgmt-frontend:${IMAGE_TAG}"
-  when: manual
-
-# =============================================================================
-#  buildkit_build_prd — main image avec BuildKit rootless (TEST)
-#  -----------------------------------------------------------------------------
-#  Le slim Dockerfile upstream (PR #15880) utilise `RUN --mount=type=bind`
-#  qui n'est pas supporté par Kaniko. BuildKit le supporte nativement et
-#  est aussi plus rapide + moins consommateur de disk pour ce style de
-#  Dockerfile (bind-mount sans duplication de couches).
-#
-#  Cohabite avec kaniko_build_prd — choisir un seul des deux quand on
-#  trigger. Si ce job passe en vert sur quelques builds, on peut retirer
-#  kaniko_build_prd.
-#
-#  Pas de privileged requis (rootless). Le runner config actuel
-#  (gitlab-runner-alterai-prod) n'autorise pas privileged donc rootless
-#  est la seule voie viable de toute façon.
-# =============================================================================
-buildkit_build_prd:
-  stage: build_prd
-  tags:
-    - alterai-prod
-  image:
-    name: moby/buildkit:v0.18.0-rootless
-    entrypoint: [""]
-  variables:
-    # rootless n'a pas accès au sandbox-process, on désactive
-    BUILDKITD_FLAGS: "--oci-worker-no-process-sandbox"
-  script:
-    - |
-      if [ -n "$CI_COMMIT_TAG" ]; then
-        echo "Tag git: $CI_COMMIT_TAG"
-        IMAGE_TAG="$CI_COMMIT_TAG"
-      else
-        echo "Pas de tag, SHA court: $CI_COMMIT_SHORT_SHA"
-        IMAGE_TAG="$CI_COMMIT_SHORT_SHA"
-      fi
-    - set -x
-    # Auth Harbor
-    - mkdir -p ~/.docker
-    - |
-      cat > ~/.docker/config.json <<EOF
-      {"auths":{"harbor.cylndata.cyllene.pro":{"username":"$HARBOR_CYLNDATA_ROBOT_PRD","password":"$HARBOR_CYLNDATA_ROBOT_PWD_PRD"}}}
-      EOF
-    # buildctl-daemonless.sh démarre buildkitd à la demande puis tourne
-    # buildctl contre. Plus simple que de gérer le daemon manuellement.
-    - |
-      buildctl-daemonless.sh build \
-        --frontend dockerfile.v0 \
-        --local context="${CI_PROJECT_DIR}" \
-        --local dockerfile="${CI_PROJECT_DIR}" \
-        --opt filename=Dockerfile \
-        --opt build-arg:VERSION_INFO="${IMAGE_TAG}" \
-        --output type=image,name=harbor.cylndata.cyllene.pro/${HARBOR_PROJECT}/${IMAGE_NAME}:${IMAGE_TAG},push=true,registry.insecure=true
+          --destination "harbor.cylndata.cyllene.pro/${HARBOR_PROJECT}/${IMAGE_NAME}-mgmt-frontend:${IMAGE_TAG}"
   when: manual
