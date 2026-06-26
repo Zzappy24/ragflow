@@ -16,27 +16,43 @@ kaniko_build_prd:
   tags:
     - alterai-prod
   script:
-    - |
-      if [ -n "$CI_COMMIT_TAG" ]; then
-        echo "Utilisation du tag Git comme tag d'image: $CI_COMMIT_TAG"
-        IMAGE_TAG="$CI_COMMIT_TAG"
-      else
-        echo "Pas de tag Git. Utilisation du SHA du commit comme tag d'image: $CI_COMMIT_SHORT_SHA"
-        IMAGE_TAG="$CI_COMMIT_SHORT_SHA"
-      fi
-
-    - set -x
-
-    - echo "{\"auths\":{\"harbor.cylndata.cyllene.pro\":{\"username\":\"$HARBOR_CYLNDATA_ROBOT_PRD\",\"password\":\"$HARBOR_CYLNDATA_ROBOT_PWD_PRD\"}}}" > /kaniko/.docker/config.json
-
-    - |
-      /kaniko/executor \
-        --insecure=true \
-        --skip-tls-verify=true \
-        --build-arg VERSION_INFO="${IMAGE_TAG}" \
-        --context "${CI_PROJECT_DIR}" \
-        --dockerfile "Dockerfile" \
-        --destination "harbor.cylndata.cyllene.pro/${HARBOR_PROJECT}/${IMAGE_NAME}:${IMAGE_TAG}"
+      - |
+        if [ -n "$CI_COMMIT_TAG" ]; then
+          echo "Utilisation du tag Git comme tag d'image: $CI_COMMIT_TAG"
+          IMAGE_TAG="$CI_COMMIT_TAG"
+        else
+          echo "Pas de tag Git. Utilisation du SHA du commit comme tag d'image: $CI_COMMIT_SHORT_SHA"
+          IMAGE_TAG="$CI_COMMIT_SHORT_SHA"
+        fi
+      - set -x
+      - echo "{\"auths\":{\"harbor.cylndata.cyllene.pro\":{\"username\":\"$HARBOR_CYLNDATA_ROBOT_PRD\",\"password\":\"$HARBOR_CYLNDATA_ROBOT_PWD_PRD\"}}}" > /kaniko/.docker/config.json
+      # Cache désactivé pour le main job : le transfert du cache (10 GB
+       # d'image fat) vers Harbor prend >2h alors que sans cache le build
+       # tourne en ~1h10. Le bottleneck est la bande passante Harbor, pas
+       # le CPU/disk Kaniko. Les options ci-dessous accélèrent Kaniko
+       # SANS toucher au cache :
+       #   --compressed-caching=false → cache en RAM (40 Gi dispo) au lieu
+       #     de disk, évite la saturation ephemeral-storage qui timeoutait
+       #     le runner à 33 GB.
+       #   --snapshot-mode=redo → snapshot ~30% plus rapide.
+       #   --use-new-run → exécution plus stable et un peu plus rapide.
+       #   --cleanup → cleanup intermédiaire des fichiers temporaires.
+       #   --push-retry=3 → retry sur fail réseau (Harbor étant lent).
+       # Les jobs mgmt GARDENT le cache : leurs images font ~700 MB, le
+       # cache vers Harbor est rapide → vraie économie sur les rebuilds.
+      - |
+        /kaniko/executor \
+          --compressed-caching=false \
+          --insecure=true \
+          --skip-tls-verify=true \
+          --snapshot-mode=redo \
+          --use-new-run \
+          --cleanup \
+          --push-retry=3 \
+          --build-arg VERSION_INFO="${IMAGE_TAG}" \
+          --context "${CI_PROJECT_DIR}" \
+          --dockerfile "Dockerfile" \
+          --destination "harbor.cylndata.cyllene.pro/${HARBOR_PROJECT}/${IMAGE_NAME}:${IMAGE_TAG}"
   when: manual
 
 # =============================================================================
@@ -117,7 +133,6 @@ kaniko_build_mgmt_frontend_prd:
           --destination "harbor.cylndata.cyllene.pro/${HARBOR_PROJECT}/${IMAGE_NAME}-mgmt-frontend:${IMAGE_TAG}"
   when: manual
 
-  
 # =============================================================================
 #  buildkit_build_prd — main image avec BuildKit rootless (TEST)
 #  -----------------------------------------------------------------------------
