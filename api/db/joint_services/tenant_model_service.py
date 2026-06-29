@@ -375,9 +375,28 @@ def get_model_config_from_provider_instance(tenant_id, model_type: str|enum.Enum
     # of an ORM row. Look up the matching legacy `tenant_llm` row by
     # (tenant, factory, llm_name) so token tracking keeps working. Once
     # upstream rewires the usage path to the new tables we can drop this.
-    legacy_row = TenantLLMService.get_api_key(tenant_id, model_name, model_type_val)
-    if legacy_row is None:
-        legacy_row = TenantLLMService.get_api_key(tenant_id, pure_model_name, model_type_val)
+    #
+    # Don't go through `TenantLLMService.get_api_key`: in our production K8s
+    # env `settings.FACTORY_LLM_INFOS` is None (we never call
+    # `init_llm_factory` — by design, see CLAUDE.md), so
+    # `split_model_name_and_factory` raises on the 2-part form and the
+    # `___<factory>` suffix fallback never fires. The 3-part input format
+    # `name@instance@factory` is also mishandled (`@instance` stays glued
+    # to the model name). Query the legacy table directly with both
+    # candidate names (some rows store the bare name, others the
+    # `name___<factory>` form depending on when they were inserted).
+    _TLLM = TenantLLMService.model
+    candidate_names = [pure_model_name]
+    if provider_name:
+        candidate_names.append(f"{pure_model_name}___{provider_name}")
+    legacy_q = _TLLM.select().where(
+        (_TLLM.tenant_id == tenant_id)
+        & (_TLLM.model_type == model_type_val)
+        & (_TLLM.llm_name.in_(candidate_names))
+    )
+    if provider_name:
+        legacy_q = legacy_q.where(_TLLM.llm_factory == provider_name)
+    legacy_row = legacy_q.first()
     legacy_id = legacy_row.id if legacy_row else None
 
     if model_obj:

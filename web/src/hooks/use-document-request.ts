@@ -129,11 +129,12 @@ export const useFetchDocumentList = (loop = true) => {
   const debouncedSearchString = useDebounce(searchString, { wait: 500 });
   const { filterValue, handleFilterSubmit, checkValue } =
     useHandleFilterSubmit();
-  const [docs, setDocs] = useState<IDocumentInfo[]>([]);
-
   const isLoop = useMemo(() => {
-    return loop && docs.some((doc) => doc.run === RunningStatus.RUNNING);
-  }, [docs, loop]);
+    return (
+      loop &&
+      (data?.docs ?? []).some((doc) => doc.run === RunningStatus.RUNNING)
+    );
+  }, [data?.docs, loop]);
 
   const { data, isFetching: loading } = useQuery<{
     docs: IDocumentInfo[];
@@ -191,9 +192,6 @@ export const useFetchDocumentList = (loop = true) => {
       };
     },
   });
-  useMemo(() => {
-    setDocs(data.docs);
-  }, [data.docs]);
   const onInputChange: React.ChangeEventHandler<HTMLInputElement> = useCallback(
     (e) => {
       setPagination({ page: 1 });
