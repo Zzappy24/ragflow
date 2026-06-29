@@ -57,6 +57,13 @@ class InfinityConnectionPool:
             host, port = infinity_uri.split(":")
             self.infinity_uri = infinity.common.NetworkAddress(host, int(port))
 
+        # CUSTOM B2B SaaS — Wrap the health probe in a thread+timeout so a
+        # degraded Infinity (TCP up, gRPC unresponsive — observed on
+        # 2026-06-29: Infinity stuck in compact/optimize loop) doesn't
+        # block the boot indefinitely. Without this, `show_current_node()`
+        # has no timeout in the upstream lib, the API worker hangs forever,
+        # K8s startup probe fails but never logs a clear cause.
+        import concurrent.futures
         self.conn_pool = None
         for _ in range(24):
             conn_pool = None
@@ -64,20 +71,31 @@ class InfinityConnectionPool:
             try:
                 conn_pool = ConnectionPool(self.infinity_uri, max_size=self.pool_max_size)
                 inf_conn = conn_pool.get_conn()
-                res = inf_conn.show_current_node()
+                with concurrent.futures.ThreadPoolExecutor(max_workers=1) as ex:
+                    fut = ex.submit(inf_conn.show_current_node)
+                    res = fut.result(timeout=5)
                 if res.error_code == ErrorCode.OK and res.server_status in ["started", "alive"]:
                     self.conn_pool = conn_pool
                     break
                 logging.warning(f"Infinity status: {res.server_status}. Waiting Infinity {infinity_uri} to be healthy.")
+                time.sleep(5)
+            except concurrent.futures.TimeoutError:
+                logging.warning(f"Infinity {infinity_uri} gRPC unresponsive after 5s (TCP may be up). Retrying...")
                 time.sleep(5)
             except Exception as e:
                 logging.warning(f"{str(e)}. Waiting Infinity {infinity_uri} to be healthy.")
                 time.sleep(5)
             finally:
                 if inf_conn is not None and conn_pool is not None:
-                    conn_pool.release_conn(inf_conn)
+                    try:
+                        conn_pool.release_conn(inf_conn)
+                    except Exception:
+                        pass
                 if conn_pool is not None and conn_pool is not self.conn_pool:
-                    conn_pool.destroy()
+                    try:
+                        conn_pool.destroy()
+                    except Exception:
+                        pass
 
         if self.conn_pool is None:
             msg = f"Infinity {infinity_uri} is unhealthy in 120s."
