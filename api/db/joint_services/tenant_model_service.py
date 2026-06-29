@@ -385,14 +385,21 @@ def get_model_config_from_provider_instance(tenant_id, model_type: str|enum.Enum
     # to the model name). Query the legacy table directly with both
     # candidate names (some rows store the bare name, others the
     # `name___<factory>` form depending on when they were inserted).
+    # Match either the bare model name OR any `name___<anything>` row —
+    # `get_api_key` rewrites the stored name with a provider-specific suffix
+    # (`___VLLM`, `___LocalAI`, `___HuggingFace`, `___OpenAI-API` for
+    # OpenAI-API-Compatible — note the suffix is NOT always == provider_name).
+    # Enumerating each case here would re-introduce the same drift trap.
+    # Scoping the `LIKE` to `llm_factory == provider_name` keeps the match
+    # unambiguous when multiple providers share a model name prefix.
     _TLLM = TenantLLMService.model
-    candidate_names = [pure_model_name]
+    name_match = _TLLM.llm_name == pure_model_name
     if provider_name:
-        candidate_names.append(f"{pure_model_name}___{provider_name}")
+        name_match = name_match | _TLLM.llm_name.startswith(f"{pure_model_name}___")
     legacy_q = _TLLM.select().where(
         (_TLLM.tenant_id == tenant_id)
         & (_TLLM.model_type == model_type_val)
-        & (_TLLM.llm_name.in_(candidate_names))
+        & name_match
     )
     if provider_name:
         legacy_q = legacy_q.where(_TLLM.llm_factory == provider_name)
