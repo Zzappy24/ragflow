@@ -375,9 +375,35 @@ def get_model_config_from_provider_instance(tenant_id, model_type: str|enum.Enum
     # of an ORM row. Look up the matching legacy `tenant_llm` row by
     # (tenant, factory, llm_name) so token tracking keeps working. Once
     # upstream rewires the usage path to the new tables we can drop this.
-    legacy_row = TenantLLMService.get_api_key(tenant_id, model_name, model_type_val)
-    if legacy_row is None:
-        legacy_row = TenantLLMService.get_api_key(tenant_id, pure_model_name, model_type_val)
+    #
+    # Don't go through `TenantLLMService.get_api_key`: in our production K8s
+    # env `settings.FACTORY_LLM_INFOS` is None (we never call
+    # `init_llm_factory` — by design, see CLAUDE.md), so
+    # `split_model_name_and_factory` raises on the 2-part form and the
+    # `___<factory>` suffix fallback never fires. The 3-part input format
+    # `name@instance@factory` is also mishandled (`@instance` stays glued
+    # to the model name). Query the legacy table directly with both
+    # candidate names (some rows store the bare name, others the
+    # `name___<factory>` form depending on when they were inserted).
+    # Match either the bare model name OR any `name___<anything>` row —
+    # `get_api_key` rewrites the stored name with a provider-specific suffix
+    # (`___VLLM`, `___LocalAI`, `___HuggingFace`, `___OpenAI-API` for
+    # OpenAI-API-Compatible — note the suffix is NOT always == provider_name).
+    # Enumerating each case here would re-introduce the same drift trap.
+    # Scoping the `LIKE` to `llm_factory == provider_name` keeps the match
+    # unambiguous when multiple providers share a model name prefix.
+    _TLLM = TenantLLMService.model
+    name_match = _TLLM.llm_name == pure_model_name
+    if provider_name:
+        name_match = name_match | _TLLM.llm_name.startswith(f"{pure_model_name}___")
+    legacy_q = _TLLM.select().where(
+        (_TLLM.tenant_id == tenant_id)
+        & (_TLLM.model_type == model_type_val)
+        & name_match
+    )
+    if provider_name:
+        legacy_q = legacy_q.where(_TLLM.llm_factory == provider_name)
+    legacy_row = legacy_q.first()
     legacy_id = legacy_row.id if legacy_row else None
 
     if model_obj:
