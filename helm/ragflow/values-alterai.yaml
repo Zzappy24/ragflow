@@ -7,7 +7,7 @@
 global:
   imageRegistry: "harbor.cylndata.cyllene.pro"
   imageRepository: "data/ragflow"
-  imageTag: "v0.7.6"
+  imageTag: "v0.7.7"
   hostname: "ragflow.cyllene.cloud"
   # TLS not yet enabled on the frontend in alterai prod — admin panel
   # generates invite links with this scheme. Switch to "https" once
@@ -33,6 +33,12 @@ ragflow-api:
   hpa:
     minReplicas: 1
     maxReplicas: 2
+  # On garde l'API sur le node GPU (alteraiworkergpt1) — les CPU workers
+  # (alteraiworker1/2/3) sont saturés (98%, 153% mem requests). Le node
+  # GPU a 200+ Gi RAM libre (vLLM utilise les GPU, pas la CPU/RAM).
+  # Le hang d'init "huqie.txt → silence" qu'on a vu 2026-06-29 venait
+  # d'Infinity dégradé (gRPC unresponsive), pas du node — cf le fix
+  # timeout dans common/doc_store/infinity_conn_pool.py.
   affinity:
     nodeAffinity:
       requiredDuringSchedulingIgnoredDuringExecution:
