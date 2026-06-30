@@ -54,12 +54,18 @@ ragflow-api:
                 operator: In
                 values:
                   - "true"
+  # CPU limits bumped 1 → 4 after observing 57.9% throttling on prod
+  # 2026-06-30 (nr_throttled=3429/5920 periods, ~20h cumulative throttle).
+  # The node alteraiworkergpt1 has 220 cores at 6% allocated — plenty of
+  # headroom. requests stay at 1 (real reservation), limits=4 lets the
+  # async event loop burst when needed (without throttling stalls that
+  # made /healthz timeout and triggered kubelet SIGKILL).
   resources:
     requests:
       cpu: "1"
       memory: "4Gi"
     limits:
-      cpu: "1"
+      cpu: "4"
       memory: "8Gi"
 
   tolerations:
