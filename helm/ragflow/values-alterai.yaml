@@ -29,10 +29,16 @@ externalSecrets:
 
 # Reduced bootstrap sizing for constrained cluster capacity.
 ragflow-api:
-  replicas: 1
+  # 2 replicas × 1 hypercorn worker. C'est la config K8s-friendly pour Quart
+  # async : HA basique (1 pod down = l'autre sert), visibilité kubectl nette
+  # (1 worker = 1 pod = 1 process), pas de Redis lock à gérer entre workers
+  # du même pod, ressources prévisibles. La capacité d'un worker async Quart
+  # sur des workloads I/O-bound (LLM/DB/vector) tient large pour Cyllene
+  # B2B SaaS. HPA peut bump à 4 si besoin.
+  replicas: 2
   hpa:
-    minReplicas: 1
-    maxReplicas: 2
+    minReplicas: 2
+    maxReplicas: 4
   # On garde l'API sur le node GPU (alteraiworkergpt1) — les CPU workers
   # (alteraiworker1/2/3) sont saturés (98%, 153% mem requests). Le node
   # GPU a 200+ Gi RAM libre (vLLM utilise les GPU, pas la CPU/RAM).
