@@ -96,15 +96,21 @@ ragflow-task-executor:
   # peu lourds. C'est un PLAFOND, pas une réservation — les arenas
   # grossissent power-of-two à la demande.
   ocrGpuMemLimitMb: "8192"
+  # MIG mixed strategy active depuis 2026-07-01 — GPUs 2,3 splittés en
+  # 4 instances de 24 GB chacun (8 instances MIG total). Le task-executor
+  # demande une instance MIG (`nvidia.com/mig-1g.24gb: 1`) au lieu d'un
+  # GPU full (`nvidia.com/gpu: 1` = un des 2 GPUs réservés à Qwen).
+  # 24 GB suffit largement pour DeepDoc ONNX (~2 GB cumulé pour les 4
+  # modèles det/rec/layout/tsr avec OCR_GPU_MEM_LIMIT_MB=8192).
   resources:
     requests:
       cpu: "1000m"
       memory: "4Gi"
-      nvidia.com/gpu: 1
+      nvidia.com/mig-1g.24gb: 1
     limits:
       cpu: "4000m"
       memory: "16Gi"
-      nvidia.com/gpu: 1
+      nvidia.com/mig-1g.24gb: 1
   affinity:
     nodeAffinity:
       requiredDuringSchedulingIgnoredDuringExecution:
