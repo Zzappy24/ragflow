@@ -82,3 +82,41 @@ async def _readyz():
     except Exception as exc:  # noqa: BLE001
         return {"ok": False, "reason": f"mysql:{exc}"}, 503
     return {"ok": True}, 200
+
+
+# ─────────────────────────────────────────────────────────────────────────────
+# Background threads — CRITICAL for live UI updates.
+#
+# `api/ragflow_server.py` starts two threads inside `if __name__ == '__main__':`:
+#   - update_progress: every 6s, aggregates Task.progress → Document.progress
+#     so the list_documents endpoint returns live values during parsing.
+#   - flush_token_usage: every 30s, flushes Redis token counters to MySQL.
+#
+# In hypercorn mode (this entry point), `__main__` never runs and the comment
+# at the top of this file mentioned the threads but never actually started
+# them. Result: Document.progress stays frozen at the initial value (e.g.
+# 0.0022) during the entire parse and only updates when the task-executor
+# writes the final 1.0 — the UI shows "queued..." then suddenly "DONE",
+# never the intermediate steps. Observed 2026-06-30.
+#
+# Each hypercorn worker spawns these threads, but a Redis distributed lock
+# (`update_progress` / `flush_token_usage`) ensures only ONE worker across
+# the whole pod fleet actually does the work. Idle workers acquire the lock,
+# fail, and sleep. Safe.
+import threading
+from api.ragflow_server import update_progress, flush_token_usage
+
+def _start_update_progress_thread():
+    import logging
+    logging.info("hypercorn: starting update_progress thread")
+    threading.Thread(target=update_progress, daemon=True, name="update_progress").start()
+
+def _start_flush_token_usage_thread():
+    import logging
+    logging.info("hypercorn: starting flush_token_usage thread")
+    threading.Thread(target=flush_token_usage, daemon=True, name="flush_token_usage").start()
+
+# Delayed start so the first iteration runs after the app has fully booted
+# (DB pool warm, Redis pool warm, RBAC proxy installed).
+threading.Timer(1.0, _start_update_progress_thread).start()
+threading.Timer(2.0, _start_flush_token_usage_thread).start()
