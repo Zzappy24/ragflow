@@ -79,7 +79,11 @@ ragflow-api:
 
 ragflow-task-executor:
   enabled: true
-  replicas: 1
+  # 3 pods × WORKER_MAX_TASKS=4 = 12 tasks parallèles. Avec MIG mixed
+  # (2 Qwen + 4 bge-m3 + 1 reranker + 3 task-executor = 10/10 slots
+  # utilisés sur 2 GPUs full + 8 MIG dispos), pas de marge mais c'est
+  # le throughput max possible pour Cyllene (cluster dédié à ce projet).
+  replicas: 3
   # Tells DeepDoc / pip_install_torch to install torch and use the
   # CUDAExecutionProvider in onnxruntime. Without it, onnxruntime falls
   # back to CPU even when the pod has nvidia.com/gpu allocated.
@@ -96,15 +100,21 @@ ragflow-task-executor:
   # peu lourds. C'est un PLAFOND, pas une réservation — les arenas
   # grossissent power-of-two à la demande.
   ocrGpuMemLimitMb: "8192"
+  # MIG mixed strategy active depuis 2026-07-01 — GPUs 2,3 splittés en
+  # 4 instances de 24 GB chacun (8 instances MIG total). Le task-executor
+  # demande une instance MIG (`nvidia.com/mig-1g.24gb: 1`) au lieu d'un
+  # GPU full (`nvidia.com/gpu: 1` = un des 2 GPUs réservés à Qwen).
+  # 24 GB suffit largement pour DeepDoc ONNX (~2 GB cumulé pour les 4
+  # modèles det/rec/layout/tsr avec OCR_GPU_MEM_LIMIT_MB=8192).
   resources:
     requests:
       cpu: "1000m"
       memory: "4Gi"
-      nvidia.com/gpu: 1
+      nvidia.com/mig-1g.24gb: 1
     limits:
       cpu: "4000m"
       memory: "16Gi"
-      nvidia.com/gpu: 1
+      nvidia.com/mig-1g.24gb: 1
   affinity:
     nodeAffinity:
       requiredDuringSchedulingIgnoredDuringExecution:
