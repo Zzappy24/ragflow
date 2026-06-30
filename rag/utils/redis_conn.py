@@ -471,6 +471,37 @@ class RedisDB:
                 if not any(gi["name"] == group_name for gi in group_info):
                     logging.warning(f"RedisDB.get_unacked_iterator queue {queue_name} group {group_name} doesn't exist")
                     continue
+                # CUSTOM B2B SaaS — XAUTOCLAIM stale pending messages.
+                # Upstream `get_unacked_iterator` only fetches THIS consumer's
+                # own pending messages. When a task-executor pod crashes mid-
+                # task (OOMKilled, K8s rolling restart, node drain, …) its
+                # pending entries remain stuck on the dead consumer name
+                # forever. Symptom observed 2026-06-30: 9 pending messages
+                # stuck on 7 different dead pods, none of which are in the
+                # consumer group anymore. Every new pod boots, calls
+                # `queue_consumer` with `>` (only NEW msgs), and never sees
+                # the orphaned pending. The queue grows monotonically.
+                #
+                # Claim any message that has been pending for >5 min on
+                # another consumer — reasonable threshold given the longest
+                # legitimate task (table analysis on a 100-page PDF) is ~3 min.
+                try:
+                    cursor = "0-0"
+                    claimed_total = 0
+                    while True:
+                        result = self.REDIS.xautoclaim(queue_name, group_name, consumer_name, min_idle_time=300_000, start_id=cursor, count=100)
+                        # result = (next_cursor, [claimed_messages], [deleted_ids])
+                        next_cursor = result[0]
+                        claimed = result[1] if len(result) > 1 else []
+                        if claimed:
+                            claimed_total += len(claimed)
+                        if next_cursor == "0-0" or not claimed:
+                            break
+                        cursor = next_cursor
+                    if claimed_total:
+                        logging.info(f"RedisDB.get_unacked_iterator XAUTOCLAIM {queue_name} → {consumer_name}: claimed {claimed_total} stale msgs")
+                except Exception as e:
+                    logging.warning(f"RedisDB.get_unacked_iterator XAUTOCLAIM {queue_name} failed: {e}")
                 current_min = 0
                 while True:
                     payload = self.queue_consumer(queue_name, group_name, consumer_name, current_min)
