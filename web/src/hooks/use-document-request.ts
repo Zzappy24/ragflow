@@ -135,6 +135,7 @@ export const useFetchDocumentList = (loop = true) => {
   }>({
     queryKey: [
       DocumentApiAction.FetchDocumentList,
+      knowledgeId || id,
       debouncedSearchString,
       pagination,
       filterValue,
