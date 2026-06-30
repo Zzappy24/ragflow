@@ -22,6 +22,15 @@ init_root_logger("ragflow_asgi")
 
 from common import settings
 settings.init_settings()
+# Sanity check — STORAGE_IMPL DOIT être set après init_settings().
+# Si ce assert échoue, le worker boot crash en CrashLoopBackOff, plutôt
+# que de servir des requêtes en mode dégradé (où settings.STORAGE_IMPL=None
+# fait planter tous les uploads/parses en NoneType.get() — observé
+# 2026-06-30 sur 1 des 2 pods API, race condition mystérieuse à l'init).
+assert settings.STORAGE_IMPL is not None, (
+    "STORAGE_IMPL is None after init_settings() — env vars (STORAGE_IMPL_TYPE) "
+    "or storage backend config (MinIO/S3/Azure/...) broken. Inspect logs above."
+)
 
 from api.apps import app
 from api.db.db_models import init_database_tables as init_web_db
@@ -104,19 +113,24 @@ async def _readyz():
 # the whole pod fleet actually does the work. Idle workers acquire the lock,
 # fail, and sleep. Safe.
 import threading
-from api.ragflow_server import update_progress, flush_token_usage
 
 def _start_update_progress_thread():
+    # Lazy import — éviter d'exécuter le top-level de api.ragflow_server au
+    # chargement de ce module (qui pourrait interférer avec settings/imports
+    # déjà résolus, soupçon de cause au bug 2026-06-30 STORAGE_IMPL=None).
     import logging
+    from api.ragflow_server import update_progress
     logging.info("hypercorn: starting update_progress thread")
     threading.Thread(target=update_progress, daemon=True, name="update_progress").start()
 
 def _start_flush_token_usage_thread():
     import logging
+    from api.ragflow_server import flush_token_usage
     logging.info("hypercorn: starting flush_token_usage thread")
     threading.Thread(target=flush_token_usage, daemon=True, name="flush_token_usage").start()
 
-# Delayed start so the first iteration runs after the app has fully booted
-# (DB pool warm, Redis pool warm, RBAC proxy installed).
-threading.Timer(1.0, _start_update_progress_thread).start()
-threading.Timer(2.0, _start_flush_token_usage_thread).start()
+# Démarrer maintenant — à ce stade tout l'init asgi.py est fini (settings,
+# DB, RBAC, blueprints, runtime config, plugins). Plus besoin de Timer
+# (qui ajoutait 1-2s de latence non-déterministe au boot).
+_start_update_progress_thread()
+_start_flush_token_usage_thread()
