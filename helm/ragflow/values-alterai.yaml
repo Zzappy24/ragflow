@@ -79,7 +79,11 @@ ragflow-api:
 
 ragflow-task-executor:
   enabled: true
-  replicas: 1
+  # 3 pods × WORKER_MAX_TASKS=4 = 12 tasks parallèles. Avec MIG mixed
+  # (2 Qwen + 4 bge-m3 + 1 reranker + 3 task-executor = 10/10 slots
+  # utilisés sur 2 GPUs full + 8 MIG dispos), pas de marge mais c'est
+  # le throughput max possible pour Cyllene (cluster dédié à ce projet).
+  replicas: 3
   # Tells DeepDoc / pip_install_torch to install torch and use the
   # CUDAExecutionProvider in onnxruntime. Without it, onnxruntime falls
   # back to CPU even when the pod has nvidia.com/gpu allocated.
