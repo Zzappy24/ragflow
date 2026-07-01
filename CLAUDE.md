@@ -352,6 +352,7 @@ These files contain custom multi-tenant code that will likely conflict with upst
 | `web/src/utils/request.ts` | X-Workspace-Id header injection in interceptor |
 | `web/src/components/image/index.tsx` | Authenticated image fetch (blob URL) |
 | `web/src/layouts/components/workspace-switcher.tsx` | Workspace switcher component |
+| `rag/llm/chat_model.py` | `_extract_reasoning()` helper + 6 call sites — vLLM 0.23 renommé `reasoning_content` → `reasoning`, tombe dans `model_extra` du SDK openai. Grep `CUSTOM B2B SaaS — vLLM 0.23 reasoning` |
 
 ### Go server — upstream migration watch
 

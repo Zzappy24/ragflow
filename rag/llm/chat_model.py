@@ -39,6 +39,29 @@ from rag.llm.tool_decorator import FunctionToolSession, is_tool
 from rag.nlp import is_chinese, is_english
 
 
+# CUSTOM B2B SaaS — vLLM 0.23 reasoning field compat
+# ─────────────────────────────────────────────────────────────────────────────
+# vLLM 0.23+ a renommé `reasoning_content` → `reasoning` dans le protocol OpenAI
+# (voir vllm/entrypoints/openai/chat_completion/protocol.py: "Renames the
+#  deprecated `reasoning_content` field to `reasoning`").
+# Le SDK openai Python (>=1.45) ne connaît que le nom historique dans son
+# schema Pydantic → le nouveau champ tombe dans `model_extra` et n'est pas
+# accessible via getattr. Sans ce helper, tout le CoT est perdu (delta.content
+# reste vide, delta.reasoning est None) → UI RAGFlow qui n'affiche rien.
+# Ce helper est appelé partout où on lisait `reasoning_content` OR `reasoning`
+# par getattr (6 sites dans ce fichier — grep _extract_reasoning).
+# À RETIRER quand : (a) le SDK openai officiel expose `reasoning` comme attr
+# typé, OU (b) vLLM revient sur ce rename. Sinon, GARDER même après merge.
+def _extract_reasoning(obj) -> str | None:
+    val = getattr(obj, "reasoning_content", None) or getattr(obj, "reasoning", None)
+    if val:
+        return val
+    extra = getattr(obj, "model_extra", None) or {}
+    return extra.get("reasoning_content") or extra.get("reasoning")
+# ─────────────────────────────────────────────────────────────────────────────
+# END CUSTOM B2B SaaS — vLLM 0.23 reasoning field compat
+
+
 class LLMErrorCode(StrEnum):
     ERROR_RATE_LIMIT = "RATE_LIMIT_EXCEEDED"
     ERROR_AUTHENTICATION = "AUTH_ERROR"
@@ -245,7 +268,7 @@ class Base(ABC):
                 continue
             if not resp.choices[0].delta.content:
                 resp.choices[0].delta.content = ""
-            _reasoning = getattr(resp.choices[0].delta, "reasoning_content", None) or getattr(resp.choices[0].delta, "reasoning", None)
+            _reasoning = _extract_reasoning(resp.choices[0].delta)
             if kwargs.get("with_reasoning", True) and _reasoning:
                 ans = ""
                 if not reasoning_start:
@@ -445,7 +468,7 @@ class Base(ABC):
                         raise Exception(f"500 response structure error. Response: {response}")
 
                     if not hasattr(response.choices[0].message, "tool_calls") or not response.choices[0].message.tool_calls:
-                        _reasoning = getattr(response.choices[0].message, "reasoning_content", None) or getattr(response.choices[0].message, "reasoning", None)
+                        _reasoning = _extract_reasoning(response.choices[0].message)
                         if _reasoning:
                             ans += "<think>" + _reasoning + "</think>"
 
@@ -533,7 +556,7 @@ class Base(ABC):
                         if not hasattr(delta, "content") or delta.content is None:
                             delta.content = ""
 
-                        _reasoning = getattr(delta, "reasoning_content", None) or getattr(delta, "reasoning", None)
+                        _reasoning = _extract_reasoning(delta)
                         if _reasoning:
                             ans = ""
                             if not reasoning_start:
@@ -1621,7 +1644,7 @@ class LiteLLMBase(ABC):
                     if not hasattr(delta, "content") or delta.content is None:
                         delta.content = ""
 
-                    _reasoning = getattr(delta, "reasoning_content", None) or getattr(delta, "reasoning", None)
+                    _reasoning = _extract_reasoning(delta)
                     if kwargs.get("with_reasoning", True) and _reasoning:
                         ans = ""
                         if not reasoning_start:
@@ -1806,7 +1829,7 @@ class LiteLLMBase(ABC):
                     message = response.choices[0].message
                     reasoning_content = None
                     if self._need_reasoning_content_back():
-                        reasoning_content = getattr(message, "reasoning_content", None) or getattr(message, "reasoning", None)
+                        reasoning_content = _extract_reasoning(message)
 
                     if not hasattr(message, "tool_calls") or not message.tool_calls:
                         if reasoning_content:
@@ -1904,7 +1927,7 @@ class LiteLLMBase(ABC):
                         if not hasattr(delta, "content") or delta.content is None:
                             delta.content = ""
 
-                        _reasoning = getattr(delta, "reasoning_content", None) or getattr(delta, "reasoning", None)
+                        _reasoning = _extract_reasoning(delta)
                         if _reasoning:
                             if self._need_reasoning_content_back():
                                 reasoning_content += _reasoning
