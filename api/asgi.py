@@ -134,3 +134,31 @@ def _start_flush_token_usage_thread():
 # (qui ajoutait 1-2s de latence non-déterministe au boot).
 _start_update_progress_thread()
 _start_flush_token_usage_thread()
+
+
+# ─────────────────────────────────────────────────────────────────────────────
+# Graceful shutdown — close Infinity gRPC pool.
+#
+# Sans ça, K8s SIGTERM interrompt le pod sans que Python close le
+# InfinityConnectionPool. Les connexions gRPC restent "half-open" côté
+# serveur Infinity jusqu'à ce que TCP timeout (30-60 min). Sur restarts
+# répétés (rolling update, MIG reconfig, debug intensif) on accumule des
+# centaines de connexions stale (257 observées 2026-07-01 après 24-48h
+# de restarts pods API). Résultat : Infinity server saturé, gRPC devient
+# unresponsive, le worker asgi hang à l'init suivante (`Using default
+# dictionary: huqie.txt` puis silence).
+#
+# `@app.after_serving` est le hook Quart appelé après que hypercorn a
+# fini de servir les requêtes en cours suite au SIGTERM. C'est le bon
+# endroit pour libérer les ressources externes.
+@app.after_serving
+async def _cleanup_infinity_pool():
+    import logging
+    try:
+        from common.doc_store.infinity_conn_pool import InfinityConnectionPool
+        pool = InfinityConnectionPool()  # singleton
+        if pool.conn_pool is not None:
+            pool.conn_pool.destroy()
+            logging.info("Infinity connection pool destroyed on shutdown")
+    except Exception:
+        logging.exception("Failed to cleanly destroy Infinity connection pool on shutdown")
