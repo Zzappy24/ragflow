@@ -68,6 +68,19 @@ ragflow-api:
       cpu: "4"
       memory: "8Gi"
 
+  # Timeouts probes bumpés 5s → 10s pour tolérer les micro-blocages de
+  # l'event loop async (Quart) sous charge. Le default K8s de 1s est
+  # trop tight, 5s l'était encore parfois pour du burst. Le budget global
+  # (failureThreshold × periodSeconds) reste inchangé, on ne réduit pas
+  # la sensibilité au crash — juste on tolère les glitches transitoires.
+  probes:
+    startup:
+      timeoutSeconds: 10
+    liveness:
+      timeoutSeconds: 10
+    readiness:
+      timeoutSeconds: 10
+
   tolerations:
     - key: node-role
       operator: Equal
