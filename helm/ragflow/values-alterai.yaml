@@ -140,18 +140,24 @@ ragflow-task-executor:
     - key: nvidia.com/gpu
       operator: Exists
       effect: NoSchedule
-  # Node alteraiworkergpt1 has 4x RTX PRO 6000 Blackwell (96 GB each).
-  # Sans time-slicing GPU activé sur le node, K8s alloue chaque GPU en
-  # exclusif. Comme vLLM occupe déjà 3 GPUs (qwen + bge-m3 + reranker),
-  # seul 1 GPU est dispo pour ragflow → maxReplicas effectif = 1.
-  # Une fois time-slicing activé (devops, sharing.timeSlicing.replicas=4),
-  # le node expose 16 slots GPU virtuels et ragflow peut scale à 4.
-  # En attendant, on garde minReplicas=1 (1 task à la fois, mais pas
-  # d'OOM 2GB) et maxReplicas=4 pour ne pas avoir à re-déployer après
-  # le fix devops.
+  # Node alteraiworkergpt1: 4x RTX PRO 6000 Blackwell (96 GB each).
+  # MIG mixed strategy active depuis 2026-07-01 → 2 GPUs full (Qwen×2)
+  # + 8 instances MIG (1g.24gb). Slots utilisés en fonctionnement normal:
+  # - 4 bge-m3 (embedding)
+  # - 1 bge-reranker
+  # - 3 task-executor (max)
+  # = 8 slots MIG utilisés / 8 dispos. 0 marge, throughput max.
+  #
+  # KEDA: on garde ScaledObject actif pour le pattern "backlog-aware"
+  # (si le user upload 100 docs, KEDA les traite pas plus vite qu'à
+  # capacité, mais au moins il utilise à fond les 3 slots). En idle,
+  # KEDA voudrait descendre à 1 pour libérer 2 slots MIG, mais comme
+  # les autres workloads (bge-m3, reranker, Qwen) sont pinés à des
+  # replicas fixes, ces slots resteraient vides = gâchés. Donc on
+  # force minReplicas = maxReplicas = 3 pour saturer les 3 slots réservés.
   keda:
-    minReplicas: 1
-    maxReplicas: 4
+    minReplicas: 3
+    maxReplicas: 3
 
 mariadb:
   enabled: true
