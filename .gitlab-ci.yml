@@ -19,7 +19,6 @@ kaniko_build_prd:
   variables:
     GODEBUG: "http2client=0"
   script:
-      - echo "GODEBUG=$GODEBUG"
       - |
         if [ -n "$CI_COMMIT_TAG" ]; then
           echo "Utilisation du tag Git comme tag d'image: $CI_COMMIT_TAG"
