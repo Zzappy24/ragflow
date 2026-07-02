@@ -3,6 +3,7 @@ variables:
   HARBOR_REGISTRY_PROD: harbor.cylndata.cyllene.pro
   HARBOR_PROJECT: data
   IMAGE_NAME: ragflow
+  GODEBUG: "http2client=0"
 
 image: 
   name: gcr.io/kaniko-project/executor:debug
