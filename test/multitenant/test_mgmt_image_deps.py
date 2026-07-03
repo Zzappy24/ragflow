@@ -48,9 +48,19 @@ STDLIB = frozenset({
 })
 
 # Local packages — we own the code, no pip install needed.
+# CUSTOM B2B SaaS — `mcp` volontairement RETIRÉ de ce set:
+# on a un dossier local `./mcp/` (partiel, client.py + server.py), MAIS le
+# SDK pip officiel `mcp>=1.19.0` fournit `mcp.client.session` etc. qui ne
+# sont PAS dans le local. Un import `from mcp.client.session import ...`
+# résout donc au pip, pas au local. Marquer `mcp` comme LOCAL faisait
+# sauter le check → l'incident 2026-07-03 (mgmt-backend 500 sur
+# /admin/workspaces/*/stats) est passé silencieusement. Le test doit
+# vérifier que `mcp` est dans Dockerfile.management dès qu'il apparaît
+# dans le boot chain (aujourd'hui lazy-importé donc absent, mais un futur
+# merge upstream peut le remettre en top-level).
 LOCAL = frozenset({
     "api", "admin", "agent", "common", "conf", "deepdoc", "management",
-    "mcp", "memory", "rag", "sdk", "test", "tools",
+    "memory", "rag", "sdk", "test", "tools",
 })
 
 # Map Python import name → top-level pip package name (when they differ).

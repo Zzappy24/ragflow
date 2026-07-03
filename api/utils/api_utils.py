@@ -44,7 +44,13 @@ from quart import g
 
 from common.constants import ActiveEnum, LLMType
 from api.utils.json_encode import CustomJSONEncoder
-from common.mcp_tool_call_conn import MCPToolCallSession, close_multiple_mcp_toolcall_sessions
+# CUSTOM B2B SaaS — lazy MCP import
+# Upstream fait `from common.mcp_tool_call_conn import ...` en top-level ici
+# → cascade via api_utils.py → knowledgebase_service.py → workspace_stats endpoint
+# → crash le mgmt-backend qui n'a pas `mcp` dans son Dockerfile.management
+# (pyproject.toml a mcp, mais l'image mgmt installe une liste manuelle sans mcp).
+# Fix: lazy import dans la seule fonction qui les utilise (`get_mcp_tools`
+# ci-dessous). Retirer ce commentaire quand upstream fera le lazy import aussi.
 from api.db.db_models import APIToken
 from api.db.services.tenant_llm_service import LLMFactoriesService
 from common.connection_utils import timeout
@@ -843,6 +849,8 @@ def group_by(list_of_dict, key):
 
 
 def get_mcp_tools(mcp_servers: list, timeout: float | int = 10) -> tuple[dict, str]:
+    # CUSTOM B2B SaaS — lazy MCP import (voir header du fichier)
+    from common.mcp_tool_call_conn import MCPToolCallSession, close_multiple_mcp_toolcall_sessions
     results = {}
     tool_call_sessions = []
     try:
