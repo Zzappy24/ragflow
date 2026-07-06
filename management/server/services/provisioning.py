@@ -299,9 +299,13 @@ def provision_user(
     Returns the new ``user_id``.
     """
     from api.db import FileType, UserTenantRole
-    from api.db.db_models import DB
+    # CUSTOM B2B SaaS — import Peewee direct pour File au lieu de FileService.
+    # Le module file_service.py cascade vers rag.llm.cv_model + api.utils.file_utils
+    # (openai, pdfplumber, etc.) qui ne sont pas dans l'image mgmt slim. Le mgmt
+    # ne fait ici qu'un simple File.create() → identique à UserService/TenantService
+    # qui utilisent aussi save() directement.
+    from api.db.db_models import DB, File
     from api.db.services.user_service import UserService, TenantService, UserTenantService
-    from api.db.services.file_service import FileService
     from api.db.services.org_service import OrgMemberService
     from api.db.services.workspace_service import WorkspaceService
 
@@ -366,16 +370,16 @@ def provision_user(
             "invited_by": invited_by,
         })
         root_file_id = get_uuid()
-        FileService.insert({
-            "id": root_file_id,
-            "parent_id": root_file_id,
-            "tenant_id": user_id,
-            "created_by": user_id,
-            "name": "/",
-            "type": FileType.FOLDER.value,
-            "size": 0,
-            "location": "",
-        })
+        File.create(
+            id=root_file_id,
+            parent_id=root_file_id,
+            tenant_id=user_id,
+            created_by=user_id,
+            name="/",
+            type=FileType.FOLDER.value,
+            size=0,
+            location="",
+        )
 
         OrgMemberService.save(**{
             "id": get_uuid(),
