@@ -230,12 +230,20 @@ def workspace_stats(ws_id: str, user_id: str = Depends(get_current_user_id)):
 
     members = WsMemberService.list_by_workspace(ws_id)
 
-    from api.db.services.knowledgebase_service import KnowledgebaseService
-    datasets = KnowledgebaseService.query(tenant_id=ws.tenant_id, status="1")
+    # CUSTOM B2B SaaS — import Peewee direct au lieu de KnowledgebaseService.query.
+    # Le service upstream cascade vers api_utils → mcp/openai/etc. dans son module,
+    # alors qu'on n'a besoin ici que d'un simple COUNT sur la table Knowledgebase.
+    # Suivre le même pattern que UserService/TenantService: import direct des modèles
+    # depuis api.db.db_models (juste peewee, aucune dep lourde).
+    from api.db.db_models import Knowledgebase
+    datasets_count = Knowledgebase.select().where(
+        Knowledgebase.tenant_id == ws.tenant_id,
+        Knowledgebase.status == "1",
+    ).count()
 
     return {
         "workspace_id": ws_id,
         "tenant_id": ws.tenant_id,
         "members_count": len(members),
-        "datasets_count": len(list(datasets)),
+        "datasets_count": datasets_count,
     }

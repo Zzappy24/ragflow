@@ -12,8 +12,10 @@ router = APIRouter()
 @router.get("/stats", response_model=SystemStats)
 def system_stats(user=Depends(require_superuser)):
     """Get global system statistics."""
-    from api.db.db_models import DB, Organisation, Workspace, User
-    from api.db.services.knowledgebase_service import KnowledgebaseService
+    # CUSTOM B2B SaaS — import Peewee direct au lieu de KnowledgebaseService.
+    # Le service cascade vers api_utils → mcp/openai/etc. Ici on ne fait qu'un
+    # simple SELECT COUNT, on utilise Knowledgebase directement.
+    from api.db.db_models import DB, Organisation, Workspace, User, Knowledgebase
 
     with DB.connection_context():
         total_orgs = Organisation.select().where(Organisation.status == "1").count()
@@ -55,8 +57,14 @@ def system_stats(user=Depends(require_superuser)):
         ws_tenant_ids = [row[0] for row in ws_tenant_ids]
 
     if ws_tenant_ids:
-        all_datasets = KnowledgebaseService.query(status="1")
-        total_datasets = sum(1 for d in all_datasets if d.tenant_id in ws_tenant_ids)
+        total_datasets = (
+            Knowledgebase.select()
+            .where(
+                (Knowledgebase.status == "1") &
+                Knowledgebase.tenant_id.in_(ws_tenant_ids)
+            )
+            .count()
+        )
     else:
         total_datasets = 0
 

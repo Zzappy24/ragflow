@@ -39,8 +39,13 @@ from common.ssrf_guard import assert_url_is_safe
 from common.constants import TaskStatus, FileSource, ParserType, MAXIMUM_PAGE_NUMBER
 from api.db.services.knowledgebase_service import KnowledgebaseService
 from api.db.services.task_service import TaskService
-from api.utils.file_utils import filename_type, read_potential_broken_pdf, thumbnail_img, sanitize_path, validate_upload_mime
-from rag.llm.cv_model import GptV4
+# CUSTOM B2B SaaS — lazy imports pour découpler le mgmt-backend
+# `api.utils.file_utils` importe pdfplumber en top-level.
+# `rag.llm.cv_model` importe openai et cascade vers rag/prompts/generator (jinja2).
+# Aucun de ces symboles n'est utilisé par les méthodes appelées depuis
+# management/server (init_user_root, get_*, insert, delete, etc.).
+# Ils ne sont utilisés que par `upload_document`, `parse`, `upload_info`
+# — 3 méthodes hors périmètre mgmt. Import déplacé dans ces méthodes.
 from common import settings
 
 
@@ -456,6 +461,8 @@ class FileService(CommonService):
     @classmethod
     @DB.connection_context()
     def upload_document(self, kb, file_objs, user_id, src="local", parent_path: str | None = None, parser_config_override: dict | None = None):
+        # CUSTOM B2B SaaS — lazy imports (voir header du fichier)
+        from api.utils.file_utils import filename_type, read_potential_broken_pdf, thumbnail_img, sanitize_path, validate_upload_mime
         root_folder = self.get_root_folder(user_id)
         pf_id = root_folder["id"]
         self.init_knowledgebase_docs(pf_id, user_id)
@@ -584,6 +591,9 @@ class FileService(CommonService):
 
     @staticmethod
     def parse(filename, blob, img_base64=True, tenant_id=None, layout_recognize=None):
+        # CUSTOM B2B SaaS — lazy imports (voir header du fichier)
+        from api.utils.file_utils import filename_type
+        from rag.llm.cv_model import GptV4
         from rag.app import audio, email, naive, picture, presentation
         from api.apps import current_user
 
@@ -688,6 +698,8 @@ class FileService(CommonService):
 
     @staticmethod
     def upload_info(user_id, file, url: str|None=None):
+        # CUSTOM B2B SaaS — lazy imports (voir header du fichier)
+        from api.utils.file_utils import filename_type, read_potential_broken_pdf
         def structured(filename, filetype, blob, content_type):
             nonlocal user_id
             if filetype == FileType.PDF.value:
