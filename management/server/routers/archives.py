@@ -293,7 +293,25 @@ def restore_workspace(ws_id: str, user=Depends(require_superuser)):
 
 @router.post("/archives/users/{user_id}/restore")
 def restore_user(user_id: str, user=Depends(require_superuser)):
-    from api.db.db_models import DB, User
+    """Restore an archived user.
+
+    A user restore is only meaningful when the user was archived as part of an
+    org cascade (delete_org): the OrgMember/WsMember/UserTenant rows share the
+    same ``___deleted___[ts]`` marker as the org, so we can rebuild the graph
+    from that timestamp.
+
+    Individual user deletes (DELETE /users/{uid}) HARD-delete all memberships
+    (see users.py:150-153). Restoring one produces a ghost user with:
+      - User row: status=1, is_active=1, email clean
+      - Zero OrgMember / WsMember / UserTenant rows
+
+    → invisible in every UI (all filter by OrgMember), can't log in (no
+    password reset), and BLOCKS the original email for re-invitation.
+
+    Fix: refuse to restore individually-deleted users. The right recovery
+    path for those is to hard-purge and re-invite via POST /users.
+    """
+    from api.db.db_models import DB, User, Organisation
     with DB.connection_context():
         target = User.get_or_none(
             (User.id == user_id) & (User.status == "0")
@@ -303,6 +321,29 @@ def restore_user(user_id: str, user=Depends(require_superuser)):
 
         if target.email.startswith("purged_"):
             raise HTTPException(status_code=400, detail="Cannot restore a purged (tombstoned) user")
+
+        # Detect whether this user was archived as part of an org cascade.
+        # An org cascade shares the same ___deleted___[ts] between Org and User
+        # (see delete_org / list_archived_users:135-140).
+        user_ts = _extract_ts(target.email)
+        snapshot_org = None
+        if user_ts:
+            snapshot_org = Organisation.get_or_none(
+                (Organisation.status == "0") &
+                Organisation.name.contains(f"___deleted___{user_ts}")
+            )
+
+        if not snapshot_org:
+            raise HTTPException(
+                status_code=400,
+                detail=(
+                    "Cannot restore an individually-deleted user: all memberships "
+                    "(OrgMember, WsMember, UserTenant) were hard-deleted at delete "
+                    "time and cannot be rebuilt without an org snapshot. "
+                    "Purge this user (DELETE /archives/users/{id}/purge?confirm=DELETE) "
+                    "and re-invite them via POST /users with the same email."
+                ),
+            )
 
         clean_email = _strip_deleted(target.email)
 

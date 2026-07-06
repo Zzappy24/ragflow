@@ -116,6 +116,8 @@ export const useSelectParserList = (): Array<{
       },
       { value: 'table', label: t('knowledgeConfiguration.parserLabel.table') },
       { value: 'paper', label: t('knowledgeConfiguration.parserLabel.paper') },
+      // CUSTOM B2B SaaS — variante paper avec skip auto-rotate tables (~50% du temps TSR économisé)
+      { value: 'paper_fast', label: 'Paper (fast)' },
       { value: 'book', label: t('knowledgeConfiguration.parserLabel.book') },
       { value: 'laws', label: t('knowledgeConfiguration.parserLabel.laws') },
       {
