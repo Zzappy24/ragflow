@@ -21,7 +21,14 @@ from datetime import datetime
 
 import peewee
 from api.db.db_utils import bulk_insert_into_db
-from deepdoc.parser import PdfParser
+# CUSTOM B2B SaaS — lazy deepdoc import
+# Upstream fait `from deepdoc.parser import PdfParser` (et RAGFlowExcelParser
+# plus bas) en top-level. Utilisé uniquement dans queue_tasks(). Le
+# mgmt-backend importe task_service en cascade (provisioning → file_service
+# → task_service) et n'a pas deepdoc dans son Dockerfile.management slim
+# → ModuleNotFoundError au boot chain d'un endpoint mgmt.
+# Fix: lazy import dans queue_tasks(). Voir aussi CUSTOM B2B SaaS — lazy MCP
+# import dans api/utils/api_utils.py pour le même pattern.
 from peewee import JOIN
 from api.db.db_models import DB, File2Document, File
 
@@ -42,7 +49,7 @@ from api.db.services.document_service import DocumentService
 from common.misc_utils import get_uuid
 from common.time_utils import current_timestamp
 from common.constants import StatusEnum, TaskStatus, MAXIMUM_PAGE_NUMBER, MAXIMUM_TASK_PAGE_NUMBER
-from deepdoc.parser.excel_parser import RAGFlowExcelParser
+# CUSTOM B2B SaaS — lazy import (voir header du fichier)
 from rag.utils.redis_conn import REDIS_CONN
 from common import settings
 from rag.nlp import search
@@ -415,6 +422,9 @@ def queue_tasks(doc: dict, bucket: str, name: str, priority: int):
         - Task digests are calculated for optimization and reuse
         - Previous task chunks may be reused if available
     """
+    # CUSTOM B2B SaaS — lazy deepdoc import (voir header du fichier)
+    from deepdoc.parser import PdfParser
+    from deepdoc.parser.excel_parser import RAGFlowExcelParser
 
     def new_task():
         return {
