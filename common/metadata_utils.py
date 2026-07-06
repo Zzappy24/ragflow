@@ -17,7 +17,11 @@ import ast
 import logging
 from typing import Any, Callable, Dict
 
-import json_repair
+# CUSTOM B2B SaaS — json_repair lazy-imported dans update_metadata_to() (seule
+# fonction consommatrice). Retirer l'import top-level évite que le mgmt-backend
+# (qui atteint metadata_utils via doc_metadata_service → document_service →
+# file_service) crashe avec ModuleNotFoundError car json_repair n'est pas
+# dans Dockerfile.management slim.
 
 
 def convert_conditions(metadata_condition):
@@ -320,6 +324,8 @@ def dedupe_list(values: list) -> list:
 
 
 def update_metadata_to(metadata, meta):
+    # CUSTOM B2B SaaS — lazy import (voir header du fichier)
+    import json_repair
     if not meta:
         return metadata
     if isinstance(meta, str):

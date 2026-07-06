@@ -355,6 +355,8 @@ These files contain custom multi-tenant code that will likely conflict with upst
 | `rag/llm/chat_model.py` | `_extract_reasoning()` helper + 6 call sites — vLLM 0.23 renommé `reasoning_content` → `reasoning`, tombe dans `model_extra` du SDK openai. Grep `CUSTOM B2B SaaS — vLLM 0.23 reasoning` |
 | `api/utils/api_utils.py` | Lazy import de `common.mcp_tool_call_conn` (dans `get_mcp_tools`) au lieu du top-level upstream — sinon cascade dans le mgmt-backend qui n'a pas `mcp` dans son Dockerfile. Grep `CUSTOM B2B SaaS — lazy MCP import` |
 | `api/db/services/task_service.py` | Lazy import de `deepdoc.parser.PdfParser` + `RAGFlowExcelParser` (dans `queue_tasks`) — même raison que api_utils, mgmt-backend n'a pas deepdoc dans son image slim. Grep `CUSTOM B2B SaaS — lazy deepdoc import` |
+| `api/db/services/file_service.py` | Lazy imports de `api.utils.file_utils` (pdfplumber) + `rag.llm.cv_model.GptV4` (openai). Utilisés uniquement dans upload_document/parse/upload_info, jamais appelées depuis mgmt. Grep `CUSTOM B2B SaaS — lazy imports pour découpler` |
+| `common/metadata_utils.py` | Lazy import de `json_repair` (dans `update_metadata_to`) — atteint par mgmt via doc_metadata_service → document_service → file_service. Grep `CUSTOM B2B SaaS — json_repair lazy-imported` |
 
 ### Go server — upstream migration watch
 
