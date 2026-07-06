@@ -83,6 +83,11 @@ from api.db.joint_services.tenant_model_service import get_tenant_default_model_
 from common.versions import get_ragflow_version
 from api.db.db_models import close_connection
 from rag.app import laws, paper, presentation, manual, qa, table, book, resume, picture, naive, one, audio, email, tag
+# CUSTOM B2B SaaS — nouveau mode "paper_fast" (variante paper avec skip du
+# table auto-rotate = ~4 OCR par table évitées, ~50% du temps TSR économisé).
+# Coexiste avec "paper" (inchangé). Sélectionner "paper_fast" comme chunk_method
+# dans les settings de KB via l'admin panel pour activer.
+from rag.app import paper_fast
 from rag.nlp import search, rag_tokenizer, add_positions
 from rag.raptor import (
     RAPTOR_TREE_BUILDER,
@@ -115,6 +120,7 @@ FACTORY = {
     "general": naive,
     ParserType.NAIVE.value: naive,
     ParserType.PAPER.value: paper,
+    "paper_fast": paper_fast,  # CUSTOM B2B SaaS — voir rag/app/paper_fast.py
     ParserType.BOOK.value: book,
     ParserType.PRESENTATION.value: presentation,
     ParserType.MANUAL.value: manual,

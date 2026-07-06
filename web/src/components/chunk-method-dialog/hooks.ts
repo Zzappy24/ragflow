@@ -9,6 +9,7 @@ const ParserListMap = new Map([
       'resume',
       'manual',
       'paper',
+      'paper_fast', // CUSTOM B2B SaaS — variante paper avec skip auto-rotate
       'book',
       'laws',
       'presentation',
