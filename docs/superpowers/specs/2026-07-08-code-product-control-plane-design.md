@@ -39,7 +39,9 @@ RAG (INCHANGÉ) : RAGFlow app ──► vLLM Blackwell · MariaDB · Infinity
 
 **Nouveaux composants infra** : 1 pod LiteLLM + 1 Postgres (pod + PVC), self-hostés, télémétrie off, version LiteLLM pinnée. À placer **hors du nœud GPU saturé** (cf. incident scheduling 2026-07 : api/executor/infinity déjà tous épinglés sur `alteraiworkergpt1`).
 
-Le seul surface LiteLLM qu'un humain/outil client touche = l'endpoint `/v1/*` (une URL d'API). Toute UI = notre panel brandé.
+La seule surface LiteLLM qu'un humain/outil client touche = l'endpoint `/v1/*` (une URL d'API). Toute UI = notre panel brandé.
+
+**Secret `MASTER_KEY`** : stocké en K8s Secret, monté uniquement dans le backend du panel (server-to-server). Jamais exposé au front, jamais loggé, rotation documentée dans le runbook infra.
 
 ---
 
@@ -63,6 +65,8 @@ Tables neuves, accrochées à l'`org` existante.
 Σ(code_team.max_budget WHERE org_id = X)  ≤  code_entitlement.org_code_budget
 ```
 Validé par le panel à chaque création/màj de team. Conséquence : l'org ne peut jamais dépasser la somme de ses teams, elle-même plafonnée à l'allocation. **Pas de cap-org runtime nécessaire, zéro code custom d'enforcement.** L'enforcement runtime est fait nativement par LiteLLM au niveau team (temps réel). La vue org (« 650€/1000€ ») = agrégation en **lecture** (`GET /spend`), hors hot path.
+
+**Alignement des cycles (requis pour que l'invariant soit sain)** : `code_team.budget_duration` n'est **pas** librement choisi — le panel l'impose **uniformément** égal à `code_entitlement.budget_period` (le cycle de facturation de l'org). Sans cet alignement, sommer des budgets de périodes différentes rendrait l'invariant incohérent.
 
 ---
 
@@ -88,12 +92,13 @@ Séparation nette : **Cyllene contrôle le combien, le client contrôle le comme
 | Org admin crée une code-team | `POST /team/new` | valide invariant → stocke `litellm_team_id` |
 | Ajoute un siège | `POST /key/generate` | stocke `litellm_key_id` + masque ; plaintext 1× |
 | Modifie un budget | `POST /team/update` | re-valide invariant |
-| Toggle OFF / révoque | `POST /key/block` (ou budget=0) | **ne supprime pas** → garde historique spend |
+| Révoque un siège | `POST /key/block` | **ne supprime pas** → garde historique spend |
+| Cyllene désactive l'entitlement org | `POST /key/block` sur **toutes les keys de toutes les teams** de l'org (fan-out) | `code_entitlement.status = suspended` ; teams/keys conservées → réactivation = unblock, instantanée |
 | Vue usage | `GET /team/info`, `/spend` | agrégation en lecture |
 
 **Garde-fous sync burden :**
-1. **Idempotence par clé externe déterministe** : alias team = `org:{org_id}:team:{code_team_id}` → retry ne duplique pas.
-2. **Job de réconciliation périodique** : compare panel vs état LiteLLM, répare la dérive. Réponse directe au piège `legacy_id` déjà vécu.
+1. **Idempotence par clé externe déterministe** — sur les **deux** objets : alias team = `org:{org_id}:team:{code_team_id}`, et `key_alias` = `org:{org_id}:key:{code_key_id}` → un retry (team **ou** key) ne duplique jamais.
+2. **Job de réconciliation périodique** : compare panel vs état LiteLLM, répare la dérive (y compris un fan-out de suspension interrompu à mi-course). Réponse directe au piège `legacy_id` déjà vécu.
 
 ---
 
