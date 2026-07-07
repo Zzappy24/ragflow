@@ -98,7 +98,10 @@ Séparation nette : **Cyllene contrôle le combien, le client contrôle le comme
 
 **Garde-fous sync burden :**
 1. **Idempotence par clé externe déterministe** — sur les **deux** objets : alias team = `org:{org_id}:team:{code_team_id}`, et `key_alias` = `org:{org_id}:key:{code_key_id}` → un retry (team **ou** key) ne duplique jamais.
-2. **Job de réconciliation périodique** : compare panel vs état LiteLLM, répare la dérive (y compris un fan-out de suspension interrompu à mi-course). Réponse directe au piège `legacy_id` déjà vécu.
+2. **Desired-state-first (ordre des écritures)** : toute mutation écrit **d'abord l'intention dans MariaDB** (`status = pending_create | pending_revoke | …`, transactionnel), **puis** tente l'appel LiteLLM en synchrone. Succès → statut final (`active`/`revoked`). Échec (LiteLLM down) → la ligne reste `pending_*`, l'UI affiche « en cours », et le réconciliateur converge. La colonne de statut **est** la file d'attente — pas de broker asynchrone à ajouter.
+3. **Job de réconciliation périodique** : retente tout ce qui est `pending_*` (backoff ; **révocations en priorité** — sécuritaire) et compare panel vs état LiteLLM pour réparer la dérive (y compris un fan-out de suspension interrompu à mi-course). Réponse directe au piège `legacy_id` déjà vécu.
+
+Nuance sur la fenêtre de risque « LiteLLM down pendant une révocation » : l'API de management et `/v1/*` sont servis par le **même process** — si le management est down, le data plane l'est très probablement aussi, donc la key à révoquer est inutilisable pendant la panne. Le cas résiduel (partition réseau panel→proxy avec clients atteignant encore le proxy) est couvert par le retry prioritaire du réconciliateur.
 
 ---
 
