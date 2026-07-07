@@ -25,6 +25,8 @@ const ConfigurationComponentMap = {
   [DocumentParserType.Manual]: ManualConfiguration,
   [DocumentParserType.Table]: TableConfiguration,
   [DocumentParserType.Paper]: PaperConfiguration,
+  // CUSTOM B2B SaaS — paper_fast utilise la même UI de config que paper
+  [DocumentParserType.PaperFast]: PaperConfiguration,
   [DocumentParserType.Book]: BookConfiguration,
   [DocumentParserType.Laws]: LawsConfiguration,
   [DocumentParserType.Presentation]: PresentationConfiguration,

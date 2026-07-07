@@ -99,6 +99,8 @@ export enum DocumentParserType {
   Manual = 'manual',
   Table = 'table',
   Paper = 'paper',
+  // CUSTOM B2B SaaS — variante paper avec skip auto-rotate tables (~50% du temps TSR économisé)
+  PaperFast = 'paper_fast',
   Book = 'book',
   Laws = 'laws',
   Presentation = 'presentation',

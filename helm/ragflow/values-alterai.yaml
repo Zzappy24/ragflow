@@ -7,7 +7,7 @@
 global:
   imageRegistry: "harbor.cylndata.cyllene.pro"
   imageRepository: "data/ragflow"
-  imageTag: "v0.7.16"
+  imageTag: "v0.7.17"
   hostname: "ragflow.cyllene.cloud"
   # TLS not yet enabled on the frontend in alterai prod — admin panel
   # generates invite links with this scheme. Switch to "https" once

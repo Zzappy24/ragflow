@@ -28,6 +28,10 @@ from werkzeug.security import generate_password_hash
 # one created via the legacy ``/v1/user/register`` path.
 _DEFAULT_PARSER_IDS = (
     "naive:General,qa:Q&A,resume:Resume,manual:Manual,table:Table,paper:Paper,"
+    # CUSTOM B2B SaaS — paper_fast: variante paper avec skip auto-rotate tables
+    # (voir rag/app/paper_fast.py). Doit être dans parser_ids sinon invisible
+    # dans le dropdown UI (use-user-setting-request.tsx filtre par ce champ).
+    "paper_fast:Paper (fast),"
     "book:Book,laws:Laws,presentation:Presentation,picture:Picture,one:One,"
     "audio:Audio,email:Email,tag:Tag"
 )
