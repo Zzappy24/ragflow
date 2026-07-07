@@ -42,15 +42,144 @@ from common.parser_config_utils import normalize_layout_recognizer
 
 
 class Pdf(_paper.Pdf):
-    """Extension du parser paper avec skip de l'auto-rotate tables.
+    """Extension du parser paper avec skip complet du flow auto-rotate tables.
 
-    Override `_evaluate_table_orientation` pour retourner 0° immédiatement
-    sans faire les 4 OCR de rotation. Voir le module header pour la
-    justification et le trade-off.
+    Override `__call__` pour appeler `_table_transformer_job(zoomin, auto_rotate=False)`
+    au lieu du défaut `auto_rotate=True`. On bypasse ainsi 3 étapes coûteuses:
+
+      1. `_evaluate_table_orientation` — 4 OCR calls par table pour choisir l'angle
+      2. `_ocr_rotated_tables` — appelée systématiquement même si angle=0, elle
+         POP + re-OCR + re-INSERT les boxes de chaque table (voir pdf_parser.py:672)
+         Sur des tables où upstream détectait 90°/180° à tort, ça supprimait des
+         boxes originales — d'où un chunking différent entre paper et paper_fast.
+      3. La duplication de state (table_rotations, rotated_table_imgs)
+
+    Résultat: paper_fast produit exactement le même nombre de sections/chunks
+    que si upstream forçait `auto_rotate=False` — comportement propre supporté
+    upstream (branche `else` de pdf_parser.py:474-477).
     """
 
-    def _evaluate_table_orientation(self, table_img, sample_ratio=0.3):
-        return 0, table_img, {0: {"avg_confidence": 1.0, "total_regions": 0, "combined_score": 1.0}}
+    def __call__(self, filename, binary=None, from_page=0,
+                 to_page=None, zoomin=3, callback=None):
+        """Copie du parent paper.Pdf.__call__ (rag/app/paper.py:36-148) avec
+        UNE seule ligne différente: `_table_transformer_job(zoomin, auto_rotate=False)`.
+        Resync si upstream modifie paper.Pdf.__call__."""
+        import copy
+        import logging
+        import re
+        import numpy as np
+        from timeit import default_timer as timer
+        from common.constants import MAXIMUM_PAGE_NUMBER
+
+        if to_page is None:
+            to_page = MAXIMUM_PAGE_NUMBER
+
+        start = timer()
+        callback(msg="OCR started")
+        self.__images__(
+            filename if not binary else binary,
+            zoomin,
+            from_page,
+            to_page,
+            callback
+        )
+        callback(msg="OCR finished ({:.2f}s)".format(timer() - start))
+
+        start = timer()
+        self._layouts_rec(zoomin)
+        callback(0.63, "Layout analysis ({:.2f}s)".format(timer() - start))
+
+        start = timer()
+        # CUSTOM B2B SaaS — la SEULE ligne changée vs paper.Pdf.__call__:
+        # bypass complet du flow auto_rotate (voir docstring de la classe).
+        self._table_transformer_job(zoomin, auto_rotate=False)
+        callback(0.68, "Table analysis ({:.2f}s)".format(timer() - start))
+
+        start = timer()
+        self._text_merge()
+        tbls = self._extract_table_figure(True, zoomin, True, True)
+        column_width = np.median([b["x1"] - b["x0"] for b in self.boxes])
+        self._concat_downward()
+        self._filter_forpages()
+        callback(0.75, "Text merged ({:.2f}s)".format(timer() - start))
+
+        # clean mess
+        if column_width < self.page_images[0].size[0] / zoomin / 2:
+            self.boxes = self.sort_X_by_page(self.boxes, column_width / 2)
+        for b in self.boxes:
+            b["text"] = re.sub(r"([\t 　]|　){2,}", " ", b["text"].strip())
+
+        def _begin(txt):
+            return re.match(
+                "[0-9. 一、i]*(introduction|abstract|摘要|引言|keywords|key words|关键词|background|背景|目录|前言|contents)",
+                txt.lower().strip())
+
+        if from_page > 0:
+            return {
+                "title": "",
+                "authors": "",
+                "abstract": "",
+                "sections": [(b["text"] + self._line_tag(b, zoomin), b.get("layoutno", "")) for b in self.boxes if
+                             re.match(r"(text|title)", b.get("layoutno", "text"))],
+                "tables": tbls
+            }
+
+        # get title and authors
+        title = ""
+        authors = []
+        i = 0
+        while i < min(32, len(self.boxes) - 1):
+            b = self.boxes[i]
+            i += 1
+            if b.get("layoutno", "").find("title") >= 0:
+                title = b["text"]
+                if _begin(title):
+                    title = ""
+                    break
+                for j in range(3):
+                    next_idx = i + j
+                    if next_idx >= len(self.boxes):
+                        break
+                    candidate = self.boxes[next_idx]["text"]
+                    if _begin(candidate):
+                        break
+                    if "@" in candidate:
+                        break
+                    authors.append(candidate)
+                break
+
+        # get abstract
+        abstr = ""
+        i = 0
+        while i + 1 < min(32, len(self.boxes)):
+            b = self.boxes[i]
+            i += 1
+            txt = b["text"].lower().strip()
+            if re.match("(abstract|摘要)", txt):
+                if len(txt.split()) > 32 or len(txt) > 64:
+                    abstr = txt + self._line_tag(b, zoomin)
+                    break
+                txt = self.boxes[i]["text"].lower().strip()
+                if len(txt.split()) > 32 or len(txt) > 64:
+                    abstr = txt + self._line_tag(self.boxes[i], zoomin)
+                i += 1
+                break
+        if not abstr:
+            i = 0
+
+        callback(0.8, "Page {}~{}: Text merging finished".format(
+            from_page, min(to_page, self.total_page)))
+        for b in self.boxes:
+            logging.debug("{} {}".format(b["text"], b.get("layoutno")))
+
+        return {
+            "title": title,
+            "authors": " ".join(authors),
+            "abstract": abstr,
+            "sections": [(b["text"] + self._line_tag(b, zoomin), b.get("layoutno", "")) for b in self.boxes[i:] if
+                         re.match(r"(text|title)", b.get("layoutno", "text"))],
+            "tables": tbls
+        }
 
 
 # =============================================================================
