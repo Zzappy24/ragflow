@@ -580,6 +580,8 @@ def get_parser_config(chunk_method, parser_config):
         "manual": {"raptor": {"use_raptor": False}, "graphrag": {"use_graphrag": False}},
         "table": None,
         "paper": {"raptor": {"use_raptor": False}, "graphrag": {"use_graphrag": False}},
+        # CUSTOM B2B SaaS — paper_fast utilise la même config default que paper
+        "paper_fast": {"raptor": {"use_raptor": False}, "graphrag": {"use_graphrag": False}},
         "book": {"raptor": {"use_raptor": False}, "graphrag": {"use_graphrag": False}},
         "laws": {"raptor": {"use_raptor": False}, "graphrag": {"use_graphrag": False}},
         "presentation": {"raptor": {"use_raptor": False}, "graphrag": {"use_graphrag": False}},
