@@ -254,8 +254,12 @@ def init_settings():
     API_KEY = llm_settings.get("api_key")
 
     global PARSERS
+    # CUSTOM B2B SaaS — paper_fast ajouté au default hardcodé (voir provisioning.py:29
+    # et rag/app/paper_fast.py). Sinon nouveaux tenants créés via init_data.py ou
+    # user_account_service.py ne l'auront pas dans leur parser_ids, et le hook
+    # frontend useSelectParserList le masquera du dropdown.
     PARSERS = llm_settings.get(
-        "parsers", "naive:General,qa:Q&A,resume:Resume,manual:Manual,table:Table,paper:Paper,book:Book,laws:Laws,presentation:Presentation,picture:Picture,one:One,audio:Audio,email:Email,tag:Tag"
+        "parsers", "naive:General,qa:Q&A,resume:Resume,manual:Manual,table:Table,paper:Paper,paper_fast:Paper (fast),book:Book,laws:Laws,presentation:Presentation,picture:Picture,one:One,audio:Audio,email:Email,tag:Tag"
     )
 
     global CHAT_MDL, EMBEDDING_MDL, RERANK_MDL, ASR_MDL, IMAGE2TEXT_MDL

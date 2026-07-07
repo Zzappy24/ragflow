@@ -10,6 +10,8 @@ export const ImageMap = {
   picture: getImageName('media', 2),
   naive: getImageName('naive', 2),
   paper: getImageName('paper', 2),
+  // CUSTOM B2B SaaS — paper_fast utilise les mêmes images d'illustration que paper
+  paper_fast: getImageName('paper', 2),
   presentation: getImageName('presentation', 2),
   qa: getImageName('qa', 2),
   resume: getImageName('resume', 2),
