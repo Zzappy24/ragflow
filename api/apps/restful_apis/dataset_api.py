@@ -126,7 +126,7 @@ async def create(tenant_id: str = None):
               description: Visibility of the dataset (private to me or shared with team).
             chunk_method:
               type: string
-              enum: ["naive", "book", "email", "laws", "manual", "one", "paper",
+              enum: ["naive", "book", "email", "laws", "manual", "one", "paper", "paper_fast",
                      "picture", "presentation", "qa", "table", "tag"]
               description: Chunking method; if omitted, defaults to "naive".
             parser_config:
@@ -280,7 +280,7 @@ async def update(tenant_id, dataset_id):
               description: Updated dataset permission.
             chunk_method:
               type: string
-              enum: ["naive", "book", "email", "laws", "manual", "one", "paper",
+              enum: ["naive", "book", "email", "laws", "manual", "one", "paper", "paper_fast",
                      "picture", "presentation", "qa", "table", "tag"
                      ]
               description: Updated chunking method.
