@@ -444,7 +444,8 @@ def queue_tasks(doc: dict, bucket: str, name: str, priority: int):
         if pages is None:
             pages = 0
         page_size = doc["parser_config"].get("task_page_size") or 12
-        if doc["parser_id"] == "paper":
+        # CUSTOM B2B SaaS — paper_fast hérite de la même task_page_size (22) que paper
+        if doc["parser_id"] in ("paper", "paper_fast"):
             page_size = doc["parser_config"].get("task_page_size") or 22
         if doc["parser_id"] in ["one", "knowledge_graph"] or doc["parser_config"].get("toc_extraction", False):
             page_size = MAXIMUM_TASK_PAGE_NUMBER

@@ -45,11 +45,14 @@ def get_parser(parser_id: str):
         The parser module for the given parser ID.
     """
     from rag.app import laws, paper, presentation, manual, qa, table, book, resume, picture, naive, one, audio, email, tag
+    # CUSTOM B2B SaaS — voir rag/app/paper_fast.py + task_executor.py (FACTORY analogue)
+    from rag.app import paper_fast
 
     factory = {
         "general": naive,
         ParserType.NAIVE.value: naive,
         ParserType.PAPER.value: paper,
+        "paper_fast": paper_fast,  # CUSTOM B2B SaaS
         ParserType.BOOK.value: book,
         ParserType.PRESENTATION.value: presentation,
         ParserType.MANUAL.value: manual,
