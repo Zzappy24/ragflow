@@ -4,6 +4,26 @@ Order matters: revocations/blocks FIRST (security), then team create/update,
 then unfinishable pending_create keys are flagged 'error' (their plaintext
 only ever existed in the lost /key/generate response — admin must recreate).
 Run via POST /api/admin/code/reconcile (Task 5) — cron it in K8s later.
+
+Notes / known limitations:
+- Phase 2 skips teams whose org entitlement is missing OR not "active": a
+  suspended org's pending teams stay pending and converge once the org is
+  reactivated (we don't want to create LiteLLM teams for a suspended org).
+- Phase 3 catches ANY key with sync_status=="pending" and litellm_key_id
+  IS NULL, regardless of the key's own status. A key whose create failed
+  (litellm_key_id=None) can later be swept into status="blocked"/"revoked"
+  by an org-suspension fan-out (upsert_entitlement) — it must still be
+  flagged here, or it would never match phase 1 (needs litellm_key_id) nor
+  the old phase-3 predicate (needed status=="active") and would be stuck
+  forever with no admin visibility.
+- reconcile_all() assumes a single concurrent runner (single-replica
+  CronJob). There is no cross-run lock; overlapping runs could double-create
+  a team despite the alias lookup being racy across processes.
+- Phase 3's IS NULL check can flag a create that is genuinely in-flight
+  (another thread mid-way through create_code_key, between the desired-state
+  insert and the /key/generate call) during its seconds-wide window. Fine at
+  minutes-cadence cron; if hit, create_code_key's later _mark overwrites the
+  row and the 'error' flag needs manual cleanup — rare in practice.
 """
 import logging
 
@@ -40,7 +60,7 @@ def reconcile_all(client=None) -> dict:
             (CodeTeam.sync_status == "pending") & (CodeTeam.status == "active")))
     for team in pending_teams:
         ent = get_entitlement(team.org_id)
-        if ent is None:
+        if ent is None or ent.status != "active":
             continue
         alias = cl.team_alias(team.org_id, team.id)
         try:
@@ -61,11 +81,11 @@ def reconcile_all(client=None) -> dict:
     # --- 3. unfinishable creates: key row exists but generate response was lost ---
     with DB.connection_context():
         orphan_creates = list(CodeKey.select().where(
-            (CodeKey.sync_status == "pending") & (CodeKey.litellm_key_id.is_null(True)) &
-            (CodeKey.status == "active")))
+            (CodeKey.sync_status == "pending") & (CodeKey.litellm_key_id.is_null(True))))
     for key in orphan_creates:
         _mark(CodeKey, key.id, sync_status="error",
               sync_error="generate lost mid-flight; plaintext unrecoverable — recreate the key")
+        report["errors"] += 1
         logger.warning("code_key %s flagged for manual recreate", key.id)
 
     return report
