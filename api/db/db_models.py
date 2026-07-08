@@ -1537,6 +1537,71 @@ class WsGroupDataset(DataBaseModel):
         db_table = "ws_group_dataset"
 
 
+# ============================================================
+# Code Product Models (LiteLLM Teams + Keys + Entitlements)
+# ============================================================
+class CodeEntitlement(DataBaseModel):
+    """Code product entitlement — one row per org. Cyllene-controlled (the 'how much')."""
+    id = CharField(max_length=32, primary_key=True)
+    org_id = CharField(max_length=32, null=False, unique=True, index=True)
+    status = CharField(max_length=16, null=False, default="active", index=True)  # active | suspended
+    org_code_budget = FloatField(null=False, default=0.0)  # EUR per budget_period
+    budget_period = CharField(max_length=8, null=False, default="1mo")  # LiteLLM budget_duration format
+    created_by = CharField(max_length=32, null=False)
+
+    class Meta:
+        db_table = "code_entitlement"
+
+
+class CodeTeam(DataBaseModel):
+    """A client squad = one LiteLLM Team. status = DESIRED state; sync_status tells if LiteLLM matches."""
+    id = CharField(max_length=32, primary_key=True)
+    org_id = CharField(max_length=32, null=False, index=True)
+    name = CharField(max_length=255, null=False)
+    litellm_team_id = CharField(max_length=64, null=True, index=True)
+    max_budget = FloatField(null=False, default=0.0)  # EUR per entitlement.budget_period (cycle imposed)
+    model_access = JSONField(null=True, default=[])  # [] = all models exposed by the proxy
+    status = CharField(max_length=16, null=False, default="active", index=True)  # active | deleted
+    sync_status = CharField(max_length=16, null=False, default="pending", index=True)  # pending | synced | error
+    sync_error = TextField(null=True)
+    created_by = CharField(max_length=32, null=False)
+
+    class Meta:
+        db_table = "code_team"
+
+
+class CodeTeamMember(DataBaseModel):
+    """Delegated code-team admins (spec §4 'Modèle 1'). role kept for future non-admin roles."""
+    id = CharField(max_length=32, primary_key=True)
+    code_team_id = CharField(max_length=32, null=False, index=True)
+    user_id = CharField(max_length=32, null=False, index=True)
+    role = CharField(max_length=16, null=False, default="admin")
+
+    class Meta:
+        db_table = "code_team_member"
+
+
+class CodeKey(DataBaseModel):
+    """A seat/dev = one LiteLLM virtual key. NEVER stores the plaintext key.
+
+    litellm_key_id = hashed token returned by /key/generate (usable for /key/block).
+    status is the DESIRED state: active | revoked (seat-level) | blocked (org suspension fan-out).
+    """
+    id = CharField(max_length=32, primary_key=True)
+    code_team_id = CharField(max_length=32, null=False, index=True)
+    label = CharField(max_length=255, null=False)
+    litellm_key_id = CharField(max_length=128, null=True, index=True)
+    key_masked = CharField(max_length=32, null=True)
+    owner_user_id = CharField(max_length=32, null=True, index=True)
+    status = CharField(max_length=16, null=False, default="active", index=True)  # active | revoked | blocked
+    sync_status = CharField(max_length=16, null=False, default="pending", index=True)  # pending | synced | error
+    sync_error = TextField(null=True)
+    created_by = CharField(max_length=32, null=False)
+
+    class Meta:
+        db_table = "code_key"
+
+
 class AuditLog(DataBaseModel):
     id = CharField(max_length=32, primary_key=True)
     org_id = CharField(max_length=32, null=True, index=True)

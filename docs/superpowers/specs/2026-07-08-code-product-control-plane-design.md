@@ -53,6 +53,7 @@ Tables neuves, accrochées à l'`org` existante.
 |---|---|---|
 | `code_entitlement` | `org_id`, `status` (active/suspended), **`org_code_budget`**, `budget_period`, timestamps | « code activé + budget total de l'org ». **Piloté Cyllene** (levier commercial). |
 | `code_team` | `id`, `org_id` (FK), `name`, **`litellm_team_id`**, `max_budget`, `budget_duration`, `model_access`, `status`, timestamps | une squad = une Team LiteLLM |
+| `code_team_member` | id, code_team_id (FK), user_id (FK), role | délégation « code-team admin » (§4) |
 | `code_key` | `id`, `code_team_id` (FK), `label`, **`litellm_key_id`**, `key_masked`, `owner_user_id?`, `status`, timestamps | un siège/dev = une key |
 
 - **Réutilise** l'existant : `org`, membres, rôles RBAC. Aucune nouvelle notion d'identité.
