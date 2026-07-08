@@ -56,6 +56,8 @@ UI (réutilise les patterns du Dashboard global : `KpiCard`, recharts `AreaChart
 - Mention discrète « Dernier relevé : … »
 - Le tout au-dessus du tableau d'orgs existant (masqué pendant la recherche ? non — reste affiché, simple)
 
+**Auto-refresh (temps réel perçu, charge bornée par la présence)** : le front re-fetch `GET /code/dashboard` toutes les **30 s** tant que la page est **ouverte et visible** (pause via l'API `document.visibilitychange` quand l'onglet est en arrière-plan ; reprise + fetch immédiat au retour). Charge : 2 req/min par admin présent, zéro quand personne ne regarde — les KPIs/tops étant des lectures live LiteLLM + SELECTs snapshots triviaux, pas de risque DB. Pas de WebSocket/SSE (sur-ingénierie pour un écran d'admin).
+
 ## 4. Card Code dans le Dashboard global
 
 Une `Card` « Produit Code » dans `pages/dashboard/index.tsx` : spend total du cycle + orgs actives + alertes budget + lien `→ /code`. Alimentée par le même `GET /code/dashboard` (kpis seulement). Visible selon le même gate que l'onglet Code.
