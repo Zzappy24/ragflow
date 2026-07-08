@@ -15,6 +15,8 @@ def panel_client(monkeypatch, org_with_entitlement_and_users):
     # code_reconcile imports `_client` by name, so it must be patched separately —
     # otherwise reconcile_all() would construct a real LiteLLMClient().
     monkeypatch.setattr(code_reconcile, "_client", lambda client=None: client or fake)
+    # Disable the scheduler for tests (sleep-first means no real run on boot, but disable to be safe)
+    monkeypatch.setenv("ADMIN_CODE_SCHEDULER", "0")
     from management.server.main import app
     return TestClient(app), fake
 
@@ -111,11 +113,15 @@ def test_cross_org_admin_cannot_update_or_revoke(panel_client, org_with_entitlem
     assert k["status"] == "active"
 
 
-def test_reconcile_superuser_only(panel_client, org_with_entitlement_and_users):
+def test_housekeeping_superuser_only_and_records_run(panel_client, org_with_entitlement_and_users):
     client, _ = panel_client
     org_id, tokens = org_with_entitlement_and_users
-    assert client.post("/api/admin/code/reconcile",
+    assert client.post("/api/admin/code/housekeeping",
                        headers=_h(tokens["org_admin"])).status_code == 403
+    r = client.post("/api/admin/code/housekeeping", headers=_h(tokens["superuser"]))
+    assert r.status_code == 200
+    assert "teams_snapshotted" in r.json()
+    # alias rétro-compatible
     assert client.post("/api/admin/code/reconcile",
                        headers=_h(tokens["superuser"])).status_code == 200
 

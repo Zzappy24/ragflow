@@ -45,7 +45,33 @@ async def lifespan(app: FastAPI):
         rag_settings.DOC_ENGINE = os.getenv("DOC_ENGINE", "infinity")
         rag_settings.DOC_ENGINE_INFINITY = True
 
+    # CUSTOM B2B SaaS — Code product : housekeeping scheduler in-process.
+    # Sleep-first (pas de run au boot), DB.lock dans housekeeping() -> multi-replica safe.
+    # Désactivable via ADMIN_CODE_SCHEDULER=0 (tests / TestClient).
+    import asyncio
+    scheduler_task = None
+    if os.getenv("ADMIN_CODE_SCHEDULER", "1") == "1":
+        interval = int(os.getenv("ADMIN_CODE_SCHEDULER_INTERVAL_S", "3600"))
+
+        async def _code_housekeeping_loop():
+            from management.server.services.code_housekeeping import housekeeping
+            while True:
+                await asyncio.sleep(interval)
+                try:
+                    report = await asyncio.to_thread(housekeeping)
+                    logging.info(f"code housekeeping run: {report}")
+                except Exception:
+                    logging.exception("code housekeeping run failed")
+
+        scheduler_task = asyncio.get_running_loop().create_task(_code_housekeeping_loop())
+        logging.info(f"code housekeeping scheduler started (interval={interval}s)")
+    else:
+        logging.warning("code housekeeping scheduler DISABLED (ADMIN_CODE_SCHEDULER=0)")
+
     yield
+
+    if scheduler_task is not None:
+        scheduler_task.cancel()
 
 
 app = FastAPI(

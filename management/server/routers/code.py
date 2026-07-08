@@ -252,7 +252,15 @@ def revoke_key(request: Request, key_id: str, user_id: str = Depends(get_current
     return _key_to_dict(key)
 
 
+@router.post("/code/housekeeping")
+def run_housekeeping(user=Depends(require_superuser)):
+    """Force un passage reconcile + snapshot (le scheduler in-process le fait toutes les heures)."""
+    from management.server.services.code_housekeeping import housekeeping
+    return housekeeping()
+
+
 @router.post("/code/reconcile")
 def reconcile(user=Depends(require_superuser)):
-    from management.server.services.code_reconcile import reconcile_all
-    return reconcile_all()
+    """Alias rétro-compatible de /code/housekeeping."""
+    from management.server.services.code_housekeeping import housekeeping
+    return housekeeping()
