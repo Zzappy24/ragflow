@@ -1558,7 +1558,9 @@ class CodeTeam(DataBaseModel):
     id = CharField(max_length=32, primary_key=True)
     org_id = CharField(max_length=32, null=False, index=True)
     name = CharField(max_length=255, null=False)
-    litellm_team_id = CharField(max_length=64, null=True, index=True)
+    # 128: deterministic alias "org:<32-hex>:team:<32-hex>" (+ LiteLLM-side prefix) can
+    # exceed 64 and get silently truncated by MySQL in non-strict mode (bug found in Task 3 tests).
+    litellm_team_id = CharField(max_length=128, null=True, index=True)
     max_budget = FloatField(null=False, default=0.0)  # EUR per entitlement.budget_period (cycle imposed)
     model_access = JSONField(null=True, default=[])  # [] = all models exposed by the proxy
     status = CharField(max_length=16, null=False, default="active", index=True)  # active | deleted
@@ -2081,6 +2083,10 @@ def migrate_db():
 
     # RBAC Multi-Tenant: composite unique indexes
     _add_rbac_unique_indexes(migrator)
+
+    # CUSTOM B2B SaaS — code_team.litellm_team_id was varchar(64); the deterministic
+    # alias format silently truncated on MySQL non-strict mode. Widen to 128.
+    alter_db_column_type(migrator, "code_team", "litellm_team_id", CharField(max_length=128, null=True, index=True))
 
 
 def _add_rbac_unique_indexes(migrator):
