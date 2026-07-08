@@ -74,11 +74,11 @@ PYTHONPATH=$(pwd) DOC_ENGINE=infinity ADMIN_JWT_SECRET=<secret> \
   uv run python api/ragflow_server.py >> /tmp/ragflow.log 2>&1 &
 ```
 
-### Admin panel backend (port 8000)
+### Admin panel backend (port 9381)
 ```bash
 cd /path/to/ragflow/management
 PATH=/Users/zappy/.local/bin:/opt/homebrew/bin:$PATH \
-  uv run uvicorn server.main:app --host 0.0.0.0 --port 8000 --reload
+  RSA_PASSPHRASE=Welcome ADMIN_JWT_SECRET=<from .env.local> uv run uvicorn server.main:app --host 0.0.0.0 --port 9381 --reload  # 9381 = cible du proxy vite
 ```
 > `--reload` recharge automatiquement les fichiers `management/` mais **pas** les fichiers `api/`.
 > Toute modification dans `api/` nécessite un redémarrage manuel du RAGFlow backend.
