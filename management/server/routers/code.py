@@ -157,7 +157,10 @@ def revoke_key(request: Request, key_id: str, user_id: str = Depends(get_current
         raise HTTPException(status_code=404, detail="Key not found")
     user = require_code_team_admin(key.code_team_id, user_id)
     from management.server.services import code_provisioning as cp
-    key = cp.revoke_code_key(code_key_id=key_id)
+    try:
+        key = cp.revoke_code_key(code_key_id=key_id)
+    except ValueError as e:
+        raise HTTPException(status_code=422, detail=str(e))
     audit_svc.record(request=request, actor_user_id=user.id, action=audit_svc.CODE_KEY_REVOKE,
                      org_id=None, resource_type="code_key", resource_id=key_id,
                      details={"label": key.label})

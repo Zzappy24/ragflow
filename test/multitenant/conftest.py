@@ -288,3 +288,35 @@ def org_with_entitlement_and_users():
         OrgMember.delete().where(OrgMember.org_id == org_id).execute()
         User.delete().where(User.id.in_(list(user_ids.values()))).execute()
         Organisation.delete().where(Organisation.id == org_id).execute()
+
+
+@pytest.fixture()
+def second_org_admin():
+    """A second, unrelated org with its own org_admin — for cross-org IDOR tests.
+
+    Yields (org_id, access_token, admin_email). Not a member of the org created
+    by org_with_entitlement_and_users, so it can be used to prove that org A's
+    resources (teams/keys) are inaccessible to org B's admin.
+    """
+    from api.db.db_models import DB, Organisation, User, OrgMember
+    from common.misc_utils import get_uuid
+    from management.server.auth.jwt import create_access_token
+
+    org_id = get_uuid()
+    uid = get_uuid()
+    email = f"code-rbac-org-b-admin-{uid[:6]}@example.com"
+    with DB.connection_context():
+        Organisation.create(id=org_id, name=f"code-rbac-b-{org_id[:6]}",
+                            slug=f"code-rbac-b-{org_id[:6]}", created_by="tester")
+        User.create(id=uid, nickname="code-rbac-org-b-admin", email=email,
+                   password="x", is_superuser=False)
+        OrgMember.create(id=get_uuid(), org_id=org_id, user_id=uid, role="org_admin")
+
+    token = create_access_token(uid)
+
+    yield org_id, token, email
+
+    with DB.connection_context():
+        OrgMember.delete().where(OrgMember.org_id == org_id).execute()
+        User.delete().where(User.id == uid).execute()
+        Organisation.delete().where(Organisation.id == org_id).execute()

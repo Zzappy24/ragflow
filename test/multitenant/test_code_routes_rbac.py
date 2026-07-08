@@ -9,9 +9,12 @@ pytestmark = pytest.mark.p1
 def panel_client(monkeypatch, org_with_entitlement_and_users):
     """TestClient over management.server.main:app with LiteLLM faked at module level."""
     from test.multitenant.test_code_provisioning import FakeLiteLLM
-    from management.server.services import code_provisioning
+    from management.server.services import code_provisioning, code_reconcile
     fake = FakeLiteLLM()
     monkeypatch.setattr(code_provisioning, "_client", lambda client=None: client or fake)
+    # code_reconcile imports `_client` by name, so it must be patched separately —
+    # otherwise reconcile_all() would construct a real LiteLLMClient().
+    monkeypatch.setattr(code_reconcile, "_client", lambda client=None: client or fake)
     from management.server.main import app
     return TestClient(app), fake
 
@@ -77,3 +80,56 @@ def test_allocation_violation_returns_422(panel_client, org_with_entitlement_and
                     headers=_h(tokens["org_admin"]))
     assert r.status_code == 422
     assert "allocation" in r.json()["detail"]
+
+
+def test_cross_org_admin_cannot_update_or_revoke(panel_client, org_with_entitlement_and_users,
+                                                 second_org_admin):
+    client, _ = panel_client
+    org_id, tokens = org_with_entitlement_and_users
+    _, org_b_token, _ = second_org_admin
+
+    team = client.post(f"/api/admin/orgs/{org_id}/code/teams",
+                       json={"name": "a-team", "max_budget": 10.0, "model_access": []},
+                       headers=_h(tokens["org_admin"])).json()
+    key = client.post(f"/api/admin/code/teams/{team['id']}/keys",
+                      json={"label": "dev"}, headers=_h(tokens["org_admin"])).json()["key"]
+
+    # org B's admin has no relationship to org A's team/key -> 403 on both routes
+    r = client.put(f"/api/admin/code/teams/{team['id']}",
+                   json={"max_budget": 5.0}, headers=_h(org_b_token))
+    assert r.status_code == 403
+
+    r = client.post(f"/api/admin/code/keys/{key['id']}/revoke", headers=_h(org_b_token))
+    assert r.status_code == 403
+
+    # verify nothing changed, as seen by org A's own admin
+    ov = client.get(f"/api/admin/orgs/{org_id}/code/overview",
+                    headers=_h(tokens["org_admin"])).json()
+    t = next(t for t in ov["teams"] if t["id"] == team["id"])
+    assert t["max_budget"] == 10.0
+    k = next(k for k in t["keys"] if k["id"] == key["id"])
+    assert k["status"] == "active"
+
+
+def test_reconcile_superuser_only(panel_client, org_with_entitlement_and_users):
+    client, _ = panel_client
+    org_id, tokens = org_with_entitlement_and_users
+    assert client.post("/api/admin/code/reconcile",
+                       headers=_h(tokens["org_admin"])).status_code == 403
+    assert client.post("/api/admin/code/reconcile",
+                       headers=_h(tokens["superuser"])).status_code == 200
+
+
+def test_add_team_admin_rejects_non_org_member(panel_client, org_with_entitlement_and_users,
+                                               second_org_admin):
+    client, _ = panel_client
+    org_id, tokens = org_with_entitlement_and_users
+    _, _, org_b_admin_email = second_org_admin
+
+    team = client.post(f"/api/admin/orgs/{org_id}/code/teams",
+                       json={"name": "a-team2", "max_budget": 10.0, "model_access": []},
+                       headers=_h(tokens["org_admin"])).json()
+
+    r = client.post(f"/api/admin/code/teams/{team['id']}/admins",
+                    json={"email": org_b_admin_email}, headers=_h(tokens["org_admin"]))
+    assert r.status_code == 422
