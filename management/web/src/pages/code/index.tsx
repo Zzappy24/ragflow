@@ -1,6 +1,6 @@
 import { useEffect, useState, useCallback } from 'react';
 import { useSearchParams } from 'react-router-dom';
-import { Table, Button, Card, Modal, Form, Input, InputNumber, Select, App, Progress, Tag, Popconfirm, Space, Typography, Alert } from 'antd';
+import { Table, Button, Card, Modal, Form, Input, InputNumber, App, Progress, Tag, Popconfirm, Space, Typography, Alert } from 'antd';
 import { PlusOutlined, StopOutlined, CopyOutlined } from '@ant-design/icons';
 import api from '@/lib/api';
 
@@ -11,7 +11,12 @@ interface Overview {
   allocated: number;
   teams: CodeTeam[];
 }
-interface OrgOption { id: string; name: string; }
+interface OrgSummary {
+  org_id: string; org_name: string;
+  code_status: 'active' | 'suspended' | null;
+  org_code_budget: number; allocated: number;
+  teams_count: number; keys_count: number;
+}
 
 export default function CodePage() {
   const [searchParams, setSearchParams] = useSearchParams();
@@ -26,27 +31,27 @@ export default function CodePage() {
   const [keyForm] = Form.useForm();
   const { message } = App.useApp();
 
-  // No ?org= yet: figure out which org(s) the caller can see (same /orgs
-  // endpoint the Organisations page uses — superusers get every org,
-  // everyone else only the orgs they're a member of). A single visible org
-  // is auto-selected; several render a picker instead of a dead end.
-  const [orgOptions, setOrgOptions] = useState<OrgOption[] | null>(null);
-  const [orgOptionsLoading, setOrgOptionsLoading] = useState(false);
+  // No ?org= yet: landing = searchable orgs table with code status per org
+  // (GET /code/orgs-summary — superusers see every org, everyone else only
+  // their memberships). A single visible org is auto-selected. Row click
+  // pushes ?org= into the URL so the browser back button works.
+  const [summary, setSummary] = useState<OrgSummary[] | null>(null);
+  const [summaryError, setSummaryError] = useState(false);
+  const [orgSearch, setOrgSearch] = useState('');
 
   useEffect(() => {
     if (orgId) return;
-    setOrgOptionsLoading(true);
-    api.get('/orgs')
-      .then((res) => setOrgOptions(res.data))
-      .catch(() => setOrgOptions([]))
-      .finally(() => setOrgOptionsLoading(false));
+    setSummaryError(false);
+    api.get('/code/orgs-summary')
+      .then((res) => setSummary(res.data))
+      .catch(() => { setSummary([]); setSummaryError(true); });
   }, [orgId]);
 
   useEffect(() => {
-    if (!orgId && orgOptions && orgOptions.length === 1) {
-      setSearchParams({ org: orgOptions[0].id });
+    if (!orgId && summary && summary.length === 1) {
+      setSearchParams({ org: summary[0].org_id });
     }
-  }, [orgId, orgOptions, setSearchParams]);
+  }, [orgId, summary, setSearchParams]);
 
   const fetchOverview = useCallback(() => {
     if (!orgId) { setLoading(false); return; }
@@ -108,36 +113,76 @@ export default function CodePage() {
     }
   };
 
+  const statusTag = (s: OrgSummary['code_status']) =>
+    s === 'active' ? <Tag color="green">actif</Tag>
+    : s === 'suspended' ? <Tag color="orange">suspendu</Tag>
+    : <Tag>non activé</Tag>;
+
   if (!orgId) {
-    if (orgOptionsLoading || orgOptions === null) return <Card loading />;
-    if (orgOptions.length === 0)
+    if (summaryError)
+      return <Card><Alert type="error" showIcon message="Impossible de charger les organisations." /></Card>;
+    if (summary && summary.length === 0)
       return <Card><Alert type="info" message="Aucune organisation disponible pour ton compte." /></Card>;
-    // orgOptions.length === 1 is handled by the auto-select effect above —
-    // this only renders once there's a real choice to make.
+    // summary.length === 1 is handled by the auto-select effect above —
+    // the table only renders once there's a real choice to make.
+    const statusRank: Record<string, number> = { active: 0, suspended: 1 };
+    const filtered = (summary ?? [])
+      .filter((o) => o.org_name.toLowerCase().includes(orgSearch.toLowerCase()))
+      .sort((a, b) =>
+        (statusRank[a.code_status ?? 'z'] ?? 2) - (statusRank[b.code_status ?? 'z'] ?? 2)
+        || a.org_name.localeCompare(b.org_name));
     return (
-      <Card>
-        <p className="mb-2 text-gray-500">Sélectionne une organisation :</p>
-        <Select
-          className="w-full max-w-sm"
-          placeholder="Organisation"
-          options={orgOptions.map((o) => ({ value: o.id, label: o.name }))}
-          onChange={(value: string) => setSearchParams({ org: value })}
-        />
-      </Card>
+      <div>
+        <div className="flex justify-between items-center mb-4">
+          <h2 className="text-xl font-semibold">Code — accès gateway</h2>
+          <Input.Search placeholder="Rechercher une organisation…" allowClear
+            style={{ width: 320 }} value={orgSearch}
+            onChange={(e) => setOrgSearch(e.target.value)} />
+        </div>
+        <Card>
+          <Table rowKey="org_id" size="middle" loading={summary === null}
+            pagination={false} dataSource={filtered}
+            onRow={(r) => ({ onClick: () => setSearchParams({ org: r.org_id }), style: { cursor: 'pointer' } })}
+            columns={[
+              { title: 'Organisation', dataIndex: 'org_name' },
+              { title: 'Statut', dataIndex: 'code_status', width: 130, render: statusTag },
+              { title: 'Budget', width: 180,
+                render: (_, r: OrgSummary) => r.code_status ? `${r.allocated} € / ${r.org_code_budget} €` : '—' },
+              { title: 'Teams', dataIndex: 'teams_count', width: 90,
+                render: (v: number, r: OrgSummary) => (r.code_status ? v : '—') },
+              { title: 'Clés', dataIndex: 'keys_count', width: 90,
+                render: (v: number, r: OrgSummary) => (r.code_status ? v : '—') },
+            ]} />
+        </Card>
+      </div>
     );
   }
+
+  const backLink = (
+    <Button type="link" className="px-0 mb-2" onClick={() => setSearchParams({})}>
+      ← Toutes les organisations
+    </Button>
+  );
   if (!loading && loadError)
     return (
-      <Card>
-        <Alert
-          type="error"
-          showIcon
-          message={loadError === 'forbidden' ? 'Accès refusé à cette organisation' : 'Accès refusé ou erreur de chargement'}
-        />
-      </Card>
+      <div>
+        {backLink}
+        <Card>
+          <Alert
+            type="error"
+            showIcon
+            message={loadError === 'forbidden' ? 'Accès refusé à cette organisation' : 'Accès refusé ou erreur de chargement'}
+          />
+        </Card>
+      </div>
     );
   if (!loading && overview && !overview.entitlement)
-    return <Card><Alert type="info" message="Le produit Code n'est pas activé pour cette organisation." /></Card>;
+    return (
+      <div>
+        {backLink}
+        <Card><Alert type="info" message="Le produit Code n'est pas activé pour cette organisation." /></Card>
+      </div>
+    );
 
   const ent = overview?.entitlement;
   const allocated = overview?.allocated ?? 0;
@@ -160,8 +205,13 @@ export default function CodePage() {
 
   return (
     <div>
+      {backLink}
       <div className="flex justify-between items-center mb-4">
-        <h2 className="text-xl font-semibold">Code — accès gateway</h2>
+        <h2 className="text-xl font-semibold">
+          Code — accès gateway
+          {ent?.status === 'active' && <Tag color="green" className="ml-2">actif</Tag>}
+          {ent?.status === 'suspended' && <Tag color="orange" className="ml-2">suspendu</Tag>}
+        </h2>
         <Button type="primary" icon={<PlusOutlined />} onClick={() => setTeamModal(true)}>
           Nouvelle code-team
         </Button>
