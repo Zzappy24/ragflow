@@ -92,6 +92,66 @@ def orgs_summary(user=Depends(get_current_user)):
     return out
 
 
+@router.get("/code/dashboard")
+def code_dashboard(user=Depends(get_current_user)):
+    """KPIs + courbe 30j + tops. Lecture pure (live LiteLLM + snapshots), n'écrit jamais."""
+    from api.db.db_models import DB, CodeTeam, CodeKey, Organisation
+    from api.db.services.org_service import OrgMemberService
+    from management.server.services import code_provisioning as cp
+    from management.server.services.code_housekeeping import daily_spend_series, last_run
+
+    if user.is_superuser:
+        org_ids = None
+    else:
+        org_ids = [m.org_id for m in OrgMemberService.list_orgs_for_user(user.id)]
+        if not org_ids:
+            raise HTTPException(status_code=403, detail="Org membership required")
+
+    with DB.connection_context():
+        tq = CodeTeam.select().where(CodeTeam.status == "active")
+        if org_ids is not None:
+            tq = tq.where(CodeTeam.org_id.in_(org_ids))
+        teams = list(tq)
+        team_ids = [t.id for t in teams]
+        active_keys = (CodeKey.select().where(
+            (CodeKey.code_team_id.in_(team_ids)) & (CodeKey.status == "active")).count()
+            if team_ids else 0)
+        org_names = {o.id: o.name for o in Organisation.select(Organisation.id, Organisation.name)
+                     .where(Organisation.id.in_(list({t.org_id for t in teams})))} if teams else {}
+
+    spend_map = cp.spend_by_litellm_team()
+    def _spend(t):
+        if spend_map is None or not t.litellm_team_id:
+            return None
+        return spend_map.get(t.litellm_team_id, 0.0)
+
+    team_spends = [(t, _spend(t)) for t in teams]
+    known = [(t, s) for t, s in team_spends if s is not None]
+    cycle_spend = round(sum(s for _, s in known), 4) if spend_map is not None else None
+    alerts = sum(1 for t, s in known if t.max_budget > 0 and s >= 0.8 * t.max_budget)
+
+    by_org: dict[str, float] = {}
+    for t, s in known:
+        by_org[t.org_id] = by_org.get(t.org_id, 0.0) + s
+    top_orgs = [{"org_id": oid, "org_name": org_names.get(oid, oid), "spend": round(sp, 4)}
+                for oid, sp in sorted(by_org.items(), key=lambda x: -x[1])[:5]]
+    top_teams = [{"code_team_id": t.id, "name": t.name,
+                  "org_name": org_names.get(t.org_id, t.org_id),
+                  "spend": round(s, 4), "max_budget": t.max_budget}
+                 for t, s in sorted(known, key=lambda x: -x[1])[:5]]
+
+    run = last_run()
+    return {
+        "kpis": {"cycle_spend": cycle_spend,
+                 "active_orgs": len({t.org_id for t in teams}),
+                 "teams": len(teams), "active_keys": active_keys,
+                 "budget_alerts": alerts},
+        "daily": daily_spend_series(org_ids, days=30),
+        "top_orgs": top_orgs, "top_teams": top_teams,
+        "last_housekeeping_at": run.ran_at.isoformat() if run else None,
+    }
+
+
 @router.put("/orgs/{org_id}/code/entitlement")
 def set_entitlement(request: Request, org_id: str, body: CodeEntitlementUpsert,
                     user=Depends(require_superuser)):
@@ -126,13 +186,28 @@ def code_overview(org_id: str, user_id: str = Depends(get_current_user_id)):
     with DB.connection_context():
         teams = list(CodeTeam.select().where(
             (CodeTeam.org_id == org_id) & (CodeTeam.status == "active")))
-        keys_by_team = {}
-        for t in teams:
-            keys_by_team[t.id] = [_key_to_dict(k) for k in
-                                  CodeKey.select().where(CodeKey.code_team_id == t.id)]
+
     # Real consumption from the gateway (single /team/list call).
     # None = gateway unreachable — the front renders "—", never 0.
     spend_map = cp.spend_by_litellm_team()
+
+    with DB.connection_context():
+        keys_by_team = {}
+        for t in teams:
+            key_rows = list(CodeKey.select().where(CodeKey.code_team_id == t.id))
+            key_spend = None
+            if spend_map is not None and t.litellm_team_id:
+                try:
+                    from management.server.services.code_provisioning import _client
+                    key_spend = {k.get("token"): float(k.get("spend") or 0.0)
+                                 for k in _client().list_keys(t.litellm_team_id)}
+                except Exception:
+                    key_spend = None
+            keys_by_team[t.id] = [
+                {**_key_to_dict(k),
+                 "spend": (key_spend or {}).get(k.litellm_key_id) if key_spend is not None else None}
+                for k in key_rows]
+
     def _spend(t):
         if spend_map is None or not t.litellm_team_id:
             return None

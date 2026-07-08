@@ -204,3 +204,40 @@ def test_spend_is_null_not_zero_when_gateway_down(panel_client, org_with_entitle
     rows = client.get("/api/admin/code/orgs-summary", headers=_h(tokens["superuser"])).json()
     mine = next(r for r in rows if r["org_id"] == org_id)
     assert mine["spend"] is None
+
+
+def test_overview_exposes_per_key_spend(panel_client, org_with_entitlement_and_users):
+    client, fake = panel_client
+    org_id, tokens = org_with_entitlement_and_users
+    team = client.post(f"/api/admin/orgs/{org_id}/code/teams",
+                       json={"name": "s", "max_budget": 40.0, "model_access": []},
+                       headers=_h(tokens["org_admin"])).json()
+    key = client.post(f"/api/admin/code/teams/{team['id']}/keys",
+                      json={"label": "dev-x"}, headers=_h(tokens["org_admin"])).json()["key"]
+    token = next(iter(fake.keys))
+    fake.keys[token]["spend"] = 4.2
+
+    ov = client.get(f"/api/admin/orgs/{org_id}/code/overview", headers=_h(tokens["org_admin"])).json()
+    key_row = next(k for k in ov["teams"][0]["keys"] if k["id"] == key["id"])
+    assert key_row["spend"] == 4.2
+
+
+def test_dashboard_rbac_and_shape(panel_client, org_with_entitlement_and_users, second_org_admin):
+    client, fake = panel_client
+    org_id, tokens = org_with_entitlement_and_users
+    team = client.post(f"/api/admin/orgs/{org_id}/code/teams",
+                       json={"name": "s", "max_budget": 40.0, "model_access": []},
+                       headers=_h(tokens["org_admin"])).json()
+    fake.teams[team["litellm_team_id"]]["spend"] = 39.0  # ≥ 80% de 40 → alerte
+
+    d = client.get("/api/admin/code/dashboard", headers=_h(tokens["superuser"])).json()
+    assert d["kpis"]["cycle_spend"] == 39.0
+    assert d["kpis"]["teams"] >= 1 and d["kpis"]["budget_alerts"] >= 1
+    assert isinstance(d["daily"], list)
+    assert any(t["code_team_id"] == team["id"] for t in d["top_teams"])
+
+    # scoped : l'admin de l'org B ne voit pas le spend de l'org A
+    org_b_id, org_b_token, _ = second_org_admin
+    db = client.get("/api/admin/code/dashboard", headers=_h(org_b_token)).json()
+    assert all(t["code_team_id"] != team["id"] for t in db["top_teams"])
+    assert db["kpis"]["cycle_spend"] in (0.0, None)

@@ -11,6 +11,7 @@ class FakeLiteLLM:
         self.teams: dict[str, dict] = {}
         self.blocked: set[str] = set()
         self.calls: list[tuple] = []
+        self.keys: dict[str, dict] = {}
 
     @staticmethod
     def team_alias(org_id, code_team_id):
@@ -52,7 +53,13 @@ class FakeLiteLLM:
     def generate_key(self, *, team_id, alias):
         self._maybe_down()
         self.calls.append(("generate_key", alias))
+        self.keys[f"hash-{alias}"] = {"team_id": team_id, "key_alias": alias, "spend": 0.0}
         return {"plain_key": f"sk-{alias}-secret", "token": f"hash-{alias}", "masked": "sk-...cret"}
+
+    def list_keys(self, team_id):
+        self._maybe_down()
+        return [{"token": tok, "key_alias": k["key_alias"], "spend": k.get("spend", 0.0)}
+                for tok, k in self.keys.items() if k["team_id"] == team_id]
 
     def block_key(self, token):
         self._maybe_down()
