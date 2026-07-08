@@ -486,6 +486,9 @@ export default function OrgDetailPage() {
   const [quotaForm, setQuotaForm] = useState<{ max_tokens_monthly: number; allow_overage: boolean }>({ max_tokens_monthly: 0, allow_overage: true });
   const [savingQuota, setSavingQuota] = useState(false);
   const [codeForm] = Form.useForm();
+  const [codeLoading, setCodeLoading] = useState(true);
+  const [codeError, setCodeError] = useState(false);
+  const [codeBudgetPeriod, setCodeBudgetPeriod] = useState('1mo');
 
   const handleArchive = async () => {
     setArchiving(true);
@@ -563,13 +566,19 @@ export default function OrgDetailPage() {
 
   useEffect(() => {
     if (!orgId || !user?.is_superuser) return;
+    setCodeLoading(true);
+    setCodeError(false);
     api.get(`/orgs/${orgId}/code/overview`).then((r) => {
       codeForm.setFieldsValue({
         enabled: r.data.entitlement?.status === 'active',
         org_code_budget: r.data.entitlement?.org_code_budget ?? 0,
       });
-    }).catch(() => {});
-  }, [orgId, user?.is_superuser, codeForm]);
+      setCodeBudgetPeriod(r.data.entitlement?.budget_period ?? '1mo');
+    }).catch(() => {
+      setCodeError(true);
+      message.error("Impossible de charger l'entitlement");
+    }).finally(() => setCodeLoading(false));
+  }, [orgId, user?.is_superuser, codeForm, message]);
 
   useEffect(() => {
     if (!orgId) return;
@@ -848,16 +857,34 @@ export default function OrgDetailPage() {
           className="mt-8"
           extra={<Link to={`/code?org=${orgId}`}>Gérer les code-teams →</Link>}
         >
+          {codeError && (
+            <Alert
+              className="mb-3"
+              type="error"
+              showIcon
+              message="Impossible de charger l'entitlement — rechargez avant de modifier"
+            />
+          )}
+          {codeLoading && !codeError && (
+            <div className="mb-3 text-gray-400 text-sm">
+              <Spin size="small" /> Chargement de l'entitlement…
+            </div>
+          )}
           <Form
             form={codeForm}
             layout="inline"
+            disabled={codeLoading || codeError}
             onFinish={async (v) => {
-              await api.put(`/orgs/${orgId}/code/entitlement`, {
-                status: v.enabled ? 'active' : 'suspended',
-                org_code_budget: v.org_code_budget,
-                budget_period: '1mo',
-              });
-              message.success('Entitlement mis à jour');
+              try {
+                await api.put(`/orgs/${orgId}/code/entitlement`, {
+                  status: v.enabled ? 'active' : 'suspended',
+                  org_code_budget: v.org_code_budget,
+                  budget_period: codeBudgetPeriod,
+                });
+                message.success('Entitlement mis à jour');
+              } catch (err: any) {
+                message.error(err?.response?.data?.detail ?? "Échec de la mise à jour de l'entitlement");
+              }
             }}
           >
             <Form.Item name="enabled" label="Activé" valuePropName="checked" initialValue={false}>
@@ -866,7 +893,7 @@ export default function OrgDetailPage() {
             <Form.Item name="org_code_budget" label="Budget (€/mois)" initialValue={0}>
               <InputNumber min={0} />
             </Form.Item>
-            <Button htmlType="submit" type="primary">Enregistrer</Button>
+            <Button htmlType="submit" type="primary" disabled={codeLoading || codeError}>Enregistrer</Button>
           </Form>
         </Card>
       )}

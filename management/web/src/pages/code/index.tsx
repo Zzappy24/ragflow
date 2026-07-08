@@ -17,6 +17,7 @@ export default function CodePage() {
   const orgId = searchParams.get('org') || '';
   const [overview, setOverview] = useState<Overview | null>(null);
   const [loading, setLoading] = useState(true);
+  const [loadError, setLoadError] = useState<'forbidden' | 'other' | null>(null);
   const [teamModal, setTeamModal] = useState(false);
   const [keyModalTeam, setKeyModalTeam] = useState<CodeTeam | null>(null);
   const [freshKey, setFreshKey] = useState<string | null>(null);
@@ -27,8 +28,14 @@ export default function CodePage() {
   const fetchOverview = useCallback(() => {
     if (!orgId) { setLoading(false); return; }
     setLoading(true);
+    setLoadError(null);
     api.get(`/orgs/${orgId}/code/overview`)
       .then((res) => setOverview(res.data))
+      .catch((err: unknown) => {
+        const status = (err as { response?: { status?: number } })?.response?.status;
+        setLoadError(status === 403 ? 'forbidden' : 'other');
+        setOverview(null);
+      })
       .finally(() => setLoading(false));
   }, [orgId]);
 
@@ -68,12 +75,27 @@ export default function CodePage() {
   };
 
   const onRevoke = async (keyId: string) => {
-    await api.post(`/code/keys/${keyId}/revoke`);
-    message.success('Clé révoquée');
-    fetchOverview();
+    try {
+      await api.post(`/code/keys/${keyId}/revoke`);
+      message.success('Clé révoquée');
+      fetchOverview();
+    } catch (err: unknown) {
+      const msg = (err as { response?: { data?: { detail?: string } } })?.response?.data?.detail;
+      message.error(msg ?? 'Échec de la révocation de la clé');
+    }
   };
 
   if (!orgId) return <Card><p className="text-gray-500">Sélectionne une organisation : <code>?org=ORG_ID</code></p></Card>;
+  if (!loading && loadError)
+    return (
+      <Card>
+        <Alert
+          type="error"
+          showIcon
+          message={loadError === 'forbidden' ? 'Accès refusé à cette organisation' : 'Accès refusé ou erreur de chargement'}
+        />
+      </Card>
+    );
   if (!loading && overview && !overview.entitlement)
     return <Card><Alert type="info" message="Le produit Code n'est pas activé pour cette organisation." /></Card>;
 
@@ -110,7 +132,7 @@ export default function CodePage() {
       )}
 
       <Card className="mb-4" title="Budget de l'organisation">
-        <Progress percent={total ? Math.round((allocated / total) * 100) : 0}
+        <Progress percent={total ? Math.min(100, Math.round((allocated / total) * 100)) : 0}
                   format={() => `${allocated} € alloués / ${total} € (${ent?.budget_period})`} />
       </Card>
 
