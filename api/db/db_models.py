@@ -36,6 +36,7 @@ from peewee import (
     BooleanField,
     CharField,
     CompositeKey,
+    DateField,
     DateTimeField,
     Field,
     FloatField,
@@ -1606,6 +1607,37 @@ class CodeKey(DataBaseModel):
         db_table = "code_key"
 
 
+class CodeSpendSnapshot(DataBaseModel):
+    """Daily cumulative-spend snapshot per code team (source of the dashboard curve).
+
+    spend is the CYCLE-CUMULATIVE value LiteLLM reports at snapshot time; the
+    daily curve is the delta between consecutive snapshots (negative delta =
+    cycle reset -> that day's delta is the day's raw value).
+    """
+    id = CharField(max_length=32, primary_key=True)
+    snap_date = DateField(null=False, index=True)
+    org_id = CharField(max_length=32, null=False, index=True)
+    code_team_id = CharField(max_length=32, null=False, index=True)
+    spend = FloatField(null=False, default=0.0)
+    max_budget = FloatField(null=False, default=0.0)
+
+    class Meta:
+        db_table = "code_spend_snapshot"
+
+
+class CodeHousekeepingRun(DataBaseModel):
+    """One row per housekeeping pass (reconcile + snapshot) — scheduler observability."""
+    id = CharField(max_length=32, primary_key=True)
+    ran_at = DateTimeField(null=False, index=True)
+    teams_snapshotted = IntegerField(null=False, default=0)
+    teams_synced = IntegerField(null=False, default=0)
+    keys_synced = IntegerField(null=False, default=0)
+    errors = IntegerField(null=False, default=0)
+
+    class Meta:
+        db_table = "code_housekeeping_run"
+
+
 # ============================================================
 # END CUSTOM B2B SaaS — Code product tables
 # ============================================================
@@ -2104,6 +2136,8 @@ def _add_rbac_unique_indexes(migrator):
         ("ws_group_dataset", ("group_id", "dataset_id"), True),
         # CUSTOM B2B SaaS — Code product: a user can only be delegated once per code team.
         ("code_team_member", ("code_team_id", "user_id"), True),
+        # CUSTOM B2B SaaS — Code product: one snapshot per day per team (upsert semantics).
+        ("code_spend_snapshot", ("snap_date", "code_team_id"), True),
     ]
     for table, columns, unique in indexes:
         try:
