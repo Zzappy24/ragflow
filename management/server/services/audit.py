@@ -41,6 +41,12 @@ WS_MEMBER_ADD = "WS_MEMBER_ADD"
 WS_MEMBER_REMOVE = "WS_MEMBER_REMOVE"
 WS_MEMBER_ROLE_CHANGE = "WS_MEMBER_ROLE_CHANGE"
 
+# Code product
+CODE_ENTITLEMENT_SET = "code.entitlement.set"
+CODE_TEAM_CREATE = "code.team.create"
+CODE_KEY_CREATE = "code.key.create"
+CODE_KEY_REVOKE = "code.key.revoke"
+
 
 # ---------------------------------------------------------------------------
 # Helper

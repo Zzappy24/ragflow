@@ -130,3 +130,32 @@ def require_ws_member(ws_id: str, user_id: str = Depends(get_current_user_id)):
             detail="Workspace membership required",
         )
     return user
+
+
+def require_code_team_admin(team_id: str, user_id: str = Depends(get_current_user_id)):
+    """Superuser, org_admin of the team's org, or delegated CodeTeamMember admin."""
+    user = _load_user(user_id)
+    if not user:
+        raise HTTPException(status_code=status.HTTP_401_UNAUTHORIZED, detail="User not found")
+    if user.is_superuser:
+        return user
+
+    from api.db.db_models import DB, CodeTeam, CodeTeamMember
+    with DB.connection_context():
+        team = CodeTeam.get_or_none(CodeTeam.id == team_id)
+    if team is None or team.status != "active":
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Code team not found")
+
+    from api.db.services.org_service import OrgMemberService
+    membership = OrgMemberService.get_membership(team.org_id, user_id)
+    if membership and membership.role == "org_admin":
+        return user
+
+    with DB.connection_context():
+        delegated = CodeTeamMember.get_or_none(
+            (CodeTeamMember.code_team_id == team_id) &
+            (CodeTeamMember.user_id == user_id) & (CodeTeamMember.role == "admin"))
+    if not delegated:
+        raise HTTPException(status_code=status.HTTP_403_FORBIDDEN,
+                            detail="Code team admin access required")
+    return user

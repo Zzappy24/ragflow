@@ -212,6 +212,7 @@ test = [
     "pycryptodomex==3.20.0",
     "pytest-playwright>=0.7.2",
     "codecov>=2.1.13",
+    "httpx2>=2.5.0",  # starlette.testclient.TestClient requires it (httpx is deprecated there)
 ]
 
 [tool.uv]

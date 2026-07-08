@@ -2,7 +2,9 @@
 Pydantic schemas for the admin panel API.
 """
 from datetime import datetime
-from pydantic import BaseModel, Field
+from typing import Literal
+
+from pydantic import BaseModel, Field, field_validator
 
 
 # -- Auth -------------------------------------------------------------------
@@ -258,3 +260,40 @@ class SystemStats(BaseModel):
     total_users: int = 0
     total_datasets: int = 0
     total_documents: int = 0
+
+
+# -- Code product -------------------------------------------------------------
+
+class CodeEntitlementUpsert(BaseModel):
+    status: Literal["active", "suspended"]
+    org_code_budget: float = Field(ge=0)
+    budget_period: str = "1mo"
+
+
+class CodeTeamCreate(BaseModel):
+    name: str = Field(min_length=1, max_length=255)
+    max_budget: float = Field(gt=0)
+    model_access: list[str] = []
+
+
+class CodeTeamUpdate(BaseModel):
+    max_budget: float = Field(gt=0)
+
+
+class CodeTeamAdminAdd(BaseModel):
+    # NOTE: email-validator is not a project dependency (not in
+    # management/server/requirements.txt), so pydantic's EmailStr cannot be
+    # used here without adding it. A minimal manual check stands in for it.
+    email: str = Field(min_length=3)
+
+    @field_validator("email")
+    @classmethod
+    def _basic_email_shape(cls, v: str) -> str:
+        if "@" not in v or v.startswith("@") or v.endswith("@"):
+            raise ValueError("invalid email address")
+        return v
+
+
+class CodeKeyCreate(BaseModel):
+    label: str = Field(min_length=1, max_length=255)
+    owner_user_id: str | None = None

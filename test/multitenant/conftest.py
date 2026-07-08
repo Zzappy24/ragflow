@@ -226,3 +226,65 @@ def ws_dataset(ws_auth):
     kb_id = _create_dataset(ws_auth)
     yield kb_id
     _delete_dataset(ws_auth, kb_id)
+
+
+# ---------------------------------------------------------------------------
+# Code product — org + entitlement + RBAC-ready users fixture
+# ---------------------------------------------------------------------------
+
+@pytest.fixture()
+def org_with_entitlement_and_users():
+    """Org + active entitlement (100 EUR / 1mo) + 3 users wired for Code RBAC tests.
+
+    Mirrors test_code_provisioning.org_with_entitlement's seeding, plus:
+      - a superuser (is_superuser=1)
+      - an org_admin (OrgMember role=org_admin)
+      - a plain_member (OrgMember role=member)
+    Each user gets a minted access JWT via management.server.auth.jwt.create_access_token.
+    Yields (org_id, {"superuser": ..., "org_admin": ..., "plain_member": ...,
+                     "plain_member_email": ...}).
+    """
+    from api.db.db_models import (
+        DB, Organisation, CodeEntitlement, CodeTeam, CodeTeamMember, CodeKey,
+        User, OrgMember,
+    )
+    from common.misc_utils import get_uuid
+    from management.server.auth.jwt import create_access_token
+
+    org_id = get_uuid()
+    user_ids = {}
+    emails = {}
+    with DB.connection_context():
+        Organisation.create(id=org_id, name=f"code-rbac-{org_id[:6]}",
+                            slug=f"code-rbac-{org_id[:6]}", created_by="tester")
+        CodeEntitlement.create(id=get_uuid(), org_id=org_id, status="active",
+                               org_code_budget=100.0, budget_period="1mo", created_by="tester")
+
+        for role in ("superuser", "org_admin", "plain_member"):
+            uid = get_uuid()
+            email = f"code-rbac-{role}-{uid[:6]}@example.com"
+            User.create(id=uid, nickname=f"code-rbac-{role}", email=email,
+                       password="x", is_superuser=(role == "superuser"))
+            user_ids[role] = uid
+            emails[role] = email
+
+        OrgMember.create(id=get_uuid(), org_id=org_id, user_id=user_ids["org_admin"],
+                         role="org_admin")
+        OrgMember.create(id=get_uuid(), org_id=org_id, user_id=user_ids["plain_member"],
+                         role="member")
+
+    tokens = {role: create_access_token(uid) for role, uid in user_ids.items()}
+    tokens["plain_member_email"] = emails["plain_member"]
+
+    yield org_id, tokens
+
+    with DB.connection_context():
+        team_ids = [t.id for t in CodeTeam.select().where(CodeTeam.org_id == org_id)]
+        if team_ids:
+            CodeKey.delete().where(CodeKey.code_team_id.in_(team_ids)).execute()
+            CodeTeamMember.delete().where(CodeTeamMember.code_team_id.in_(team_ids)).execute()
+        CodeTeam.delete().where(CodeTeam.org_id == org_id).execute()
+        CodeEntitlement.delete().where(CodeEntitlement.org_id == org_id).execute()
+        OrgMember.delete().where(OrgMember.org_id == org_id).execute()
+        User.delete().where(User.id.in_(list(user_ids.values()))).execute()
+        Organisation.delete().where(Organisation.id == org_id).execute()
