@@ -2,7 +2,8 @@
 from fastapi import APIRouter, Depends, HTTPException, Request, status
 
 from management.server.auth.dependencies import (
-    get_current_user_id, require_superuser, require_org_admin, require_code_team_admin,
+    get_current_user, get_current_user_id, require_superuser, require_org_admin,
+    require_code_team_admin,
 )
 from management.server.models.schemas import (
     CodeEntitlementUpsert, CodeTeamCreate, CodeTeamUpdate, CodeTeamAdminAdd, CodeKeyCreate,
@@ -22,6 +23,59 @@ def _key_to_dict(k) -> dict:
     return {"id": k.id, "code_team_id": k.code_team_id, "label": k.label,
             "key_masked": k.key_masked, "owner_user_id": k.owner_user_id,
             "status": k.status, "sync_status": k.sync_status}
+
+
+@router.get("/code/orgs-summary")
+def orgs_summary(user=Depends(get_current_user)):
+    """Landing de l'onglet Code : récap par org visible (statut, budget, alloué, compteurs).
+
+    Visibilité identique à GET /orgs : superuser → toutes les orgs actives,
+    sinon les orgs où l'appelant détient une membership (peu importe le rôle).
+    """
+    from peewee import fn
+    from api.db.db_models import DB, CodeEntitlement, CodeTeam, CodeKey
+    from api.db.services.org_service import OrgService, OrgMemberService
+
+    if user.is_superuser:
+        orgs = OrgService.query(status="1")
+    else:
+        memberships = OrgMemberService.list_orgs_for_user(user.id)
+        org_ids_visible = {m.org_id for m in memberships}
+        orgs = [o for o in OrgService.query(status="1") if o.id in org_ids_visible] if org_ids_visible else []
+    org_ids = [o.id for o in orgs]
+    if not org_ids:
+        return []
+
+    with DB.connection_context():
+        ents = {e.org_id: e for e in CodeEntitlement.select().where(CodeEntitlement.org_id.in_(org_ids))}
+        team_agg = {}
+        for d in (CodeTeam.select(CodeTeam.org_id,
+                                  fn.COALESCE(fn.SUM(CodeTeam.max_budget), 0.0).alias("allocated"),
+                                  fn.COUNT(CodeTeam.id).alias("teams"))
+                  .where((CodeTeam.org_id.in_(org_ids)) & (CodeTeam.status == "active"))
+                  .group_by(CodeTeam.org_id).dicts()):
+            team_agg[d["org_id"]] = (float(d["allocated"]), int(d["teams"]))
+        key_agg = {}
+        for d in (CodeKey.select(CodeTeam.org_id, fn.COUNT(CodeKey.id).alias("keys"))
+                  .join(CodeTeam, on=(CodeKey.code_team_id == CodeTeam.id))
+                  .where((CodeTeam.org_id.in_(org_ids)) & (CodeTeam.status == "active"))
+                  .group_by(CodeTeam.org_id).dicts()):
+            key_agg[d["org_id"]] = int(d["keys"])
+
+    out = []
+    for o in orgs:
+        ent = ents.get(o.id)
+        allocated, teams = team_agg.get(o.id, (0.0, 0))
+        out.append({
+            "org_id": o.id,
+            "org_name": o.name,
+            "code_status": ent.status if ent else None,
+            "org_code_budget": float(ent.org_code_budget) if ent else 0.0,
+            "allocated": allocated,
+            "teams_count": teams,
+            "keys_count": key_agg.get(o.id, 0),
+        })
+    return out
 
 
 @router.put("/orgs/{org_id}/code/entitlement")

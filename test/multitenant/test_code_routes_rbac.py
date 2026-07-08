@@ -133,3 +133,36 @@ def test_add_team_admin_rejects_non_org_member(panel_client, org_with_entitlemen
     r = client.post(f"/api/admin/code/teams/{team['id']}/admins",
                     json={"email": org_b_admin_email}, headers=_h(tokens["org_admin"]))
     assert r.status_code == 422
+
+
+def test_orgs_summary_superuser_sees_org_with_status(panel_client, org_with_entitlement_and_users):
+    client, _ = panel_client
+    org_id, tokens = org_with_entitlement_and_users
+    client.post(f"/api/admin/orgs/{org_id}/code/teams",
+                json={"name": "s", "max_budget": 40.0, "model_access": []},
+                headers=_h(tokens["org_admin"]))
+    rows = client.get("/api/admin/code/orgs-summary", headers=_h(tokens["superuser"])).json()
+    mine = next(r for r in rows if r["org_id"] == org_id)
+    assert mine["code_status"] == "active"
+    assert mine["org_code_budget"] == 100.0
+    assert mine["allocated"] == 40.0
+    assert mine["teams_count"] == 1
+    assert "plain" not in str(rows)
+
+
+def test_orgs_summary_member_sees_only_their_orgs(panel_client, org_with_entitlement_and_users, second_org_admin):
+    client, _ = panel_client
+    org_id, tokens = org_with_entitlement_and_users
+    org_b_id, org_b_token, _ = second_org_admin
+    rows = client.get("/api/admin/code/orgs-summary", headers=_h(tokens["plain_member"])).json()
+    ids = {r["org_id"] for r in rows}
+    assert org_id in ids and org_b_id not in ids
+
+
+def test_orgs_summary_org_without_entitlement_is_null(panel_client, org_with_entitlement_and_users, second_org_admin):
+    client, _ = panel_client
+    org_b_id, org_b_token, _ = second_org_admin
+    rows = client.get("/api/admin/code/orgs-summary", headers=_h(org_b_token)).json()
+    mine = next(r for r in rows if r["org_id"] == org_b_id)
+    assert mine["code_status"] is None
+    assert mine["teams_count"] == 0 and mine["keys_count"] == 0
