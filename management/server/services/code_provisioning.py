@@ -20,6 +20,20 @@ def _client(client=None) -> LiteLLMClient:
     return client if client is not None else LiteLLMClient()
 
 
+def spend_by_litellm_team(client=None) -> dict[str, float] | None:
+    """Map litellm_team_id -> spend accumulé (EUR), via un seul GET /team/list.
+
+    Returns None when the gateway is unreachable — callers must render
+    "unavailable", never 0 (zero-spent and no-data are different facts).
+    """
+    cl = _client(client)
+    try:
+        return {t.get("team_id"): float(t.get("spend") or 0.0) for t in cl.list_teams()}
+    except LiteLLMError as e:
+        logger.warning("spend indisponible (gateway): %s", e)
+        return None
+
+
 def get_entitlement(org_id: str):
     from api.db.db_models import DB, CodeEntitlement
     with DB.connection_context():

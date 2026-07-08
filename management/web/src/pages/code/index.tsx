@@ -5,18 +5,22 @@ import { PlusOutlined, StopOutlined, CopyOutlined } from '@ant-design/icons';
 import api from '@/lib/api';
 
 interface CodeKey { id: string; label: string; key_masked: string | null; status: string; sync_status: string; }
-interface CodeTeam { id: string; name: string; max_budget: number; status: string; sync_status: string; keys: CodeKey[]; }
+interface CodeTeam { id: string; name: string; max_budget: number; spend: number | null; status: string; sync_status: string; keys: CodeKey[]; }
 interface Overview {
   entitlement: { status: string; org_code_budget: number; budget_period: string } | null;
   allocated: number;
+  org_spend: number | null; // null = gateway injoignable (≠ 0 dépensé)
   teams: CodeTeam[];
 }
 interface OrgSummary {
   org_id: string; org_name: string;
   code_status: 'active' | 'suspended' | null;
   org_code_budget: number; allocated: number;
+  spend: number | null;
   teams_count: number; keys_count: number;
 }
+
+const euro = (v: number) => `${Math.round(v * 100) / 100} €`;
 
 export default function CodePage() {
   const [searchParams, setSearchParams] = useSearchParams();
@@ -146,8 +150,11 @@ export default function CodePage() {
             columns={[
               { title: 'Organisation', dataIndex: 'org_name' },
               { title: 'Statut', dataIndex: 'code_status', width: 130, render: statusTag },
-              { title: 'Budget', width: 180,
-                render: (_, r: OrgSummary) => r.code_status ? `${r.allocated} € / ${r.org_code_budget} €` : '—' },
+              { title: 'Dépensé', width: 120,
+                render: (_, r: OrgSummary) =>
+                  !r.code_status ? '—' : r.spend === null ? '—' : euro(r.spend) },
+              { title: 'Budget (alloué / total)', width: 180,
+                render: (_, r: OrgSummary) => r.code_status ? `${euro(r.allocated)} / ${euro(r.org_code_budget)}` : '—' },
               { title: 'Teams', dataIndex: 'teams_count', width: 90,
                 render: (v: number, r: OrgSummary) => (r.code_status ? v : '—') },
               { title: 'Clés', dataIndex: 'keys_count', width: 90,
@@ -222,13 +229,24 @@ export default function CodePage() {
       )}
 
       <Card className="mb-4" title="Budget de l'organisation">
-        <Progress percent={total ? Math.min(100, Math.round((allocated / total) * 100)) : 0}
-                  format={() => `${allocated} € alloués / ${total} € (${ent?.budget_period})`} />
+        <Progress
+          percent={total && overview?.org_spend != null
+            ? Math.min(100, Math.round((overview.org_spend / total) * 100)) : 0}
+          status={overview?.org_spend != null && total && overview.org_spend >= total ? 'exception' : undefined}
+          format={() => overview?.org_spend != null
+            ? `${euro(overview.org_spend)} dépensés / ${euro(total)} (${ent?.budget_period})`
+            : `dépense indisponible — gateway injoignable`} />
+        <div className="text-gray-500 mt-2">
+          Alloué aux teams : {euro(allocated)} / {euro(total)}
+        </div>
       </Card>
 
       {(overview?.teams ?? []).map((team) => (
         <Card key={team.id} className="mb-4"
-              title={<Space>{team.name}<Tag>{team.max_budget} €</Tag>
+              title={<Space>{team.name}
+                     <Tag color={team.spend != null && team.spend >= team.max_budget ? 'red' : 'blue'}>
+                       {team.spend != null ? `${euro(team.spend)} / ${euro(team.max_budget)}` : `— / ${euro(team.max_budget)}`}
+                     </Tag>
                      {team.sync_status !== 'synced' && <Tag color="orange">{team.sync_status}</Tag>}</Space>}
               extra={<Button size="small" icon={<PlusOutlined />}
                              onClick={() => setKeyModalTeam(team)}>Nouvelle clé</Button>}>

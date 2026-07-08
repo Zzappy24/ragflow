@@ -166,3 +166,35 @@ def test_orgs_summary_org_without_entitlement_is_null(panel_client, org_with_ent
     mine = next(r for r in rows if r["org_id"] == org_b_id)
     assert mine["code_status"] is None
     assert mine["teams_count"] == 0 and mine["keys_count"] == 0
+
+
+def test_overview_and_summary_expose_real_spend(panel_client, org_with_entitlement_and_users):
+    client, fake = panel_client
+    org_id, tokens = org_with_entitlement_and_users
+    team = client.post(f"/api/admin/orgs/{org_id}/code/teams",
+                       json={"name": "s", "max_budget": 40.0, "model_access": []},
+                       headers=_h(tokens["org_admin"])).json()
+    fake.teams[team["litellm_team_id"]]["spend"] = 12.5
+
+    ov = client.get(f"/api/admin/orgs/{org_id}/code/overview", headers=_h(tokens["org_admin"])).json()
+    assert ov["org_spend"] == 12.5
+    assert ov["teams"][0]["spend"] == 12.5
+
+    rows = client.get("/api/admin/code/orgs-summary", headers=_h(tokens["superuser"])).json()
+    mine = next(r for r in rows if r["org_id"] == org_id)
+    assert mine["spend"] == 12.5
+
+
+def test_spend_is_null_not_zero_when_gateway_down(panel_client, org_with_entitlement_and_users):
+    client, fake = panel_client
+    org_id, tokens = org_with_entitlement_and_users
+    client.post(f"/api/admin/orgs/{org_id}/code/teams",
+                json={"name": "s", "max_budget": 40.0, "model_access": []},
+                headers=_h(tokens["org_admin"]))
+    fake.down = True
+    ov = client.get(f"/api/admin/orgs/{org_id}/code/overview", headers=_h(tokens["org_admin"])).json()
+    assert ov["org_spend"] is None
+    assert ov["teams"][0]["spend"] is None
+    rows = client.get("/api/admin/code/orgs-summary", headers=_h(tokens["superuser"])).json()
+    mine = next(r for r in rows if r["org_id"] == org_id)
+    assert mine["spend"] is None

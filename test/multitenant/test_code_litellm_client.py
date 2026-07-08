@@ -101,3 +101,13 @@ def test_find_team_by_alias_filters_client_side():
     client = make_client(handler)
     assert client.find_team_by_alias("org:o:team:b") == "t2"
     assert client.find_team_by_alias("org:o:team:zzz") is None
+
+
+def test_list_teams_returns_raw_list():
+    def handler(request):
+        assert request.url.path == "/team/list"
+        return httpx.Response(200, json=[{"team_id": "t1", "team_alias": "a", "spend": 3.25}])
+
+    client = make_client(handler)
+    teams = client.list_teams()
+    assert teams == [{"team_id": "t1", "team_alias": "a", "spend": 3.25}]

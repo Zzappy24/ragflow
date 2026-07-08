@@ -45,9 +45,12 @@ class LiteLLMClient:
         return resp.json() if resp.content else {}
 
     # ---- teams ----
+    def list_teams(self) -> list[dict]:
+        """Raw /team/list — each item carries team_id, team_alias and accrued spend."""
+        return self._request("GET", "/team/list")
+
     def find_team_by_alias(self, alias: str) -> str | None:
-        teams = self._request("GET", "/team/list")
-        for t in teams:
+        for t in self.list_teams():
             if t.get("team_alias") == alias:
                 return t.get("team_id")
         return None

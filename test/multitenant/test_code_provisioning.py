@@ -25,6 +25,11 @@ class FakeLiteLLM:
             from management.server.services.litellm_client import LiteLLMError
             raise LiteLLMError("simulated: LiteLLM down")
 
+    def list_teams(self):
+        self._maybe_down()
+        return [{"team_id": tid, "team_alias": t["alias"], "spend": t.get("spend", 0.0)}
+                for tid, t in self.teams.items()]
+
     def find_team_by_alias(self, alias):
         self._maybe_down()
         for tid, t in self.teams.items():
@@ -35,7 +40,7 @@ class FakeLiteLLM:
     def create_team(self, *, alias, max_budget, budget_duration, models):
         self._maybe_down()
         tid = f"llm-{alias}"
-        self.teams[tid] = {"alias": alias, "max_budget": max_budget}
+        self.teams[tid] = {"alias": alias, "max_budget": max_budget, "spend": 0.0}
         self.calls.append(("create_team", alias))
         return tid
 

@@ -61,6 +61,19 @@ def orgs_summary(user=Depends(get_current_user)):
                   .where((CodeTeam.org_id.in_(org_ids)) & (CodeTeam.status == "active"))
                   .group_by(CodeTeam.org_id).dicts()):
             key_agg[d["org_id"]] = int(d["keys"])
+        # litellm_team_id -> org attribution for real-spend aggregation
+        team_org = {d["litellm_team_id"]: d["org_id"] for d in (
+            CodeTeam.select(CodeTeam.litellm_team_id, CodeTeam.org_id)
+            .where((CodeTeam.org_id.in_(org_ids)) & (CodeTeam.status == "active") &
+                   (CodeTeam.litellm_team_id.is_null(False))).dicts())}
+
+    # Real consumption (single /team/list). None = gateway unreachable → front shows "—".
+    from management.server.services import code_provisioning as cp
+    spend_map = cp.spend_by_litellm_team()
+    spend_by_org: dict[str, float] = {}
+    if spend_map is not None:
+        for llm_tid, org in team_org.items():
+            spend_by_org[org] = spend_by_org.get(org, 0.0) + spend_map.get(llm_tid, 0.0)
 
     out = []
     for o in orgs:
@@ -72,6 +85,7 @@ def orgs_summary(user=Depends(get_current_user)):
             "code_status": ent.status if ent else None,
             "org_code_budget": float(ent.org_code_budget) if ent else 0.0,
             "allocated": allocated,
+            "spend": spend_by_org.get(o.id, 0.0) if spend_map is not None else None,
             "teams_count": teams,
             "keys_count": key_agg.get(o.id, 0),
         })
@@ -116,12 +130,22 @@ def code_overview(org_id: str, user_id: str = Depends(get_current_user_id)):
         for t in teams:
             keys_by_team[t.id] = [_key_to_dict(k) for k in
                                   CodeKey.select().where(CodeKey.code_team_id == t.id)]
+    # Real consumption from the gateway (single /team/list call).
+    # None = gateway unreachable — the front renders "—", never 0.
+    spend_map = cp.spend_by_litellm_team()
+    def _spend(t):
+        if spend_map is None or not t.litellm_team_id:
+            return None
+        return spend_map.get(t.litellm_team_id, 0.0)
+    team_dicts = [{**_team_to_dict(t), "spend": _spend(t), "keys": keys_by_team[t.id]} for t in teams]
+    known = [d["spend"] for d in team_dicts if d["spend"] is not None]
     return {
         "entitlement": None if ent is None else {
             "status": ent.status, "org_code_budget": ent.org_code_budget,
             "budget_period": ent.budget_period},
         "allocated": cp.allocated_budget(org_id),
-        "teams": [{**_team_to_dict(t), "keys": keys_by_team[t.id]} for t in teams],
+        "org_spend": sum(known) if spend_map is not None else None,
+        "teams": team_dicts,
     }
 
 
