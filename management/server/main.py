@@ -71,7 +71,11 @@ async def lifespan(app: FastAPI):
     yield
 
     if scheduler_task is not None:
+        import contextlib
+
         scheduler_task.cancel()
+        with contextlib.suppress(asyncio.CancelledError):
+            await scheduler_task
 
 
 app = FastAPI(
