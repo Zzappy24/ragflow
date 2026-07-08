@@ -1,6 +1,6 @@
 import { useEffect, useState, useCallback } from 'react';
 import { useSearchParams } from 'react-router-dom';
-import { Table, Button, Card, Modal, Form, Input, InputNumber, App, Progress, Tag, Popconfirm, Space, Typography, Alert } from 'antd';
+import { Table, Button, Card, Modal, Form, Input, InputNumber, Select, App, Progress, Tag, Popconfirm, Space, Typography, Alert } from 'antd';
 import { PlusOutlined, StopOutlined, CopyOutlined } from '@ant-design/icons';
 import api from '@/lib/api';
 
@@ -11,9 +11,10 @@ interface Overview {
   allocated: number;
   teams: CodeTeam[];
 }
+interface OrgOption { id: string; name: string; }
 
 export default function CodePage() {
-  const [searchParams] = useSearchParams();
+  const [searchParams, setSearchParams] = useSearchParams();
   const orgId = searchParams.get('org') || '';
   const [overview, setOverview] = useState<Overview | null>(null);
   const [loading, setLoading] = useState(true);
@@ -24,6 +25,28 @@ export default function CodePage() {
   const [teamForm] = Form.useForm();
   const [keyForm] = Form.useForm();
   const { message } = App.useApp();
+
+  // No ?org= yet: figure out which org(s) the caller can see (same /orgs
+  // endpoint the Organisations page uses — superusers get every org,
+  // everyone else only the orgs they're a member of). A single visible org
+  // is auto-selected; several render a picker instead of a dead end.
+  const [orgOptions, setOrgOptions] = useState<OrgOption[] | null>(null);
+  const [orgOptionsLoading, setOrgOptionsLoading] = useState(false);
+
+  useEffect(() => {
+    if (orgId) return;
+    setOrgOptionsLoading(true);
+    api.get('/orgs')
+      .then((res) => setOrgOptions(res.data))
+      .catch(() => setOrgOptions([]))
+      .finally(() => setOrgOptionsLoading(false));
+  }, [orgId]);
+
+  useEffect(() => {
+    if (!orgId && orgOptions && orgOptions.length === 1) {
+      setSearchParams({ org: orgOptions[0].id });
+    }
+  }, [orgId, orgOptions, setSearchParams]);
 
   const fetchOverview = useCallback(() => {
     if (!orgId) { setLoading(false); return; }
@@ -85,7 +108,24 @@ export default function CodePage() {
     }
   };
 
-  if (!orgId) return <Card><p className="text-gray-500">Sélectionne une organisation : <code>?org=ORG_ID</code></p></Card>;
+  if (!orgId) {
+    if (orgOptionsLoading || orgOptions === null) return <Card loading />;
+    if (orgOptions.length === 0)
+      return <Card><Alert type="info" message="Aucune organisation disponible pour ton compte." /></Card>;
+    // orgOptions.length === 1 is handled by the auto-select effect above —
+    // this only renders once there's a real choice to make.
+    return (
+      <Card>
+        <p className="mb-2 text-gray-500">Sélectionne une organisation :</p>
+        <Select
+          className="w-full max-w-sm"
+          placeholder="Organisation"
+          options={orgOptions.map((o) => ({ value: o.id, label: o.name }))}
+          onChange={(value: string) => setSearchParams({ org: value })}
+        />
+      </Card>
+    );
+  }
   if (!loading && loadError)
     return (
       <Card>
