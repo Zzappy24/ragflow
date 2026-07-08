@@ -76,6 +76,20 @@ def test_network_error_raises_litellm_error():
         client.team_info("llm-team-123")
 
 
+def test_generate_key_without_token_raises_litellm_error():
+    """A missing/empty token identifier must be a hard failure — silently
+    returning "" would let revoke_code_key() skip block_key() while still
+    marking sync_status='synced' (silent security hole)."""
+    from management.server.services.litellm_client import LiteLLMError
+
+    def handler(request):
+        return httpx.Response(200, json={"key": "sk-abcdef1234567890"})
+
+    client = make_client(handler)
+    with pytest.raises(LiteLLMError):
+        client.generate_key(team_id="llm-team-123", alias="org:o:key:k")
+
+
 def test_find_team_by_alias_filters_client_side():
     def handler(request):
         assert request.url.path == "/team/list"

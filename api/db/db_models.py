@@ -1538,7 +1538,9 @@ class WsGroupDataset(DataBaseModel):
 
 
 # ============================================================
-# Code Product Models (LiteLLM Teams + Keys + Entitlements)
+# CUSTOM B2B SaaS — Code product tables (control plane for the LiteLLM data
+# plane): entitlements, teams, delegated team admins, virtual keys. Entirely
+# new tables, no upstream equivalent — never expected to conflict on merge.
 # ============================================================
 class CodeEntitlement(DataBaseModel):
     """Code product entitlement — one row per org. Cyllene-controlled (the 'how much')."""
@@ -1604,6 +1606,9 @@ class CodeKey(DataBaseModel):
         db_table = "code_key"
 
 
+# ============================================================
+# END CUSTOM B2B SaaS — Code product tables
+# ============================================================
 class AuditLog(DataBaseModel):
     id = CharField(max_length=32, primary_key=True)
     org_id = CharField(max_length=32, null=True, index=True)
@@ -2097,6 +2102,8 @@ def _add_rbac_unique_indexes(migrator):
         ("ws_group", ("workspace_id", "name"), True),
         ("ws_group_member", ("group_id", "user_id"), True),
         ("ws_group_dataset", ("group_id", "dataset_id"), True),
+        # CUSTOM B2B SaaS — Code product: a user can only be delegated once per code team.
+        ("code_team_member", ("code_team_id", "user_id"), True),
     ]
     for table, columns, unique in indexes:
         try:

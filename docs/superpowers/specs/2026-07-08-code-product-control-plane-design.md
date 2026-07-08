@@ -135,6 +135,7 @@ Consommation client (MVP) : **gestion déléguée dès le départ** via RBAC (or
 - **Hook Redis pre-call** pour cap-org temps réel : nécessaire seulement si (a) pool partagé dynamique entre squads, ou (b) overcommit. Ni l'un ni l'autre au départ. Ajout sans changer le data-model.
 - **Portail client self-serve** (création/révocation par le client) au-delà de la délégation RBAC.
 - **Ledger unifié RAG+code** : agrégation facturation cross-produit (aggregat grossier depuis Postgres LiteLLM + usage RAG). Pas requis pour livrer le code.
+- **Vue spend temps réel** (GET `/team/info` + `/spend` dans l'overview) — différée (déjà listée aux follow-ups du plan) ; l'UI affiche l'alloué en attendant.
 
 ---
 

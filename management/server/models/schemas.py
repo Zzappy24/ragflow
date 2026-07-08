@@ -267,7 +267,7 @@ class SystemStats(BaseModel):
 class CodeEntitlementUpsert(BaseModel):
     status: Literal["active", "suspended"]
     org_code_budget: float = Field(ge=0)
-    budget_period: str = "1mo"
+    budget_period: Literal["1d", "7d", "1mo", "1y"] = "1mo"
 
 
 class CodeTeamCreate(BaseModel):

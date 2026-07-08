@@ -8,12 +8,12 @@ services:
       POSTGRES_USER: litellm
       POSTGRES_PASSWORD: litellm-test
       POSTGRES_DB: litellm
-    ports: ["5433:5432"]
+    ports: ["127.0.0.1:5433:5432"]
 
   litellm:
     image: ghcr.io/berriai/litellm:main-v1.74.0-stable  # pin — bump consciously
     depends_on: [litellm-db]
-    ports: ["4000:4000"]
+    ports: ["127.0.0.1:4000:4000"]
     volumes:
       - ./litellm_config.yaml:/app/config.yaml
     environment:

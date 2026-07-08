@@ -77,11 +77,18 @@ class LiteLLMClient:
         data = self._request("POST", "/key/generate",
                              json={"team_id": team_id, "key_alias": alias})
         plain = data["key"]
+        # hashed identifier usable with /key/block — integration test (Task 7)
+        # validates this against the real container.
+        token = data.get("token") or data.get("token_id") or ""
+        if not token:
+            # An empty litellm_key_id would make revoke_code_key() silently
+            # skip block_key() while still marking sync_status='synced' —
+            # a silent security hole (a "revoked" key stays live upstream).
+            raise LiteLLMError(
+                "key/generate returned no token identifier — cannot manage this key")
         return {
             "plain_key": plain,
-            # hashed identifier usable with /key/block — integration test (Task 7)
-            # validates this against the real container.
-            "token": data.get("token") or data.get("token_id") or "",
+            "token": token,
             "masked": f"{plain[:6]}...{plain[-4:]}",
         }
 

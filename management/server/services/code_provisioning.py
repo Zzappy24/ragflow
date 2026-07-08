@@ -62,6 +62,13 @@ def upsert_entitlement(*, org_id: str, status: str, org_code_budget: float,
                 CodeEntitlement.org_id == org_id).for_update().first()
             if org_code_budget < _allocated_budget_locked(org_id):
                 raise ValueError("org_code_budget below current allocation — reduce team budgets first")
+            if row is not None and row.budget_period != budget_period:
+                active_teams_exist = CodeTeam.select().where(
+                    (CodeTeam.org_id == org_id) & (CodeTeam.status == "active")).exists()
+                if active_teams_exist:
+                    raise ValueError(
+                        "changer la période avec des teams actives casserait l'alignement "
+                        "des cycles — supprimez/recréez les teams d'abord")
 
             was_active = row.status == "active" if row else True
             if row is None:

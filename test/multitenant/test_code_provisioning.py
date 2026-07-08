@@ -160,6 +160,33 @@ def test_concurrent_team_creates_cannot_overcommit(org_with_entitlement):
     assert "allocation" in str(losers[0])
 
 
+def test_upsert_entitlement_rejects_budget_period_change_with_active_teams(org_with_entitlement):
+    """Changing budget_period while active teams exist would desync team
+    budget_duration (always == entitlement.budget_period) from what LiteLLM
+    already has scheduled — must be rejected until teams are removed/recreated."""
+    from management.server.services import code_provisioning as cp
+    fake = FakeLiteLLM()
+    cp.create_code_team(org_id=org_with_entitlement, name="t", max_budget=10.0,
+                        model_access=[], created_by="tester", client=fake)
+    with pytest.raises(ValueError, match="p.riode"):
+        cp.upsert_entitlement(org_id=org_with_entitlement, status="active",
+                              org_code_budget=100.0, budget_period="7d",
+                              actor_id="tester", client=fake)
+
+
+def test_upsert_entitlement_allows_same_budget_period_with_active_teams(org_with_entitlement):
+    """Re-saving the entitlement with the SAME budget_period must not be
+    blocked by the active-teams guard (it's a no-op on the cycle)."""
+    from management.server.services import code_provisioning as cp
+    fake = FakeLiteLLM()
+    cp.create_code_team(org_id=org_with_entitlement, name="t", max_budget=10.0,
+                        model_access=[], created_by="tester", client=fake)
+    ent = cp.upsert_entitlement(org_id=org_with_entitlement, status="active",
+                                org_code_budget=100.0, budget_period="1mo",
+                                actor_id="tester", client=fake)
+    assert ent.budget_period == "1mo"
+
+
 def test_suspend_entitlement_fans_out_blocks(org_with_entitlement):
     from management.server.services import code_provisioning as cp
     fake = FakeLiteLLM()

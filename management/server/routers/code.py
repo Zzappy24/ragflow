@@ -88,24 +88,28 @@ def create_team(request: Request, org_id: str, body: CodeTeamCreate,
 
 
 @router.put("/code/teams/{team_id}")
-def update_team(team_id: str, body: CodeTeamUpdate,
+def update_team(request: Request, team_id: str, body: CodeTeamUpdate,
                 user_id: str = Depends(get_current_user_id)):
     from api.db.db_models import DB, CodeTeam
     with DB.connection_context():
         team = CodeTeam.get_or_none(CodeTeam.id == team_id)
     if team is None:
         raise HTTPException(status_code=404, detail="Code team not found")
-    require_org_admin(team.org_id, user_id)
+    user = require_org_admin(team.org_id, user_id)
+    old_budget = team.max_budget
     from management.server.services import code_provisioning as cp
     try:
         team = cp.update_code_team_budget(code_team_id=team_id, new_budget=body.max_budget)
     except ValueError as e:
         raise HTTPException(status_code=422, detail=str(e))
+    audit_svc.record(request=request, actor_user_id=user.id, action=audit_svc.CODE_TEAM_UPDATE,
+                     org_id=team.org_id, resource_type="code_team", resource_id=team.id,
+                     details={"name": team.name, "old_budget": old_budget, "new_budget": team.max_budget})
     return _team_to_dict(team)
 
 
 @router.post("/code/teams/{team_id}/admins", status_code=status.HTTP_201_CREATED)
-def add_team_admin(team_id: str, body: CodeTeamAdminAdd,
+def add_team_admin(request: Request, team_id: str, body: CodeTeamAdminAdd,
                    user_id: str = Depends(get_current_user_id)):
     from api.db.db_models import DB, CodeTeam, CodeTeamMember
     from api.db.services.user_service import UserService
@@ -115,7 +119,7 @@ def add_team_admin(team_id: str, body: CodeTeamAdminAdd,
         team = CodeTeam.get_or_none(CodeTeam.id == team_id)
     if team is None:
         raise HTTPException(status_code=404, detail="Code team not found")
-    require_org_admin(team.org_id, user_id)
+    user = require_org_admin(team.org_id, user_id)
 
     users = UserService.query(email=body.email, status="1")
     if not users:
@@ -129,6 +133,9 @@ def add_team_admin(team_id: str, body: CodeTeamAdminAdd,
         if existing is None:
             CodeTeamMember.create(id=get_uuid(), code_team_id=team_id,
                                   user_id=target.id, role="admin")
+    audit_svc.record(request=request, actor_user_id=user.id, action=audit_svc.CODE_TEAM_ADMIN_ADD,
+                     org_id=team.org_id, resource_type="code_team", resource_id=team_id,
+                     details={"email": body.email, "user_id": target.id, "team": team.name})
     return {"code_team_id": team_id, "user_id": target.id, "role": "admin"}
 
 
