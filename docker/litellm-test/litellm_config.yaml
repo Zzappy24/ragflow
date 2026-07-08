@@ -1,0 +1,13 @@
+model_list:
+  - model_name: code-mock
+    litellm_params:
+      model: openai/mock
+      api_key: not-used
+      mock_response: "Hello from the mock code model."
+    model_info:
+      input_cost_per_token: 0.5    # inflated: 1 call ≈ several EUR -> busts tiny budgets
+      output_cost_per_token: 0.5
+
+general_settings:
+  master_key: os.environ/LITELLM_MASTER_KEY
+  database_url: os.environ/DATABASE_URL

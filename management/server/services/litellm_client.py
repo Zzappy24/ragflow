@@ -94,3 +94,8 @@ class LiteLLMClient:
     def list_keys(self, team_id: str) -> list[dict]:
         data = self._request("GET", "/key/list", params={"team_id": team_id})
         return data.get("keys", data) if isinstance(data, dict) else data
+
+    # ---- lifecycle ----
+    def close(self) -> None:
+        """Release the underlying HTTP connection pool (real sockets in integration use)."""
+        self._client.close()
