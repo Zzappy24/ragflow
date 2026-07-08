@@ -8,6 +8,7 @@ import {
   UserOutlined,
   InboxOutlined,
   AuditOutlined,
+  CodeOutlined,
 } from '@ant-design/icons';
 import { useAuthStore } from '@/stores/auth';
 
@@ -32,6 +33,11 @@ export default function AppLayout() {
             key: '/organisations',
             icon: <BankOutlined />,
             label: <Link to="/organisations">Organisations</Link>,
+          },
+          {
+            key: '/code',
+            icon: <CodeOutlined />,
+            label: <Link to="/code">Code</Link>,
           },
         ]
       : []),
@@ -85,6 +91,8 @@ export default function AppLayout() {
           selectedKeys={[
             location.pathname.startsWith('/organisations') || location.pathname.startsWith('/workspaces')
               ? '/organisations'
+              : location.pathname.startsWith('/code')
+              ? '/code'
               : location.pathname.startsWith('/archives')
               ? '/archives'
               : location.pathname.startsWith('/audit')

@@ -12,6 +12,7 @@ import ApiKeysPage from '@/pages/api-keys';
 import AuditPage from '@/pages/audit';
 import GlobalAuditPage from '@/pages/audit/global';
 import ArchivesPage from '@/pages/archives';
+import CodePage from '@/pages/code';
 import { useAuthStore } from '@/stores/auth';
 
 function SuperuserRoute({ children }: { children: React.ReactNode }) {
@@ -42,6 +43,7 @@ export default function App() {
         <Route path="/api-keys" element={<ApiKeysPage />} />
         <Route path="/audit" element={<SuperuserRoute><GlobalAuditPage /></SuperuserRoute>} />
         <Route path="/archives" element={<SuperuserRoute><ArchivesPage /></SuperuserRoute>} />
+        <Route path="/code" element={<CodePage />} />
       </Route>
     </Routes>
   );
