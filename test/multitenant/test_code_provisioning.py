@@ -137,6 +137,29 @@ def test_revoke_key_blocks_in_litellm(org_with_entitlement):
     assert key_row.litellm_key_id in fake.blocked
 
 
+def test_concurrent_team_creates_cannot_overcommit(org_with_entitlement):
+    """Two concurrent creates whose sum exceeds the org budget: exactly one must win."""
+    import concurrent.futures
+    from management.server.services import code_provisioning as cp
+
+    def attempt(name):
+        fake = FakeLiteLLM()
+        try:
+            return cp.create_code_team(org_id=org_with_entitlement, name=name,
+                                       max_budget=60.0, model_access=[],
+                                       created_by="tester", client=fake)
+        except ValueError as e:
+            return e
+
+    with concurrent.futures.ThreadPoolExecutor(max_workers=2) as ex:
+        results = list(ex.map(attempt, ["race-a", "race-b"]))  # 60+60 > 100
+
+    winners = [r for r in results if not isinstance(r, Exception)]
+    losers = [r for r in results if isinstance(r, Exception)]
+    assert len(winners) == 1 and len(losers) == 1
+    assert "allocation" in str(losers[0])
+
+
 def test_suspend_entitlement_fans_out_blocks(org_with_entitlement):
     from management.server.services import code_provisioning as cp
     fake = FakeLiteLLM()

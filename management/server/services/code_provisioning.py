@@ -26,15 +26,24 @@ def get_entitlement(org_id: str):
         return CodeEntitlement.get_or_none(CodeEntitlement.org_id == org_id)
 
 
-def allocated_budget(org_id: str, exclude_team_id: str | None = None) -> float:
-    from api.db.db_models import DB, CodeTeam
+def _allocated_budget_locked(org_id: str, exclude_team_id: str | None = None) -> float:
+    """Same computation as allocated_budget(), but assumes the caller already
+    holds a connection/transaction context (used inside a locked DB.atomic()
+    block so the read is consistent with the FOR UPDATE lock on the org's
+    entitlement row)."""
+    from api.db.db_models import CodeTeam
     from peewee import fn
+    q = CodeTeam.select(fn.COALESCE(fn.SUM(CodeTeam.max_budget), 0.0)).where(
+        (CodeTeam.org_id == org_id) & (CodeTeam.status == "active"))
+    if exclude_team_id:
+        q = q.where(CodeTeam.id != exclude_team_id)
+    return float(q.scalar() or 0.0)
+
+
+def allocated_budget(org_id: str, exclude_team_id: str | None = None) -> float:
+    from api.db.db_models import DB
     with DB.connection_context():
-        q = CodeTeam.select(fn.COALESCE(fn.SUM(CodeTeam.max_budget), 0.0)).where(
-            (CodeTeam.org_id == org_id) & (CodeTeam.status == "active"))
-        if exclude_team_id:
-            q = q.where(CodeTeam.id != exclude_team_id)
-        return float(q.scalar() or 0.0)
+        return _allocated_budget_locked(org_id, exclude_team_id)
 
 
 def upsert_entitlement(*, org_id: str, status: str, org_code_budget: float,
@@ -43,35 +52,41 @@ def upsert_entitlement(*, org_id: str, status: str, org_code_budget: float,
     from api.db.db_models import DB, CodeEntitlement, CodeTeam, CodeKey
     if status not in ("active", "suspended"):
         raise ValueError(f"invalid status: {status}")
-    if org_code_budget < allocated_budget(org_id):
-        raise ValueError("org_code_budget below current allocation — reduce team budgets first")
 
     with DB.connection_context():
-        row = CodeEntitlement.get_or_none(CodeEntitlement.org_id == org_id)
-        was_active = row.status == "active" if row else True
-        if row is None:
-            row = CodeEntitlement.create(id=get_uuid(), org_id=org_id, status=status,
-                                         org_code_budget=org_code_budget,
-                                         budget_period=budget_period, created_by=actor_id)
-        else:
-            CodeEntitlement.update(status=status, org_code_budget=org_code_budget,
-                                   budget_period=budget_period).where(
-                CodeEntitlement.id == row.id).execute()
-            row = CodeEntitlement.get_by_id(row.id)
+        with DB.atomic():
+            # Lock the org's entitlement row first so concurrent mutators
+            # (create/update team, upsert entitlement) for this org queue up
+            # instead of racing on the allocation-invariant check.
+            row = CodeEntitlement.select().where(
+                CodeEntitlement.org_id == org_id).for_update().first()
+            if org_code_budget < _allocated_budget_locked(org_id):
+                raise ValueError("org_code_budget below current allocation — reduce team budgets first")
 
-        # Fan-out on transition (desired state first, then best-effort sync)
-        desired_key_status = None
-        if was_active and status == "suspended":
-            desired_key_status = "blocked"
-        elif not was_active and status == "active":
-            desired_key_status = "active"
-        if desired_key_status is not None:
-            team_ids = [t.id for t in CodeTeam.select(CodeTeam.id).where(
-                (CodeTeam.org_id == org_id) & (CodeTeam.status == "active"))]
-            if team_ids:
-                # only touch keys not individually revoked
-                CodeKey.update(status=desired_key_status, sync_status="pending").where(
-                    (CodeKey.code_team_id.in_(team_ids)) & (CodeKey.status != "revoked")).execute()
+            was_active = row.status == "active" if row else True
+            if row is None:
+                row = CodeEntitlement.create(id=get_uuid(), org_id=org_id, status=status,
+                                             org_code_budget=org_code_budget,
+                                             budget_period=budget_period, created_by=actor_id)
+            else:
+                CodeEntitlement.update(status=status, org_code_budget=org_code_budget,
+                                       budget_period=budget_period).where(
+                    CodeEntitlement.id == row.id).execute()
+                row = CodeEntitlement.get_by_id(row.id)
+
+            # Fan-out on transition (desired state first, then best-effort sync)
+            desired_key_status = None
+            if was_active and status == "suspended":
+                desired_key_status = "blocked"
+            elif not was_active and status == "active":
+                desired_key_status = "active"
+            if desired_key_status is not None:
+                team_ids = [t.id for t in CodeTeam.select(CodeTeam.id).where(
+                    (CodeTeam.org_id == org_id) & (CodeTeam.status == "active"))]
+                if team_ids:
+                    # only touch keys not individually revoked
+                    CodeKey.update(status=desired_key_status, sync_status="pending").where(
+                        (CodeKey.code_team_id.in_(team_ids)) & (CodeKey.status != "revoked")).execute()
 
     if desired_key_status is not None:
         _sync_pending_keys_for_org(org_id, client=client)
@@ -107,22 +122,29 @@ def _mark(model, row_id: str, **fields) -> None:
 
 def create_code_team(*, org_id: str, name: str, max_budget: float,
                      model_access: list[str], created_by: str, client=None):
-    from api.db.db_models import DB, CodeTeam
-    ent = get_entitlement(org_id)
-    if ent is None or ent.status != "active":
-        raise ValueError("code entitlement is not active for this org")
+    from api.db.db_models import DB, CodeEntitlement, CodeTeam
     if max_budget <= 0:
         raise ValueError("max_budget must be > 0")
-    if allocated_budget(org_id) + max_budget > ent.org_code_budget:
-        raise ValueError(
-            f"allocation exceeded: {allocated_budget(org_id)} + {max_budget} "
-            f"> org budget {ent.org_code_budget}")
 
     team_id = get_uuid()
-    with DB.connection_context():  # desired state FIRST
-        CodeTeam.create(id=team_id, org_id=org_id, name=name, max_budget=max_budget,
-                        model_access=model_access or [], status="active",
-                        sync_status="pending", created_by=created_by)
+    with DB.connection_context():
+        with DB.atomic():
+            # Lock the org's entitlement row first so concurrent team
+            # creates/updates for this org queue up on the row lock instead
+            # of racing on the allocation-invariant check.
+            ent = CodeEntitlement.select().where(
+                CodeEntitlement.org_id == org_id).for_update().first()
+            if ent is None or ent.status != "active":
+                raise ValueError("code entitlement is not active for this org")
+            allocated = _allocated_budget_locked(org_id)
+            if allocated + max_budget > ent.org_code_budget:
+                raise ValueError(
+                    f"allocation exceeded: {allocated} + {max_budget} "
+                    f"> org budget {ent.org_code_budget}")
+            # desired state FIRST
+            CodeTeam.create(id=team_id, org_id=org_id, name=name, max_budget=max_budget,
+                            model_access=model_access or [], status="active",
+                            sync_status="pending", created_by=created_by)
 
     cl = _client(client)
     alias = cl.team_alias(org_id, team_id)
@@ -140,20 +162,29 @@ def create_code_team(*, org_id: str, name: str, max_budget: float,
 
 
 def update_code_team_budget(*, code_team_id: str, new_budget: float, client=None):
-    from api.db.db_models import DB, CodeTeam
+    from api.db.db_models import DB, CodeEntitlement, CodeTeam
     with DB.connection_context():
         team = CodeTeam.get_or_none(CodeTeam.id == code_team_id)
     if team is None or team.status != "active":
         raise ValueError("code team not found")
-    ent = get_entitlement(team.org_id)
-    if ent is None:
-        raise ValueError("no entitlement for org")
     if new_budget <= 0:
         raise ValueError("max_budget must be > 0")
-    if allocated_budget(team.org_id, exclude_team_id=code_team_id) + new_budget > ent.org_code_budget:
-        raise ValueError("allocation exceeded")
 
-    _mark(CodeTeam, code_team_id, max_budget=new_budget, sync_status="pending")
+    with DB.connection_context():
+        with DB.atomic():
+            # Lock the org's entitlement row first so concurrent team
+            # creates/updates for this org queue up on the row lock instead
+            # of racing on the allocation-invariant check.
+            ent = CodeEntitlement.select().where(
+                CodeEntitlement.org_id == team.org_id).for_update().first()
+            if ent is None:
+                raise ValueError("no entitlement for org")
+            allocated = _allocated_budget_locked(team.org_id, exclude_team_id=code_team_id)
+            if allocated + new_budget > ent.org_code_budget:
+                raise ValueError("allocation exceeded")
+            CodeTeam.update(max_budget=new_budget, sync_status="pending").where(
+                CodeTeam.id == code_team_id).execute()
+
     cl = _client(client)
     try:
         if team.litellm_team_id:
