@@ -1547,7 +1547,7 @@ class CodeEntitlement(DataBaseModel):
     status = CharField(max_length=16, null=False, default="active", index=True)  # active | suspended
     org_code_budget = FloatField(null=False, default=0.0)  # EUR per budget_period
     budget_period = CharField(max_length=8, null=False, default="1mo")  # LiteLLM budget_duration format
-    created_by = CharField(max_length=32, null=False)
+    created_by = CharField(max_length=32, null=False, index=True)
 
     class Meta:
         db_table = "code_entitlement"
@@ -1564,7 +1564,7 @@ class CodeTeam(DataBaseModel):
     status = CharField(max_length=16, null=False, default="active", index=True)  # active | deleted
     sync_status = CharField(max_length=16, null=False, default="pending", index=True)  # pending | synced | error
     sync_error = TextField(null=True)
-    created_by = CharField(max_length=32, null=False)
+    created_by = CharField(max_length=32, null=False, index=True)
 
     class Meta:
         db_table = "code_team"
@@ -1596,7 +1596,7 @@ class CodeKey(DataBaseModel):
     status = CharField(max_length=16, null=False, default="active", index=True)  # active | revoked | blocked
     sync_status = CharField(max_length=16, null=False, default="pending", index=True)  # pending | synced | error
     sync_error = TextField(null=True)
-    created_by = CharField(max_length=32, null=False)
+    created_by = CharField(max_length=32, null=False, index=True)
 
     class Meta:
         db_table = "code_key"
