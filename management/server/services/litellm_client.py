@@ -128,6 +128,10 @@ class LiteLLMClient:
         `total_tokens` (already prompt+completion) at the top level.
         Raises LiteLLMError when the gateway is unreachable or rejects the
         request (e.g. bad auth) — callers map that to None/NULL.
+
+        NOTE: the response is UNBOUNDED (no pagination param on this endpoint
+        in the pinned version) — fine for code-product daily volumes (<~5K
+        req/day); past that, add a TTL cache or serve from snapshots instead.
         """
         params = {
             "start_date": day.isoformat(),
