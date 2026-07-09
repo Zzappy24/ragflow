@@ -222,6 +222,29 @@ def test_overview_exposes_per_key_spend(panel_client, org_with_entitlement_and_u
     assert key_row["spend"] == 4.2
 
 
+def test_dashboard_forbidden_for_user_with_no_org_membership(panel_client):
+    """A user that belongs to zero orgs (no OrgMember row at all, not even in
+    another org) must be rejected — org_ids ends up empty and the route must
+    403 rather than silently falling back to a superuser-like "all orgs" view."""
+    client, _ = panel_client
+    from api.db.db_models import DB, User
+    from common.misc_utils import get_uuid
+    from management.server.auth.jwt import create_access_token
+
+    uid = get_uuid()
+    email = f"code-rbac-no-org-{uid[:6]}@example.com"
+    with DB.connection_context():
+        User.create(id=uid, nickname="code-rbac-no-org", email=email,
+                   password="x", is_superuser=False)
+    token = create_access_token(uid)
+    try:
+        r = client.get("/api/admin/code/dashboard", headers=_h(token))
+        assert r.status_code == 403
+    finally:
+        with DB.connection_context():
+            User.delete().where(User.id == uid).execute()
+
+
 def test_dashboard_rbac_and_shape(panel_client, org_with_entitlement_and_users, second_org_admin):
     client, fake = panel_client
     org_id, tokens = org_with_entitlement_and_users
@@ -231,7 +254,9 @@ def test_dashboard_rbac_and_shape(panel_client, org_with_entitlement_and_users, 
     fake.teams[team["litellm_team_id"]]["spend"] = 39.0  # ≥ 80% de 40 → alerte
 
     d = client.get("/api/admin/code/dashboard", headers=_h(tokens["superuser"])).json()
-    assert d["kpis"]["cycle_spend"] == 39.0
+    # Robust to real data already in the DB (other teams' spend): only assert
+    # this fixture's contribution is present, not that it's the whole total.
+    assert d["kpis"]["cycle_spend"] >= 39.0
     assert d["kpis"]["teams"] >= 1 and d["kpis"]["budget_alerts"] >= 1
     assert isinstance(d["daily"], list)
     assert any(t["code_team_id"] == team["id"] for t in d["top_teams"])
