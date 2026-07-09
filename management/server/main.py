@@ -51,7 +51,10 @@ async def lifespan(app: FastAPI):
     import asyncio
     scheduler_task = None
     if os.getenv("ADMIN_CODE_SCHEDULER", "1") == "1":
-        interval = int(os.getenv("ADMIN_CODE_SCHEDULER_INTERVAL_S", "3600"))
+        # 15 min par défaut : cadence des relevés tokens/erreurs — le marché
+        # affiche l'usage en ~10 min-1 h (Anthropic/OpenAI/Datadog) ; 96
+        # lectures /spend/logs par jour restent triviales côté gateway.
+        interval = int(os.getenv("ADMIN_CODE_SCHEDULER_INTERVAL_S", "900"))
 
         async def _code_housekeeping_loop():
             from management.server.services.code_housekeeping import housekeeping

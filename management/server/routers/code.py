@@ -136,15 +136,14 @@ def code_dashboard(user=Depends(get_current_user)):
     top_orgs = [{"org_id": oid, "org_name": org_names.get(oid, oid), "spend": round(sp, 4)}
                 for oid, sp in sorted(by_org.items(), key=lambda x: -x[1])[:5]]
 
-    # Today's tokens per team, single daily_usage(today) call. None (gateway
-    # unreachable) propagates to every team; a team absent from a non-None
-    # usage map is a real zero (reachable, no traffic today).
-    usage = cp.usage_by_litellm_team()
+    # Today's tokens per team, read from the day's SNAPSHOT rows (DB-only).
+    # No gateway call in the request path: /spend/logs is unbounded and its
+    # cost grows with client traffic — the scheduler (15 min) is the sole
+    # reader. No row yet today / NULL column => None (pas encore relevé).
+    from management.server.services.code_housekeeping import today_usage_from_snapshots
+    snap_usage = today_usage_from_snapshots([t.id for t in teams])
     def _tokens_today(t):
-        if usage is None or not t.litellm_team_id:
-            return None
-        u = usage.get(t.litellm_team_id)
-        return u["tokens"] if u else 0
+        return snap_usage.get(t.id, {}).get("tokens")
 
     top_teams = [{"code_team_id": t.id, "name": t.name,
                   "org_name": org_names.get(t.org_id, t.org_id),
@@ -223,14 +222,14 @@ def code_overview(org_id: str, user_id: str = Depends(get_current_user_id)):
     # Real consumption from the gateway (single /team/list call).
     # None = gateway unreachable — the front renders "—", never 0.
     spend_map = cp.spend_by_litellm_team()
-    # Today's tokens per team, single daily_usage(today) call (same
-    # None/real-zero distinction as spend_map above).
-    usage = cp.usage_by_litellm_team()
+    # Today's tokens per team from the day's SNAPSHOT rows (DB-only, no
+    # gateway call in the request path — /spend/logs is unbounded and its
+    # cost grows with client traffic; the 15-min scheduler is the sole
+    # reader). No row yet today / NULL => None (pas encore relevé).
+    from management.server.services.code_housekeeping import today_usage_from_snapshots
+    snap_usage = today_usage_from_snapshots([t.id for t in teams])
     def _tokens_today(t):
-        if usage is None or not t.litellm_team_id:
-            return None
-        u = usage.get(t.litellm_team_id)
-        return u["tokens"] if u else 0
+        return snap_usage.get(t.id, {}).get("tokens")
 
     # Fetch key rows from the DB first, release the connection, THEN make the
     # (potentially slow) HTTP calls to the gateway — holding a pooled DB

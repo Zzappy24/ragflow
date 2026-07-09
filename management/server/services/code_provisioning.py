@@ -34,25 +34,6 @@ def spend_by_litellm_team(client=None) -> dict[str, float] | None:
         return None
 
 
-def usage_by_litellm_team(client=None) -> dict[str, dict] | None:
-    """Map litellm_team_id -> {"tokens", "errors"} pour aujourd'hui (UTC), via un seul daily_usage().
-
-    Returns None when the gateway is unreachable — callers must render
-    "unavailable" (None), never 0. A team absent from the returned dict but
-    present in the org's teams is a real, known zero (reachable, no traffic
-    today) — that distinction is the caller's responsibility, same principle
-    as spend_by_litellm_team.
-    """
-    import datetime
-    cl = _client(client)
-    today = datetime.datetime.now(datetime.timezone.utc).date()
-    try:
-        return cl.daily_usage(today)
-    except LiteLLMError as e:
-        logger.warning("usage (tokens/erreurs) indisponible (gateway): %s", e)
-        return None
-
-
 def get_entitlement(org_id: str):
     from api.db.db_models import DB, CodeEntitlement
     with DB.connection_context():

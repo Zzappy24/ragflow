@@ -111,7 +111,8 @@ export default function CodeDashboardSection() {
       </Row>
       {data.last_housekeeping_at && (
         <div className="text-gray-400 text-xs mt-2">
-          Dernier relevé : {new Date(data.last_housekeeping_at).toLocaleString()}
+          Tokens et erreurs relevés toutes les 15 min · dernier relevé
+          : {new Date(data.last_housekeeping_at).toLocaleString()} · dépenses € en temps réel
         </div>
       )}
     </div>

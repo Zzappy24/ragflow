@@ -134,6 +134,26 @@ def last_run():
                          CodeHousekeepingRun.id.desc()).first())
 
 
+def today_usage_from_snapshots(code_team_ids: list[str]) -> dict[str, dict]:
+    """Tokens/erreurs du jour (UTC) par code_team_id, lus depuis les snapshots.
+
+    Lecture DB pure pour le chemin requête (dashboard/overview) : aucun appel
+    gateway — /spend/logs est non-borné et son coût croît avec le trafic des
+    clients ; seul le scheduler (15 min) le lit. Une team sans row aujourd'hui
+    (pas encore relevée) est absente du résultat => les appelants rendent None.
+    Colonnes NULL (usage indisponible au relevé) => valeurs None.
+    """
+    if not code_team_ids:
+        return {}
+    from api.db.db_models import DB, CodeSpendSnapshot
+    today = datetime.datetime.now(datetime.timezone.utc).date()
+    with DB.connection_context():
+        rows = list(CodeSpendSnapshot.select().where(
+            (CodeSpendSnapshot.snap_date == today) &
+            (CodeSpendSnapshot.code_team_id.in_(code_team_ids))))
+    return {r.code_team_id: {"tokens": r.tokens, "errors": r.errors} for r in rows}
+
+
 def daily_spend_series(org_ids: list[str] | None, days: int = 30) -> list[dict]:
     """Courbe spend/jour agrégée sur les orgs visibles. Delta négatif = reset -> valeur du jour."""
     from api.db.db_models import DB, CodeSpendSnapshot
