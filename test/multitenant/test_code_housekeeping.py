@@ -201,3 +201,43 @@ def test_daily_series_aggregates_multiple_teams_same_day(hk_org):
     series = {p["date"]: p["spend"] for p in daily_spend_series([hk_org], days=5)}
     assert series[str(today - datetime.timedelta(days=1))] == 11.0  # 5 (a) + 6 (b)
     assert series[str(today)] == 14.0                                # 5 (a) + 9 (b)
+
+
+def test_snapshot_captures_daily_tokens_and_errors(hk_org):
+    from management.server.services import code_provisioning as cp
+    from management.server.services.code_housekeeping import snapshot_spend, daily_spend_series
+    from api.db.db_models import DB, CodeSpendSnapshot
+
+    fake = FakeLiteLLM()
+    team = cp.create_code_team(org_id=hk_org, name="t", max_budget=50.0,
+                               model_access=[], created_by="tester", client=fake)
+    fake.teams[team.litellm_team_id]["spend"] = 3.0
+    fake.usage = {team.litellm_team_id: {"tokens": 1234, "errors": 2}}
+    assert snapshot_spend(client=fake) >= 1
+
+    with DB.connection_context():
+        row = CodeSpendSnapshot.get(CodeSpendSnapshot.code_team_id == team.id)
+    assert row.tokens == 1234 and row.errors == 2
+
+    series = daily_spend_series([hk_org], days=2)
+    today = series[-1]
+    assert today["tokens"] >= 1234 and today["errors"] >= 2
+
+
+def test_snapshot_tokens_null_when_usage_unavailable(hk_org, monkeypatch):
+    """spend dispo mais usage KO (endpoint absent) → tokens/errors restent NULL, spend écrit."""
+    from management.server.services import code_provisioning as cp
+    from management.server.services.code_housekeeping import snapshot_spend
+    from management.server.services.litellm_client import LiteLLMError
+    from api.db.db_models import DB, CodeSpendSnapshot
+
+    fake = FakeLiteLLM()
+    team = cp.create_code_team(org_id=hk_org, name="t", max_budget=50.0,
+                               model_access=[], created_by="tester", client=fake)
+    def broken_usage(day):
+        raise LiteLLMError("spend-logs unavailable")
+    fake.daily_usage = broken_usage
+    assert snapshot_spend(client=fake) >= 1
+    with DB.connection_context():
+        row = CodeSpendSnapshot.get(CodeSpendSnapshot.code_team_id == team.id)
+    assert row.tokens is None and row.errors is None and row.spend == 0.0

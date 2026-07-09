@@ -12,6 +12,7 @@ class FakeLiteLLM:
         self.blocked: set[str] = set()
         self.calls: list[tuple] = []
         self.keys: dict[str, dict] = {}
+        self.usage: dict[str, dict] = {}
 
     @staticmethod
     def team_alias(org_id, code_team_id):
@@ -70,6 +71,10 @@ class FakeLiteLLM:
         self._maybe_down()
         self.blocked.discard(token)
         self.calls.append(("unblock_key", token))
+
+    def daily_usage(self, day):
+        self._maybe_down()
+        return self.usage
 
 
 @pytest.fixture()

@@ -1620,6 +1620,11 @@ class CodeSpendSnapshot(DataBaseModel):
     code_team_id = CharField(max_length=32, null=False, index=True)
     spend = FloatField(null=False, default=0.0)
     max_budget = FloatField(null=False, default=0.0)
+    # CUSTOM B2B SaaS — Code product: daily token/error counts from LiteLLM's
+    # spend-logs endpoint. NULL = gateway unreachable at snapshot time (spend
+    # is still written); 0 = gateway reachable but no traffic for this team.
+    tokens = IntegerField(null=True)
+    errors = IntegerField(null=True)
 
     class Meta:
         db_table = "code_spend_snapshot"
@@ -2124,6 +2129,11 @@ def migrate_db():
     # CUSTOM B2B SaaS — code_team.litellm_team_id was varchar(64); the deterministic
     # alias format silently truncated on MySQL non-strict mode. Widen to 128.
     alter_db_column_type(migrator, "code_team", "litellm_team_id", CharField(max_length=128, null=True, index=True))
+
+    # CUSTOM B2B SaaS — Code product: daily tokens/errors captured from LiteLLM's
+    # spend-logs endpoint (NULL = gateway unreachable at snapshot time).
+    alter_db_add_column(migrator, "code_spend_snapshot", "tokens", IntegerField(null=True))
+    alter_db_add_column(migrator, "code_spend_snapshot", "errors", IntegerField(null=True))
 
 
 def _add_rbac_unique_indexes(migrator):

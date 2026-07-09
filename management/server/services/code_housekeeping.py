@@ -16,7 +16,8 @@ logger = logging.getLogger(__name__)
 def snapshot_spend(client=None) -> int | None:
     """Upsert le snapshot du jour pour chaque team active. None si gateway down."""
     from api.db.db_models import DB, CodeTeam, CodeSpendSnapshot
-    from management.server.services.code_provisioning import spend_by_litellm_team
+    from management.server.services.code_provisioning import _client, spend_by_litellm_team
+    from management.server.services.litellm_client import LiteLLMError
 
     spend_map = spend_by_litellm_team(client=client)
     if spend_map is None:
@@ -24,6 +25,12 @@ def snapshot_spend(client=None) -> int | None:
         return None
 
     today = datetime.datetime.now(datetime.timezone.utc).date()
+    try:
+        usage = _client(client).daily_usage(today)
+    except LiteLLMError as e:
+        logger.warning("snapshot_spend: usage (tokens/erreurs) indisponible: %s", e)
+        usage = None
+
     count = 0
     with DB.connection_context():
         teams = list(CodeTeam.select().where(
@@ -40,10 +47,23 @@ def snapshot_spend(client=None) -> int | None:
                 # per-team granularity.
                 continue
             spend = spend_map[t.litellm_team_id]
-            update = {CodeSpendSnapshot.spend: spend, CodeSpendSnapshot.max_budget: t.max_budget}
+            # usage is None -> gateway unreachable for spend-logs -> NULL (unknown).
+            # usage is a dict but the team is absent from it -> reachable, no
+            # traffic today -> 0 (a real, known zero). These are different facts;
+            # do not collapse them.
+            u = (usage or {}).get(t.litellm_team_id)
+            tokens = u["tokens"] if u else (0 if usage is not None else None)
+            errors = u["errors"] if u else (0 if usage is not None else None)
+            update = {
+                CodeSpendSnapshot.spend: spend,
+                CodeSpendSnapshot.max_budget: t.max_budget,
+                CodeSpendSnapshot.tokens: tokens,
+                CodeSpendSnapshot.errors: errors,
+            }
             insert = CodeSpendSnapshot.insert(
                 id=get_uuid(), snap_date=today, org_id=t.org_id,
-                code_team_id=t.id, spend=spend, max_budget=t.max_budget)
+                code_team_id=t.id, spend=spend, max_budget=t.max_budget,
+                tokens=tokens, errors=errors)
             # Cross-DB on_conflict: MySQL infers the conflicting unique key from
             # the row, Postgres requires an explicit conflict_target. Mirrors
             # api/db/db_utils.py:bulk_insert_into_db.
@@ -130,10 +150,25 @@ def daily_spend_series(org_ids: list[str] | None, days: int = 30) -> list[dict]:
         prev_by_team[r.code_team_id] = r.spend
 
     daily: dict[str, float] = {}
+    # None-safe per-day sums: a day stays None while every row seen so far had
+    # NULL tokens/errors (usage unavailable at snapshot time); it becomes a
+    # real running total as soon as one non-NULL row for that day is seen.
+    daily_tokens: dict[str, int | None] = {}
+    daily_errors: dict[str, int | None] = {}
     for r in rows:
         prev = prev_by_team.get(r.code_team_id)
         delta = r.spend if prev is None or r.spend < prev else r.spend - prev
         prev_by_team[r.code_team_id] = r.spend
         key = str(r.snap_date)
         daily[key] = daily.get(key, 0.0) + delta
-    return [{"date": d, "spend": round(daily[d], 4)} for d in sorted(daily)]
+        if r.tokens is not None:
+            daily_tokens[key] = (daily_tokens.get(key) or 0) + r.tokens
+        elif key not in daily_tokens:
+            daily_tokens[key] = None
+        if r.errors is not None:
+            daily_errors[key] = (daily_errors.get(key) or 0) + r.errors
+        elif key not in daily_errors:
+            daily_errors[key] = None
+    return [{"date": d, "spend": round(daily[d], 4),
+             "tokens": daily_tokens.get(d), "errors": daily_errors.get(d)}
+            for d in sorted(daily)]
