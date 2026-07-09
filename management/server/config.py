@@ -36,6 +36,19 @@ class Settings(BaseSettings):
 
     INVITE_TOKEN_EXPIRE_SECONDS: int = 60 * 60 * 48
 
+    # SMTP du panel (invitations RAG + sièges code). Vide = emails désactivés,
+    # les liens restent affichés au front. Prod : SPF/DKIM requis sur le
+    # domaine expéditeur (cf. DEPLOYMENT_CHECKLIST).
+    SMTP_HOST: str = os.getenv("ADMIN_SMTP_HOST", "")
+    SMTP_PORT: int = int(os.getenv("ADMIN_SMTP_PORT", "587"))
+    SMTP_USERNAME: str = os.getenv("ADMIN_SMTP_USERNAME", "")
+    SMTP_PASSWORD: str = os.getenv("ADMIN_SMTP_PASSWORD", "")
+    SMTP_FROM: str = os.getenv("ADMIN_SMTP_FROM", "Cyllene <no-reply@cyllene.com>")
+    SMTP_TLS: bool = os.getenv("ADMIN_SMTP_TLS", "true").lower() == "true"
+    # Base publique du panel — sert à construire les liens de claim,
+    # ex. "https://admin.cyllene.cloud". Vide = liens relatifs (dev).
+    PANEL_PUBLIC_URL: str = os.getenv("ADMIN_PANEL_PUBLIC_URL", "")
+
     class Config:
         env_prefix = "ADMIN_"
 
