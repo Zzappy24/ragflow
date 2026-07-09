@@ -9,7 +9,9 @@ concurrent claims of the same link can never both succeed.
 """
 import hashlib
 import logging
+import re
 import secrets
+import time
 from datetime import datetime, timedelta, timezone
 
 from common.misc_utils import get_uuid
@@ -20,6 +22,16 @@ logger = logging.getLogger(__name__)
 
 INVITE_TTL_HOURS = 72
 MAX_BULK_EMAILS = 200
+
+# Reservation sentinel older than this is considered abandoned (the process
+# that reserved it crashed/was killed between the CAS reservation and the
+# final claimed_key_id write) and can be reclaimed by a later claim().
+STALE_PENDING_SECONDS = 120
+
+# Rejects any whitespace/control char inside the address (header-injection
+# guard: "a@x.com\nBcc: evil@x.com" must not pass). fullmatch, so ^/$ are
+# redundant but kept for clarity.
+_EMAIL_RE = re.compile(r"^\S+@\S+\.\S+$")
 
 
 class InviteNotFound(Exception):
@@ -52,6 +64,31 @@ def claim_url(token: str) -> str:
     return f"{settings.PANEL_PUBLIC_URL or ''}/admin/claim?token={token}"
 
 
+def validate_email(email: str) -> None:
+    """Shared email-shape check — used both for bulk invite emails
+    (create_invites) and for re-validating an existing CodeKey.label before
+    rotate_key destroys it (see routers/code.py:rotate_key)."""
+    if not _EMAIL_RE.fullmatch(email or ""):
+        raise ValueError(f"invalid email address: {email}")
+
+
+def _pending_sentinel(now_epoch: float) -> str:
+    return f"pending:{int(now_epoch)}"
+
+
+def _is_reclaimable_pending(claimed_key_id: str | None, now_epoch: float) -> bool:
+    """True if claimed_key_id is a "pending:<epoch>" reservation sentinel
+    older than STALE_PENDING_SECONDS — i.e. a claim() that crashed between
+    reserving the invite and completing (or rolling back) it."""
+    if not claimed_key_id or not claimed_key_id.startswith("pending:"):
+        return False
+    try:
+        ts = int(claimed_key_id.split(":", 1)[1])
+    except ValueError:
+        return False
+    return (now_epoch - ts) > STALE_PENDING_SECONDS
+
+
 def create_invites(*, code_team_id: str, emails: list[str], created_by: str) -> list[dict]:
     """Dedup + validate emails, cap at MAX_BULK_EMAILS, one CodeKeyInvite row
     per email. Returns [{"invite_id", "email", "claim_token"}] — claim_token
@@ -64,8 +101,7 @@ def create_invites(*, code_team_id: str, emails: list[str], created_by: str) -> 
         e = (raw or "").strip()
         if not e or e in seen:
             continue
-        if "@" not in e or "." not in e.split("@", 1)[1]:
-            raise ValueError(f"invalid email address: {e}")
+        validate_email(e)
         seen.add(e)
         deduped.append(e)
     if len(deduped) > MAX_BULK_EMAILS:
@@ -95,42 +131,83 @@ def regenerate_token(invite_id: str) -> str | None:
         inv = CodeKeyInvite.get_or_none(CodeKeyInvite.id == invite_id)
         if inv is None or inv.claimed_key_id is not None:
             return None
-        CodeKeyInvite.update(token_hash=_hash_token(token), expires_at=expires).where(
-            CodeKeyInvite.id == invite_id).execute()
+        # Guard the UPDATE itself against a claim racing in between the
+        # lookup above and here (TOCTOU): only flip the token if the invite
+        # is STILL unclaimed at UPDATE time, otherwise treat it like the
+        # already-claimed path above.
+        updated = (CodeKeyInvite.update(token_hash=_hash_token(token), expires_at=expires)
+                   .where((CodeKeyInvite.id == invite_id) & (CodeKeyInvite.claimed_key_id.is_null(True)))
+                   .execute())
+        if updated == 0:
+            return None
     return token
 
 
 def claim(token: str, client=None) -> dict:
     """One-time atomic claim: reserve the invite (conditional UPDATE), then
-    provision the CodeKey outside the reservation lock. On gateway failure,
-    the reservation is rolled back so the SAME link stays valid — the invite
-    is never burned by a transient LiteLLM outage."""
+    provision the CodeKey outside the reservation lock.
+
+    Any exception raised after the reservation (LiteLLM down, team/org gone
+    inactive, unexpected error) rolls the reservation back to unclaimed so
+    the SAME link stays valid — the invite is never burned by a transient
+    failure, and the public route never leaks *why* it failed (always 404,
+    except the deliberate 503 for GatewayDown).
+
+    As a second line of defense — e.g. the process is killed between the
+    reservation and the rollback — the reservation sentinel itself carries
+    an epoch ("pending:<epoch>") and becomes reclaimable by a later claim()
+    once it goes stale (see _is_reclaimable_pending)."""
     from api.db.db_models import DB, CodeKeyInvite
 
     token_hash = _hash_token(token)
     now = _now()
+    now_epoch = time.time()
     with DB.connection_context():
         inv = CodeKeyInvite.get_or_none(CodeKeyInvite.token_hash == token_hash)
-        if inv is None or inv.claimed_key_id is not None or inv.expires_at < now:
+        if inv is None or inv.expires_at < now:
             raise InviteNotFound()
-        # Atomic reservation (anti double-click): only one concurrent UPDATE
-        # can flip claimed_key_id away from NULL — the other affects 0 rows.
-        updated = (CodeKeyInvite.update(claimed_key_id="pending")
-                   .where((CodeKeyInvite.id == inv.id) & (CodeKeyInvite.claimed_key_id.is_null(True)))
+        prior = inv.claimed_key_id
+        if prior is not None and not _is_reclaimable_pending(prior, now_epoch):
+            raise InviteNotFound()
+        # Atomic reservation (anti double-click / crash recovery): only one
+        # concurrent UPDATE can flip claimed_key_id away from its last-read
+        # value (NULL, or a stale "pending:<epoch>" sentinel) — any other
+        # racing UPDATE affects 0 rows.
+        cond = (CodeKeyInvite.claimed_key_id.is_null(True) if prior is None
+                else CodeKeyInvite.claimed_key_id == prior)
+        updated = (CodeKeyInvite.update(claimed_key_id=_pending_sentinel(now_epoch))
+                   .where((CodeKeyInvite.id == inv.id) & cond)
                    .execute())
         if updated == 0:
             raise InviteNotFound()
 
-    from api.db.services.user_service import UserService
-    users = UserService.query(email=inv.email, status="1")
-    owner_id = users[0].id if users else None
+    try:
+        from api.db.services.user_service import UserService
+        users = UserService.query(email=inv.email, status="1")
+        owner_id = users[0].id if users else None
 
-    key, plain = create_code_key(code_team_id=inv.code_team_id, label=inv.email,
-                                 owner_user_id=owner_id, created_by=inv.created_by, client=client)
-    if plain is None:
-        logger.warning("invite %s claim: LiteLLM down, rolling back reservation", inv.id)
+        key, plain = create_code_key(code_team_id=inv.code_team_id, label=inv.email,
+                                     owner_user_id=owner_id, created_by=inv.created_by, client=client)
+        if plain is None:
+            logger.warning("invite %s claim: LiteLLM down, rolling back reservation", inv.id)
+            # I3: the CodeKey row was already created (desired-state-first)
+            # but never reached LiteLLM — no external object exists, no
+            # plaintext was ever issued, so deleting it here is safe and
+            # correct. Deliberate exception to the no-delete discipline
+            # followed elsewhere in the Code product (rows are otherwise
+            # append-only for the audit trail): without this, every
+            # gateway-down retry of the same invite orphans one more row.
+            from api.db.db_models import CodeKey
+            with DB.connection_context():
+                CodeKey.delete().where(CodeKey.id == key.id).execute()
+            _mark_invite(inv.id, claimed_key_id=None)
+            raise GatewayDown()
+    except GatewayDown:
+        raise
+    except Exception:
+        logger.exception("invite %s claim failed after reservation, rolling back", inv.id)
         _mark_invite(inv.id, claimed_key_id=None)
-        raise GatewayDown()
+        raise InviteNotFound()
 
     _mark_invite(inv.id, claimed_key_id=key.id)
-    return {"plain_key": plain, "label": inv.email, "email": inv.email}
+    return {"invite_id": inv.id, "plain_key": plain, "label": inv.email, "email": inv.email}

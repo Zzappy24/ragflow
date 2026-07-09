@@ -1,4 +1,6 @@
 """Code product routes — entitlements (superuser), teams (org admin), keys (delegated)."""
+import time
+
 from fastapi import APIRouter, Depends, HTTPException, Request, status
 
 from management.server.auth.dependencies import (
@@ -20,10 +22,35 @@ router = APIRouter()
 _CLAIM_HITS: dict[str, list[float]] = {}
 
 
+def _client_ip(request: Request) -> str:
+    """Resolve the source IP for rate-limiting.
+
+    Trusts X-Forwarded-For's first hop when present. This assumes the panel
+    sits behind a single trusted reverse proxy / K8s ingress that sets (and
+    overwrites, never appends to a client-supplied) XFF before the request
+    reaches us. If the panel is ever exposed directly to the internet
+    without such a proxy, this becomes spoofable and the rate limit is
+    trivially bypassable — revisit then.
+    """
+    xff = request.headers.get("x-forwarded-for")
+    if xff:
+        return xff.split(",")[0].strip()
+    return request.client.host if request.client else "unknown"
+
+
 def _rate_limited(ip: str, limit: int = 10, window: float = 60.0) -> bool:
-    import time
     now = time.time()
-    hits = [t for t in _CLAIM_HITS.get(ip, []) if now - t < window]
+    # Prune every IP's bucket on each call (not just the caller's) so the
+    # dict can't grow unboundedly as more distinct source IPs hit this
+    # route — an unbounded dict is itself a memory-exhaustion vector.
+    for other_ip in list(_CLAIM_HITS.keys()):
+        fresh = [t for t in _CLAIM_HITS[other_ip] if now - t < window]
+        if fresh:
+            _CLAIM_HITS[other_ip] = fresh
+        else:
+            del _CLAIM_HITS[other_ip]
+
+    hits = _CLAIM_HITS.get(ip, [])
     hits.append(now)
     _CLAIM_HITS[ip] = hits
     return len(hits) > limit
@@ -461,7 +488,13 @@ async def resend_invite(request: Request, invite_id: str, user_id: str = Depends
 @router.post("/code/keys/{key_id}/rotate", status_code=status.HTTP_201_CREATED)
 async def rotate_key(request: Request, key_id: str, user_id: str = Depends(get_current_user_id)):
     """Revoke the existing key and re-invite the same email (a fresh seat is
-    provisioned at claim time, never re-using the revoked key's secret)."""
+    provisioned at claim time, never re-using the revoked key's secret).
+
+    Order matters: validate the label -> create the replacement invite ->
+    ONLY THEN revoke the existing key -> email -> audit. A key must never be
+    destroyed before we know a valid replacement invite can be created
+    (invalid label, or invite creation failing for any reason) — the old
+    key stays active and untouched in both of those cases."""
     from api.db.db_models import DB, CodeKey
     with DB.connection_context():
         key = CodeKey.get_or_none(CodeKey.id == key_id)
@@ -475,12 +508,10 @@ async def rotate_key(request: Request, key_id: str, user_id: str = Depends(get_c
     from management.server.config import settings as admin_settings
 
     try:
-        cp.revoke_code_key(code_key_id=key_id)
-    except ValueError as e:
-        raise HTTPException(status_code=422, detail=str(e))
-    audit_svc.record(request=request, actor_user_id=user.id, action=audit_svc.CODE_KEY_ROTATED,
-                     org_id=None, resource_type="code_key", resource_id=key_id,
-                     details={"label": key.label})
+        ci.validate_email(key.label)
+    except ValueError:
+        raise HTTPException(status_code=422,
+                            detail=f"key label is not a valid email address: {key.label}")
 
     try:
         invites = ci.create_invites(code_team_id=key.code_team_id, emails=[key.label],
@@ -488,6 +519,15 @@ async def rotate_key(request: Request, key_id: str, user_id: str = Depends(get_c
     except ValueError as e:
         raise HTTPException(status_code=422, detail=str(e))
     inv = invites[0]
+
+    try:
+        cp.revoke_code_key(code_key_id=key_id)
+    except ValueError as e:
+        raise HTTPException(status_code=422, detail=str(e))
+    audit_svc.record(request=request, actor_user_id=user.id, action=audit_svc.CODE_KEY_ROTATED,
+                     org_id=None, resource_type="code_key", resource_id=key_id,
+                     details={"label": key.label})
+
     url = ci.claim_url(inv["claim_token"])
     email_sent = await send_mail(inv["email"], "Nouvelle invitation — Code product (rotation de clé)",
                                  _invite_email_body(url, admin_settings.CODE_GATEWAY_PUBLIC_URL or None))
@@ -527,7 +567,7 @@ async def public_claim(request: Request, body: CodeClaimRequest):
     per source IP (mono-replica, in-process — see _CLAIM_HITS). Errors are
     intentionally generic (404/503) — never distinguish "unknown token" from
     "expired" or "already claimed" to avoid token enumeration."""
-    ip = request.client.host if request.client else "unknown"
+    ip = _client_ip(request)
     if _rate_limited(ip):
         raise HTTPException(status_code=429, detail="Too many attempts, please retry later")
 
@@ -540,9 +580,10 @@ async def public_claim(request: Request, body: CodeClaimRequest):
     except ci.GatewayDown:
         raise HTTPException(status_code=503, detail="Gateway unavailable, please retry")
 
-    # No audit of the token itself — only the resulting identity/email.
+    # No audit of the token itself — only the resulting identity/email and
+    # the invite it resolved to.
     audit_svc.record(request=request, actor_user_id="", action=audit_svc.CODE_SEAT_CLAIMED,
-                     org_id=None, resource_type="code_key", resource_id=None,
+                     org_id=None, resource_type="code_key_invite", resource_id=result["invite_id"],
                      details={"email": result["email"]})
     return {"plain_key": result["plain_key"], "label": result["label"],
             "gateway_url": admin_settings.CODE_GATEWAY_PUBLIC_URL or None}
