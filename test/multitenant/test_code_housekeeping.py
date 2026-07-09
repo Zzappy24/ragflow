@@ -241,3 +241,45 @@ def test_snapshot_tokens_null_when_usage_unavailable(hk_org, monkeypatch):
     with DB.connection_context():
         row = CodeSpendSnapshot.get(CodeSpendSnapshot.code_team_id == team.id)
     assert row.tokens is None and row.errors is None and row.spend == 0.0
+
+
+def test_snapshot_does_not_clobber_tokens_on_later_transient_usage_failure(hk_org):
+    """Reproduces a bug found via manual investigation (2026-07-09): a later
+    same-day housekeeping run whose usage fetch transiently fails must not
+    blank out tokens/errors a prior, successful run already captured.
+
+    Sequence observed live against the docker/litellm-test stack: run 1
+    (usage available) wrote tokens=90; a run 2 with a flaky daily_usage()
+    call reset tokens back to NULL even though spend (from list_teams, a
+    separate call) kept updating fine — because the upsert's `update` dict
+    unconditionally included tokens/errors, so ON DUPLICATE KEY / ON
+    CONFLICT overwrote the good value with NULL on every subsequent failed
+    fetch. kpis.tokens_30d then stays NULL indefinitely even though the
+    live gateway (top_teams) shows real tokens for that team.
+    """
+    from management.server.services import code_provisioning as cp
+    from management.server.services.code_housekeeping import snapshot_spend
+    from management.server.services.litellm_client import LiteLLMError
+    from api.db.db_models import DB, CodeSpendSnapshot
+
+    fake = FakeLiteLLM()
+    team = cp.create_code_team(org_id=hk_org, name="t", max_budget=50.0,
+                               model_access=[], created_by="tester", client=fake)
+    fake.teams[team.litellm_team_id]["spend"] = 3.0
+    fake.usage = {team.litellm_team_id: {"tokens": 90, "errors": 0}}
+    assert snapshot_spend(client=fake) >= 1
+    with DB.connection_context():
+        row = CodeSpendSnapshot.get(CodeSpendSnapshot.code_team_id == team.id)
+    assert row.tokens == 90 and row.errors == 0
+
+    # Second run, same day: spend keeps moving but usage fetch flakes out.
+    fake.teams[team.litellm_team_id]["spend"] = 4.5
+    def broken_usage(day):
+        raise LiteLLMError("simulated transient spend-logs outage")
+    fake.daily_usage = broken_usage
+    assert snapshot_spend(client=fake) >= 1
+
+    with DB.connection_context():
+        row = CodeSpendSnapshot.get(CodeSpendSnapshot.code_team_id == team.id)
+    assert row.spend == 4.5  # spend still updates
+    assert row.tokens == 90 and row.errors == 0  # but tokens/errors preserved, not clobbered to NULL

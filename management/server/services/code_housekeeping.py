@@ -57,9 +57,18 @@ def snapshot_spend(client=None) -> int | None:
             update = {
                 CodeSpendSnapshot.spend: spend,
                 CodeSpendSnapshot.max_budget: t.max_budget,
-                CodeSpendSnapshot.tokens: tokens,
-                CodeSpendSnapshot.errors: errors,
             }
+            # Only touch tokens/errors on the UPDATE path when this run has
+            # fresh usage data. usage is None means daily_usage() itself
+            # failed (transient spend-logs outage) — omitting the columns
+            # here means ON DUPLICATE KEY / ON CONFLICT leaves the existing
+            # row's tokens/errors untouched instead of clobbering a value a
+            # prior, successful run in the same day already captured back to
+            # NULL. The INSERT branch below still writes tokens=None for a
+            # brand new row on a day where the very first run has no usage.
+            if usage is not None:
+                update[CodeSpendSnapshot.tokens] = tokens
+                update[CodeSpendSnapshot.errors] = errors
             insert = CodeSpendSnapshot.insert(
                 id=get_uuid(), snap_date=today, org_id=t.org_id,
                 code_team_id=t.id, spend=spend, max_budget=t.max_budget,
