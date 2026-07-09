@@ -135,9 +135,21 @@ def code_dashboard(user=Depends(get_current_user)):
         by_org[t.org_id] = by_org.get(t.org_id, 0.0) + s
     top_orgs = [{"org_id": oid, "org_name": org_names.get(oid, oid), "spend": round(sp, 4)}
                 for oid, sp in sorted(by_org.items(), key=lambda x: -x[1])[:5]]
+
+    # Today's tokens per team, single daily_usage(today) call. None (gateway
+    # unreachable) propagates to every team; a team absent from a non-None
+    # usage map is a real zero (reachable, no traffic today).
+    usage = cp.usage_by_litellm_team()
+    def _tokens_today(t):
+        if usage is None or not t.litellm_team_id:
+            return None
+        u = usage.get(t.litellm_team_id)
+        return u["tokens"] if u else 0
+
     top_teams = [{"code_team_id": t.id, "name": t.name,
                   "org_name": org_names.get(t.org_id, t.org_id),
-                  "spend": round(s, 4), "max_budget": t.max_budget}
+                  "spend": round(s, 4), "max_budget": t.max_budget,
+                  "tokens": _tokens_today(t)}
                  for t, s in sorted(known, key=lambda x: -x[1])[:5]]
 
     run = last_run()
@@ -150,12 +162,24 @@ def code_dashboard(user=Depends(get_current_user)):
         last_housekeeping_at = run.ran_at.replace(tzinfo=timezone.utc).isoformat()
     else:
         last_housekeeping_at = None
+
+    daily = daily_spend_series(org_ids, days=30)
+    # None-safe sums over the series: None only if every day is None
+    # (usage was unavailable at snapshot time for the whole window).
+    tokens_vals = [d["tokens"] for d in daily]
+    errors_vals = [d["errors"] for d in daily]
+    tokens_30d = (sum(v for v in tokens_vals if v is not None)
+                  if any(v is not None for v in tokens_vals) else None)
+    errors_30d = (sum(v for v in errors_vals if v is not None)
+                  if any(v is not None for v in errors_vals) else None)
+
     return {
         "kpis": {"cycle_spend": cycle_spend,
                  "active_orgs": len({t.org_id for t in teams}),
                  "teams": len(teams), "active_keys": active_keys,
-                 "budget_alerts": alerts},
-        "daily": daily_spend_series(org_ids, days=30),
+                 "budget_alerts": alerts,
+                 "tokens_30d": tokens_30d, "errors_30d": errors_30d},
+        "daily": daily,
         "top_orgs": top_orgs, "top_teams": top_teams,
         "last_housekeeping_at": last_housekeeping_at,
     }
@@ -199,6 +223,14 @@ def code_overview(org_id: str, user_id: str = Depends(get_current_user_id)):
     # Real consumption from the gateway (single /team/list call).
     # None = gateway unreachable — the front renders "—", never 0.
     spend_map = cp.spend_by_litellm_team()
+    # Today's tokens per team, single daily_usage(today) call (same
+    # None/real-zero distinction as spend_map above).
+    usage = cp.usage_by_litellm_team()
+    def _tokens_today(t):
+        if usage is None or not t.litellm_team_id:
+            return None
+        u = usage.get(t.litellm_team_id)
+        return u["tokens"] if u else 0
 
     # Fetch key rows from the DB first, release the connection, THEN make the
     # (potentially slow) HTTP calls to the gateway — holding a pooled DB
@@ -228,7 +260,8 @@ def code_overview(org_id: str, user_id: str = Depends(get_current_user_id)):
         if spend_map is None or not t.litellm_team_id:
             return None
         return spend_map.get(t.litellm_team_id, 0.0)
-    team_dicts = [{**_team_to_dict(t), "spend": _spend(t), "keys": keys_by_team[t.id]} for t in teams]
+    team_dicts = [{**_team_to_dict(t), "spend": _spend(t), "tokens_today": _tokens_today(t),
+                  "keys": keys_by_team[t.id]} for t in teams]
     known = [d["spend"] for d in team_dicts if d["spend"] is not None]
     return {
         "entitlement": None if ent is None else {

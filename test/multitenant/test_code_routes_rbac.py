@@ -281,3 +281,39 @@ def test_dashboard_rbac_and_shape(panel_client, org_with_entitlement_and_users, 
     db = client.get("/api/admin/code/dashboard", headers=_h(org_b_token)).json()
     assert all(t["code_team_id"] != team["id"] for t in db["top_teams"])
     assert db["kpis"]["cycle_spend"] in (0.0, None)
+
+
+def test_dashboard_exposes_tokens_and_errors(panel_client, org_with_entitlement_and_users):
+    client, fake = panel_client
+    org_id, tokens = org_with_entitlement_and_users
+    team = client.post(f"/api/admin/orgs/{org_id}/code/teams",
+                       json={"name": "s", "max_budget": 40.0, "model_access": []},
+                       headers=_h(tokens["org_admin"])).json()
+    fake.usage = {team["litellm_team_id"]: {"tokens": 500, "errors": 1}}
+    # snapshot du jour via housekeeping (client fake patché par la fixture)
+    client.post("/api/admin/code/housekeeping", headers=_h(tokens["superuser"]))
+
+    d = client.get("/api/admin/code/dashboard", headers=_h(tokens["superuser"])).json()
+    assert d["kpis"]["tokens_30d"] >= 500
+    assert d["kpis"]["errors_30d"] >= 1
+    mine = next(t for t in d["top_teams"] if t["code_team_id"] == team["id"])
+    assert mine["tokens"] == 500
+
+    ov = client.get(f"/api/admin/orgs/{org_id}/code/overview", headers=_h(tokens["org_admin"])).json()
+    mine_ov = next(t for t in ov["teams"] if t["id"] == team["id"])
+    assert mine_ov["tokens_today"] == 500
+
+
+def test_dashboard_tokens_null_when_gateway_down(panel_client, org_with_entitlement_and_users):
+    client, fake = panel_client
+    org_id, tokens = org_with_entitlement_and_users
+    client.post(f"/api/admin/orgs/{org_id}/code/teams",
+                json={"name": "s", "max_budget": 40.0, "model_access": []},
+                headers=_h(tokens["org_admin"]))
+    fake.down = True
+
+    d = client.get("/api/admin/code/dashboard", headers=_h(tokens["superuser"])).json()
+    assert all(t["tokens"] is None for t in d["top_teams"])
+
+    ov = client.get(f"/api/admin/orgs/{org_id}/code/overview", headers=_h(tokens["org_admin"])).json()
+    assert all(t["tokens_today"] is None for t in ov["teams"])

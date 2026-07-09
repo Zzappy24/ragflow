@@ -247,7 +247,7 @@ def org_with_entitlement_and_users():
     """
     from api.db.db_models import (
         DB, Organisation, CodeEntitlement, CodeTeam, CodeTeamMember, CodeKey,
-        User, OrgMember,
+        CodeSpendSnapshot, User, OrgMember,
     )
     from common.misc_utils import get_uuid
     from management.server.auth.jwt import create_access_token
@@ -284,6 +284,7 @@ def org_with_entitlement_and_users():
         if team_ids:
             CodeKey.delete().where(CodeKey.code_team_id.in_(team_ids)).execute()
             CodeTeamMember.delete().where(CodeTeamMember.code_team_id.in_(team_ids)).execute()
+            CodeSpendSnapshot.delete().where(CodeSpendSnapshot.code_team_id.in_(team_ids)).execute()
         CodeTeam.delete().where(CodeTeam.org_id == org_id).execute()
         CodeEntitlement.delete().where(CodeEntitlement.org_id == org_id).execute()
         OrgMember.delete().where(OrgMember.org_id == org_id).execute()
