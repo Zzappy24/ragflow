@@ -1,12 +1,14 @@
 import { useEffect, useState, useCallback } from 'react';
 import { useSearchParams } from 'react-router-dom';
 import { Table, Button, Card, Modal, Form, Input, InputNumber, App, Progress, Tag, Popconfirm, Space, Typography, Alert } from 'antd';
-import { PlusOutlined, StopOutlined, CopyOutlined } from '@ant-design/icons';
+import { PlusOutlined, StopOutlined, CopyOutlined, MailOutlined, ReloadOutlined } from '@ant-design/icons';
 import api from '@/lib/api';
 import CodeDashboardSection, { fmtTokens } from './dashboard-section';
 
 interface CodeKey { id: string; label: string; key_masked: string | null; status: string; sync_status: string; spend: number | null; }
 interface CodeTeam { id: string; name: string; max_budget: number; spend: number | null; status: string; sync_status: string; keys: CodeKey[]; tokens_today: number | null; }
+interface CodeInvite { id: string; email: string; expires_at: string; created_by?: string; }
+interface BulkResult { email: string; invite_id: string; email_sent: boolean; claim_url?: string; }
 interface Overview {
   gateway_url: string | null; // URL publique /v1 à configurer dans Kilo/OpenCode (null = non configurée)
   entitlement: { status: string; org_code_budget: number; budget_period: string } | null;
@@ -36,6 +38,13 @@ export default function CodePage() {
   const [teamForm] = Form.useForm();
   const [keyForm] = Form.useForm();
   const { message } = App.useApp();
+
+  // Bulk seat invites — one CodeKeyInvite per email, no key created until claim.
+  const [bulkModalTeam, setBulkModalTeam] = useState<CodeTeam | null>(null);
+  const [bulkText, setBulkText] = useState('');
+  const [bulkResults, setBulkResults] = useState<BulkResult[] | null>(null);
+  // Pending invites shown under each team's keys table.
+  const [invitesByTeam, setInvitesByTeam] = useState<Record<string, CodeInvite[]>>({});
 
   // No ?org= yet: landing = searchable orgs table with code status per org
   // (GET /code/orgs-summary — superusers see every org, everyone else only
@@ -74,6 +83,16 @@ export default function CodePage() {
   }, [orgId]);
 
   useEffect(fetchOverview, [fetchOverview]);
+
+  const fetchInvites = useCallback((teamId: string) => {
+    api.get(`/code/teams/${teamId}/invites`)
+      .then((res) => setInvitesByTeam((prev) => ({ ...prev, [teamId]: res.data })))
+      .catch(() => {});
+  }, []);
+
+  useEffect(() => {
+    (overview?.teams ?? []).forEach((t) => fetchInvites(t.id));
+  }, [overview, fetchInvites]);
 
   const onCreateTeam = async () => {
     try {
@@ -116,6 +135,64 @@ export default function CodePage() {
     } catch (err: unknown) {
       const msg = (err as { response?: { data?: { detail?: string } } })?.response?.data?.detail;
       message.error(msg ?? 'Échec de la révocation de la clé');
+    }
+  };
+
+  const onBulkInvite = async () => {
+    if (!bulkModalTeam) return;
+    const emails = bulkText.split('\n').map((s) => s.trim()).filter(Boolean);
+    if (emails.length === 0) return;
+    try {
+      const res = await api.post(`/code/teams/${bulkModalTeam.id}/keys/bulk`, { emails });
+      setBulkResults(res.data);
+      fetchInvites(bulkModalTeam.id);
+    } catch (err: unknown) {
+      const msg = (err as { response?: { data?: { detail?: string } } })?.response?.data?.detail;
+      message.error(msg ?? "Échec de l'invitation en masse");
+    }
+  };
+
+  const onResend = async (inviteId: string, teamId: string) => {
+    try {
+      const res = await api.post(`/code/invites/${inviteId}/resend`);
+      if (res.data.claim_url) {
+        Modal.info({
+          title: 'SMTP non configuré — lien à transmettre manuellement',
+          content: (
+            <Typography.Paragraph copyable={{ icon: <CopyOutlined /> }} code>
+              {res.data.claim_url}
+            </Typography.Paragraph>
+          ),
+        });
+      } else {
+        message.success('Invitation renvoyée');
+      }
+      fetchInvites(teamId);
+    } catch (err: unknown) {
+      const msg = (err as { response?: { data?: { detail?: string } } })?.response?.data?.detail;
+      message.error(msg ?? 'Échec du renvoi');
+    }
+  };
+
+  const onRotate = async (keyId: string) => {
+    try {
+      const res = await api.post(`/code/keys/${keyId}/rotate`);
+      if (res.data.claim_url) {
+        Modal.info({
+          title: 'SMTP non configuré — lien à transmettre manuellement',
+          content: (
+            <Typography.Paragraph copyable={{ icon: <CopyOutlined /> }} code>
+              {res.data.claim_url}
+            </Typography.Paragraph>
+          ),
+        });
+      } else {
+        message.success('Clé révoquée — nouvelle invitation envoyée');
+      }
+      fetchOverview();
+    } catch (err: unknown) {
+      const msg = (err as { response?: { data?: { detail?: string } } })?.response?.data?.detail;
+      message.error(msg ?? 'Échec de la rotation de la clé');
     }
   };
 
@@ -206,11 +283,17 @@ export default function CodePage() {
     { title: 'Statut', dataIndex: 'status', render: (s: string) => <Tag color={s === 'active' ? 'green' : 'red'}>{s}</Tag> },
     { title: 'Sync', dataIndex: 'sync_status', render: (s: string) => <Tag color={s === 'synced' ? 'blue' : 'orange'}>{s}</Tag> },
     {
-      title: '', width: 60,
+      title: '', width: 100,
       render: (_: unknown, k: CodeKey) => k.status === 'active' && (
-        <Popconfirm title="Révoquer cette clé ?" onConfirm={() => onRevoke(k.id)}>
-          <Button type="text" danger icon={<StopOutlined />} size="small" />
-        </Popconfirm>
+        <Space size="small">
+          <Popconfirm title={`Révoque la clé et envoie un nouveau lien à ${k.label}`}
+                     onConfirm={() => onRotate(k.id)}>
+            <Button type="text" icon={<ReloadOutlined />} size="small" />
+          </Popconfirm>
+          <Popconfirm title="Révoquer cette clé ?" onConfirm={() => onRevoke(k.id)}>
+            <Button type="text" danger icon={<StopOutlined />} size="small" />
+          </Popconfirm>
+        </Space>
       ),
     },
   ];
@@ -261,10 +344,32 @@ export default function CodePage() {
                      </Tag>
                      <Tag color="geekblue">{team.tokens_today == null ? '— tokens' : `${fmtTokens(team.tokens_today)} tokens auj.`}</Tag>
                      {team.sync_status !== 'synced' && <Tag color="orange">{team.sync_status}</Tag>}</Space>}
-              extra={<Button size="small" icon={<PlusOutlined />}
-                             onClick={() => setKeyModalTeam(team)}>Nouvelle clé</Button>}>
+              extra={<Space>
+                       <Button size="small" icon={<MailOutlined />}
+                               onClick={() => setBulkModalTeam(team)}>Inviter des sièges</Button>
+                       <Button size="small" icon={<PlusOutlined />}
+                               onClick={() => setKeyModalTeam(team)}>Nouvelle clé</Button>
+                     </Space>}>
           <Table rowKey="id" size="small" pagination={false}
                  columns={keyColumns(team)} dataSource={team.keys} />
+
+          {(invitesByTeam[team.id] ?? []).length > 0 && (
+            <div className="mt-3">
+              <Typography.Text type="secondary">Invitations en attente</Typography.Text>
+              <Table rowKey="id" size="small" pagination={false} showHeader={false}
+                     className="mt-1"
+                     dataSource={invitesByTeam[team.id]}
+                     columns={[
+                       { title: 'Email', dataIndex: 'email' },
+                       { title: 'Expire', dataIndex: 'expires_at',
+                         render: (v: string) => `expire le ${new Date(v).toLocaleString()}` },
+                       { title: '', width: 100,
+                         render: (_: unknown, inv: CodeInvite) => (
+                           <Button size="small" onClick={() => onResend(inv.id, team.id)}>Renvoyer</Button>
+                         ) },
+                     ]} />
+            </div>
+          )}
         </Card>
       ))}
 
@@ -302,6 +407,38 @@ export default function CodePage() {
           <Form form={keyForm} layout="vertical">
             <Form.Item name="label" label="Label (dev / siège)" rules={[{ required: true }]}>
               <Input placeholder="dev-alice" />
+            </Form.Item>
+          </Form>
+        )}
+      </Modal>
+
+      <Modal title={`Inviter des sièges — ${bulkModalTeam?.name ?? ''}`} open={!!bulkModalTeam}
+             onOk={bulkResults
+               ? () => { setBulkModalTeam(null); setBulkResults(null); setBulkText(''); }
+               : onBulkInvite}
+             okText={bulkResults ? 'Fermer' : 'Envoyer'}
+             onCancel={() => { setBulkModalTeam(null); setBulkResults(null); setBulkText(''); }}>
+        {bulkResults ? (
+          <Table rowKey="invite_id" size="small" pagination={false} dataSource={bulkResults}
+                 columns={[
+                   { title: 'Email', dataIndex: 'email' },
+                   {
+                     title: 'Statut',
+                     render: (_: unknown, r: BulkResult) => r.email_sent
+                       ? <Tag color="green">✓ envoyé</Tag>
+                       : (
+                         <span>
+                           ✗ échec — lien :{' '}
+                           <Typography.Text copyable code>{r.claim_url}</Typography.Text>
+                         </span>
+                       ),
+                   },
+                 ]} />
+        ) : (
+          <Form layout="vertical">
+            <Form.Item label="Emails (un par ligne)">
+              <Input.TextArea rows={6} placeholder="un email par ligne"
+                              value={bulkText} onChange={(e) => setBulkText(e.target.value)} />
             </Form.Item>
           </Form>
         )}
