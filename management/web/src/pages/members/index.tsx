@@ -1,6 +1,6 @@
 import { useEffect, useState } from 'react';
 import { useSearchParams, useParams } from 'react-router-dom';
-import { Table, Button, Card, Modal, Form, Input, Select, App, Popconfirm, Space, Typography, Tooltip } from 'antd';
+import { Table, Button, Card, Modal, Form, Input, Select, App, Popconfirm, Space, Typography, Tooltip, Tag } from 'antd';
 import { PlusOutlined, UserAddOutlined, CopyOutlined, FireOutlined, MinusCircleOutlined } from '@ant-design/icons';
 import type { ColumnsType } from 'antd/es/table';
 import api from '@/lib/api';
@@ -35,7 +35,7 @@ export default function MembersPage({
   const [inviteOpen, setInviteOpen] = useState(false);
   const [inviteForm] = Form.useForm();
   const [inviteBusy, setInviteBusy] = useState(false);
-  const [inviteResult, setInviteResult] = useState<{ email: string; invite_url: string } | null>(null);
+  const [inviteResult, setInviteResult] = useState<{ email: string; invite_url: string; email_sent: boolean } | null>(null);
 
   const isSuperuser = useAuthStore((s) => s.user?.is_superuser ?? false);
 
@@ -123,7 +123,7 @@ export default function MembersPage({
         org_id: scopeId,
         org_role: values.org_role,
       });
-      setInviteResult({ email: res.data.email, invite_url: res.data.invite_url });
+      setInviteResult({ email: res.data.email, invite_url: res.data.invite_url, email_sent: res.data.email_sent });
       setInviteOpen(false);
       inviteForm.resetFields();
       refresh();
@@ -299,6 +299,11 @@ export default function MembersPage({
         <p className="text-gray-500 mb-2">
           Send this single-use link to <b>{inviteResult?.email}</b>. They will set their
           password and be logged into RAGFlow automatically.
+        </p>
+        <p className="mb-2">
+          {inviteResult?.email_sent
+            ? <Tag color="green">Email d'invitation envoyé</Tag>
+            : <Tag color="orange">Email non envoyé — transmettez le lien ci-dessous</Tag>}
         </p>
         <Typography.Paragraph
           code

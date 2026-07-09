@@ -139,6 +139,7 @@ class UserProvisionResponse(BaseModel):
     email: str
     invite_url: str
     expires_in: int
+    email_sent: bool = False
 
 
 # -- Groups ------------------------------------------------------------------

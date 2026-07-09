@@ -27,6 +27,7 @@ from management.server.auth.dependencies import (
 from management.server.config import settings
 from management.server.models.schemas import UserProvision, UserProvisionResponse
 from management.server.services import audit as audit_svc
+from management.server.services.mailer import send_mail
 
 router = APIRouter()
 
@@ -92,6 +93,17 @@ async def provision_user_route(
 
     invite_url = f"{settings.RAGFLOW_BASE_URL}/set-password?invite_code={invite_code}"
 
+    email_sent = await send_mail(
+        to=body.email,
+        subject="Votre accès à la plateforme Cyllene",
+        body_text=(
+            f"Bonjour {body.nickname},\n\n"
+            f"Un compte vous a été créé. Définissez votre mot de passe ici :\n{invite_url}\n\n"
+            f"Ce lien expire dans {settings.INVITE_TOKEN_EXPIRE_SECONDS // 3600} heures.\n\n"
+            "— L'équipe Cyllene"
+        ),
+    )
+
     audit_svc.record(
         request=request,
         actor_user_id=user_id,
@@ -107,6 +119,7 @@ async def provision_user_route(
         email=body.email,
         invite_url=invite_url,
         expires_in=settings.INVITE_TOKEN_EXPIRE_SECONDS,
+        email_sent=email_sent,
     )
 
 
