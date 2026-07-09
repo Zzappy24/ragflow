@@ -79,9 +79,9 @@ export default function CodeDashboardSection() {
                 <XAxis dataKey="date" tickFormatter={(d: string) => d.slice(5)} />
                 <YAxis yAxisId="left" />
                 <YAxis yAxisId="right" orientation="right" tickFormatter={(v: number) => fmtTokens(v)} />
-                <Tooltip formatter={(v, name) => (name === 'tokens' ? fmtTokens(Number(v)) : `${v} €`)} />
+                <Tooltip formatter={(v, name) => (name === 'tokens' ? (v == null ? '—' : fmtTokens(Number(v))) : `${v} €`)} />
                 <Area yAxisId="left" type="monotone" dataKey="spend" stroke="#6366f1" fill="#6366f1" fillOpacity={0.25} />
-                <Area yAxisId="right" type="monotone" dataKey="tokens" stroke="#10b981" fill="#10b981" fillOpacity={0.15} />
+                <Area yAxisId="right" type="monotone" dataKey="tokens" stroke="#10b981" fill="#10b981" fillOpacity={0.15} connectNulls={false} />
               </AreaChart>
             </ResponsiveContainer>
           </Card>
