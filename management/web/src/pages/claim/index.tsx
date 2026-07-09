@@ -22,7 +22,9 @@ export default function ClaimPage() {
     setState('loading');
     axios.post('/api/admin/public/code/claim', { token })
       .then((r) => { setResult(r.data); setState('done'); })
-      .catch((e) => setState(e?.response?.status === 503 ? 'retry' : 'notfound'));
+      .catch((e) => setState(
+        e?.response?.status === 503 || e?.response?.status === 429 ? 'retry' : 'notfound',
+      ));
   };
 
   useEffect(() => { if (!token) setState('notfound'); }, [token]);

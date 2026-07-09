@@ -25,13 +25,21 @@ _CLAIM_HITS: dict[str, list[float]] = {}
 def _client_ip(request: Request) -> str:
     """Resolve the source IP for rate-limiting.
 
-    Trusts X-Forwarded-For's first hop when present. This assumes the panel
-    sits behind a single trusted reverse proxy / K8s ingress that sets (and
-    overwrites, never appends to a client-supplied) XFF before the request
-    reaches us. If the panel is ever exposed directly to the internet
-    without such a proxy, this becomes spoofable and the rate limit is
-    trivially bypassable — revisit then.
+    Prefers X-Real-IP: our chart's nginx sets it to `$remote_addr`
+    (overwrite, trustworthy — a client-supplied X-Real-IP is always clobbered
+    by the proxy). Falls back to X-Forwarded-For's first hop for other
+    front-proxy setups, then to the raw socket peer.
+
+    X-Forwarded-For is NOT trusted first: our nginx builds it via
+    `proxy_add_x_forwarded_for`, which APPENDS to any client-supplied value
+    instead of overwriting it. A client can prepend an arbitrary IP to XFF
+    and either dodge the rate limit or exhaust a victim IP's bucket
+    (adversarial 429-DoS). If the panel is ever exposed without a proxy that
+    sets X-Real-IP this way, revisit — both headers become spoofable.
     """
+    real_ip = request.headers.get("x-real-ip")
+    if real_ip:
+        return real_ip.strip()
     xff = request.headers.get("x-forwarded-for")
     if xff:
         return xff.split(",")[0].strip()
@@ -57,9 +65,10 @@ def _rate_limited(ip: str, limit: int = 10, window: float = 60.0) -> bool:
 
 
 def _invite_email_body(url: str, gateway_url: str | None, *, reminder: bool = False) -> str:
+    from management.server.services.code_invites import INVITE_TTL_HOURS
     intro = "Rappel : vous avez été invité(e)" if reminder else "Vous avez été invité(e)"
     body = (f"{intro} à rejoindre l'espace Code.\n\n"
-           f"Cliquez sur ce lien pour activer votre clé (expire dans 72 heures) :\n{url}\n")
+           f"Cliquez sur ce lien pour activer votre clé (expire dans {INVITE_TTL_HOURS} heures) :\n{url}\n")
     if gateway_url:
         body += f"\nURL de la gateway : {gateway_url}\n"
     return body

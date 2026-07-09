@@ -98,4 +98,76 @@ PATH=/opt/homebrew/bin:$PATH npm run dev
 - [ ] Créer un user MySQL applicatif dédié (voir §1.2)
 - [ ] Révoquer `UPDATE/DELETE` sur `cyllene_audit_log` (voir §1.2)
 - [ ] Configurer HTTPS sur les deux backends
-- [ ] Restreindre le port 8000 (admin panel) au réseau interne uniquement
+- [ ] Restreindre le port 8000 (admin panel) au réseau interne uniquement — **sauf** les deux routes
+      publiques du produit Code, qui doivent rester accessibles depuis Internet : `/admin/claim`
+      (page front) et `/api/admin/public/code/claim` (API). Les invités du produit Code n'ont pas
+      de compte panel — c'est le lien d'invitation lui-même qui fait office de credential (cf. §5.d).
+      Seule la surface authentifiée (tout le reste du panel) peut être restreinte au réseau interne.
+
+---
+
+## 5. Produit Code — prérequis prod
+
+### a. Variables d'environnement SMTP + URLs publiques
+
+| Variable | Description | Exemple |
+|---|---|---|
+| `ADMIN_SMTP_HOST` | Hôte SMTP sortant. **Vide = mode dégradé** : les emails d'invitation ne partent pas, le front affiche le lien de claim directement à l'admin (dev only, jamais souhaitable en prod). | `smtp.sendgrid.net` |
+| `ADMIN_SMTP_PORT` | Port SMTP. `587` = STARTTLS (recommandé), `465` = TLS implicite. | `587` |
+| `ADMIN_SMTP_USERNAME` | Identifiant SMTP. | `apikey` |
+| `ADMIN_SMTP_PASSWORD` | Mot de passe / clé API SMTP — à stocker en secret (K8s Secret), jamais en clair dans les manifests. | `<secret>` |
+| `ADMIN_SMTP_FROM` | Adresse expéditeur affichée. | `Cyllene <no-reply@cyllene.com>` |
+| `ADMIN_SMTP_TLS` | `true` pour STARTTLS sur le port 587 ; à adapter si le port 465 (TLS implicite) est utilisé. | `true` |
+| `ADMIN_PANEL_PUBLIC_URL` | Base publique du panel, sert à construire les liens de claim envoyés par email. **Vide = liens relatifs (dev only)** — en prod, un lien relatif dans un email n'a pas de sens (pas de contexte d'origine), donc cette variable est **obligatoire** dès que `ADMIN_SMTP_HOST` est renseigné. | `https://admin.cyllene.cloud` |
+| `ADMIN_CODE_GATEWAY_PUBLIC_URL` | URL publique de la gateway LiteLLM affichée aux utilisateurs (à configurer dans Kilo Code / OpenCode / Cline). Vide = masqué dans l'UI. | `https://code.cyllene.cloud/v1` |
+
+### b. SPF/DKIM/DMARC — À FAIRE AVANT d'activer le SMTP
+
+Avant de renseigner `ADMIN_SMTP_HOST` en prod, configurer sur le domaine expéditeur (celui
+utilisé dans `ADMIN_SMTP_FROM`) :
+- **SPF** : autoriser l'IP/serveur du fournisseur SMTP à émettre pour ce domaine.
+- **DKIM** : signature cryptographique des emails sortants (clé fournie par le fournisseur SMTP).
+- **DMARC** : politique d'alignement SPF/DKIM (`p=quarantine` ou `p=reject` recommandé).
+
+Sans ces trois enregistrements DNS, les emails d'invitation atterrissent en spam ou sont
+purement et simplement rejetés par les fournisseurs (Gmail, Outlook, etc.) — les invités ne
+recevront jamais leur lien de claim.
+
+### c. Chaîne X-Forwarded-For / X-Real-IP
+
+Le rate-limiter de `/api/admin/public/code/claim` (voir `management/server/routers/code.py::_client_ip`)
+préfère désormais **X-Real-IP** à X-Forwarded-For : notre nginx pose `X-Real-IP` via `$remote_addr`
+(overwrite, non falsifiable) alors qu'il **append** à `X-Forwarded-For` via `proxy_add_x_forwarded_for`
+(un client peut préfixer XFF avec une IP arbitraire → contournement du rate limit ou DoS 429 ciblé
+sur l'IP d'une victime).
+
+**Vérifier après tout changement d'ingress/proxy devant le panel** :
+- [ ] Chaque hop devant le mgmt (ingress K8s, load balancer, nginx) **écrase** `X-Real-IP` avec
+      l'IP réelle du client à ce hop — jamais un append.
+- [ ] Si l'ingress ne pose pas `X-Real-IP`, le code retombe sur le premier hop de XFF puis sur
+      le socket brut — vérifier dans ce cas que XFF est bien reconstruit (overwrite) par chaque
+      proxy de la chaîne, pas juste le dernier.
+
+### d. `/admin/claim` et `/api/admin/public/code/claim` doivent rester publics
+
+Contrairement au reste du panel (routes authentifiées, restreignables au réseau interne — voir
+§4), ces deux routes sont **volontairement non authentifiées** : le lien d'invitation (token à
+usage unique) est lui-même le credential. Les invités du produit Code n'ont pas de compte sur le
+panel admin — restreindre ces routes au réseau interne empêcherait tout claim de siège
+fonctionnel. Seule la surface authentifiée doit être IP-restreinte.
+
+### e. Rate-limiter en mémoire — mono-réplica
+
+Le rate-limiter de `/api/admin/public/code/claim` est **in-process** (dict Python, pas de
+backend partagé — voir `_CLAIM_HITS` dans `code.py`). Il fonctionne correctement tant que le
+mgmt-backend tourne en **un seul replica**. Si le panel est scalé horizontalement (>1 replica),
+chaque pod aura son propre compteur indépendant — le rate limit effectif devient `limite × nb_replicas`.
+**Avant tout scale-out du mgmt-backend, migrer ce compteur vers Redis** (partagé entre replicas).
+
+### f. Provisioning au boot — pas de SQL manuel requis
+
+- La table `code_key_invite` (et les autres tables du produit Code) est créée automatiquement au
+  premier démarrage du mgmt-backend via `init_database_tables()` — aucune migration SQL manuelle
+  à exécuter.
+- `aiosmtplib==5.0.0` est pinné dans `Dockerfile.management` — aucune installation manuelle requise
+  dans l'image de production.

@@ -472,13 +472,17 @@ def test_public_claim_route_rate_limited(panel_client):  # noqa: F811
 
 
 def test_public_claim_rate_limit_keyed_by_forwarded_for(panel_client):  # noqa: F811
-    """I1: two different X-Forwarded-For values must get independent rate
+    """I1: two different X-Real-IP values must get independent rate
     limit buckets — TestClient always presents the same underlying socket
-    ("testclient"), so without honoring XFF this would be indistinguishable
-    from a single client hammering the route."""
+    ("testclient"), so without honoring X-Real-IP this would be
+    indistinguishable from a single client hammering the route.
+
+    X-Real-IP (not X-Forwarded-For) is used here because our nginx
+    overwrites X-Real-IP with $remote_addr while it only appends to XFF —
+    see _client_ip's docstring in management/server/routers/code.py."""
     client, _ = panel_client
-    headers_a = {"X-Forwarded-For": "203.0.113.10"}
-    headers_b = {"X-Forwarded-For": "203.0.113.20"}
+    headers_a = {"X-Real-IP": "203.0.113.10"}
+    headers_b = {"X-Real-IP": "203.0.113.20"}
 
     statuses_a = [client.post("/api/admin/public/code/claim", json={"token": "bogus-a"},
                               headers=headers_a).status_code for _ in range(10)]
