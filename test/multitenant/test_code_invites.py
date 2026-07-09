@@ -308,6 +308,10 @@ def test_create_invites_rejects_header_injection_email(inv_org):
 # ---------------------------------------------------------------------------
 
 def test_bulk_route_rbac_and_email_sent(panel_client, rbac_org, monkeypatch):  # noqa: F811
+    # email_sent=True exige PANEL_PUBLIC_URL non vide (sinon lien relatif cassé
+    # dans l'email -> la garde backend n'envoie pas)
+    from management.server.config import settings as _adm
+    monkeypatch.setattr(_adm, "PANEL_PUBLIC_URL", "https://admin.test.example")
     client, fake = panel_client
     org_id, tokens = rbac_org
     team = client.post(f"/api/admin/orgs/{org_id}/code/teams",
@@ -354,6 +358,10 @@ def test_bulk_route_rbac_and_email_sent(panel_client, rbac_org, monkeypatch):  #
 
 
 def test_rotate_revokes_and_reinvites(panel_client, rbac_org, monkeypatch):  # noqa: F811
+    # email_sent=True exige PANEL_PUBLIC_URL non vide (sinon lien relatif cassé
+    # dans l'email -> la garde backend n'envoie pas)
+    from management.server.config import settings as _adm
+    monkeypatch.setattr(_adm, "PANEL_PUBLIC_URL", "https://admin.test.example")
     client, fake = panel_client
     org_id, tokens = rbac_org
     team = client.post(f"/api/admin/orgs/{org_id}/code/teams",

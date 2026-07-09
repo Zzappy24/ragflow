@@ -26,6 +26,11 @@ interface OrgSummary {
 
 const euro = (v: number) => `${Math.round(v * 100) / 100} €`;
 
+// Le backend préfixe les liens de claim avec ADMIN_PANEL_PUBLIC_URL — vide en
+// dev, le lien arrive relatif. Le front connaît toujours sa vraie origine :
+// on absolutise à l'affichage pour que le copier-coller marche partout.
+const absClaimUrl = (u: string) => (u.startsWith('http') ? u : window.location.origin + u);
+
 export default function CodePage() {
   const [searchParams, setSearchParams] = useSearchParams();
   const orgId = searchParams.get('org') || '';
@@ -160,7 +165,7 @@ export default function CodePage() {
           title: 'SMTP non configuré — lien à transmettre manuellement',
           content: (
             <Typography.Paragraph copyable={{ icon: <CopyOutlined /> }} code>
-              {res.data.claim_url}
+              {absClaimUrl(res.data.claim_url)}
             </Typography.Paragraph>
           ),
         });
@@ -182,7 +187,7 @@ export default function CodePage() {
           title: 'SMTP non configuré — lien à transmettre manuellement',
           content: (
             <Typography.Paragraph copyable={{ icon: <CopyOutlined /> }} code>
-              {res.data.claim_url}
+              {absClaimUrl(res.data.claim_url)}
             </Typography.Paragraph>
           ),
         });
@@ -387,6 +392,7 @@ export default function CodePage() {
       <Modal title={`Nouvelle clé — ${keyModalTeam?.name ?? ''}`} open={!!keyModalTeam}
              onOk={freshKey ? () => { setFreshKey(null); setKeyModalTeam(null); } : onCreateKey}
              okText={freshKey ? 'Fermer' : 'Créer'}
+             cancelButtonProps={freshKey ? { style: { display: 'none' } } : undefined}
              onCancel={() => { setFreshKey(null); setKeyModalTeam(null); }}>
         {freshKey ? (
           <Alert type="success" message="Clé créée — copiez-la MAINTENANT, elle ne sera plus jamais affichée."
@@ -417,6 +423,7 @@ export default function CodePage() {
                ? () => { setBulkModalTeam(null); setBulkResults(null); setBulkText(''); }
                : onBulkInvite}
              okText={bulkResults ? 'Fermer' : 'Envoyer'}
+             cancelButtonProps={bulkResults ? { style: { display: 'none' } } : undefined}
              onCancel={() => { setBulkModalTeam(null); setBulkResults(null); setBulkText(''); }}>
         {bulkResults ? (
           <Table rowKey="invite_id" size="small" pagination={false} dataSource={bulkResults}
@@ -428,8 +435,10 @@ export default function CodePage() {
                        ? <Tag color="green">✓ envoyé</Tag>
                        : (
                          <span>
-                           ✗ échec — lien :{' '}
-                           <Typography.Text copyable code>{r.claim_url}</Typography.Text>
+                           ✗ non envoyé — lien à transmettre :{' '}
+                           <Typography.Text copyable={{ text: r.claim_url ? absClaimUrl(r.claim_url) : '' }} code>
+                             {r.claim_url ? absClaimUrl(r.claim_url) : ''}
+                           </Typography.Text>
                          </span>
                        ),
                    },

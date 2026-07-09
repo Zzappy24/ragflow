@@ -12,6 +12,7 @@ from management.server.models.schemas import (
     CodeKeyBulkCreate, CodeClaimRequest,
 )
 from management.server.services import audit as audit_svc
+from management.server.config import settings as admin_settings
 
 router = APIRouter()
 
@@ -323,7 +324,6 @@ def code_overview(org_id: str, user_id: str = Depends(get_current_user_id)):
     team_dicts = [{**_team_to_dict(t), "spend": _spend(t), "tokens_today": _tokens_today(t),
                   "keys": keys_by_team[t.id]} for t in teams]
     known = [d["spend"] for d in team_dicts if d["spend"] is not None]
-    from management.server.config import settings as admin_settings
     return {
         "gateway_url": admin_settings.CODE_GATEWAY_PUBLIC_URL or None,
         "entitlement": None if ent is None else {
@@ -428,7 +428,6 @@ async def bulk_invite_keys(request: Request, team_id: str, body: CodeKeyBulkCrea
     themselves (claim_url is only returned in that case, see item shaping below)."""
     from management.server.services import code_invites as ci
     from management.server.services.mailer import send_mail
-    from management.server.config import settings as admin_settings
 
     try:
         invites = ci.create_invites(code_team_id=team_id, emails=body.emails, created_by=user.id)
@@ -439,7 +438,10 @@ async def bulk_invite_keys(request: Request, team_id: str, body: CodeKeyBulkCrea
     out = []
     for inv in invites:
         url = ci.claim_url(inv["claim_token"])
-        email_sent = await send_mail(inv["email"], "Invitation — Code product",
+        # PANEL_PUBLIC_URL vide => le lien de claim serait RELATIF, donc cassé
+        # dans un email. On n'envoie pas : l'admin reçoit le lien en fallback
+        # (le front l'absolutise avec window.location.origin).
+        email_sent = bool(admin_settings.PANEL_PUBLIC_URL) and await send_mail(inv["email"], "Invitation — Code product",
                                      _invite_email_body(url, gateway_url))
         item = {"email": inv["email"], "invite_id": inv["invite_id"], "email_sent": email_sent}
         if not email_sent:
@@ -475,14 +477,13 @@ async def resend_invite(request: Request, invite_id: str, user_id: str = Depends
 
     from management.server.services import code_invites as ci
     from management.server.services.mailer import send_mail
-    from management.server.config import settings as admin_settings
 
     token = ci.regenerate_token(invite_id)
     if token is None:
         # Raced with a concurrent claim/resend between the lookup above and here.
         raise HTTPException(status_code=409, detail="Invite already claimed")
     url = ci.claim_url(token)
-    email_sent = await send_mail(inv.email, "Rappel — Invitation Code product",
+    email_sent = bool(admin_settings.PANEL_PUBLIC_URL) and await send_mail(inv.email, "Rappel — Invitation Code product",
                                  _invite_email_body(url, admin_settings.CODE_GATEWAY_PUBLIC_URL or None,
                                                     reminder=True))
     audit_svc.record(request=request, actor_user_id=user.id, action=audit_svc.CODE_SEAT_INVITE,
@@ -514,7 +515,6 @@ async def rotate_key(request: Request, key_id: str, user_id: str = Depends(get_c
     from management.server.services import code_provisioning as cp
     from management.server.services import code_invites as ci
     from management.server.services.mailer import send_mail
-    from management.server.config import settings as admin_settings
 
     try:
         ci.validate_email(key.label)
@@ -538,7 +538,7 @@ async def rotate_key(request: Request, key_id: str, user_id: str = Depends(get_c
                      details={"label": key.label})
 
     url = ci.claim_url(inv["claim_token"])
-    email_sent = await send_mail(inv["email"], "Nouvelle invitation — Code product (rotation de clé)",
+    email_sent = bool(admin_settings.PANEL_PUBLIC_URL) and await send_mail(inv["email"], "Nouvelle invitation — Code product (rotation de clé)",
                                  _invite_email_body(url, admin_settings.CODE_GATEWAY_PUBLIC_URL or None))
     audit_svc.record(request=request, actor_user_id=user.id, action=audit_svc.CODE_SEAT_INVITE,
                      org_id=None, resource_type="code_key_invite", resource_id=inv["invite_id"],
@@ -581,7 +581,6 @@ async def public_claim(request: Request, body: CodeClaimRequest):
         raise HTTPException(status_code=429, detail="Too many attempts, please retry later")
 
     from management.server.services import code_invites as ci
-    from management.server.config import settings as admin_settings
     try:
         result = ci.claim(body.token)
     except ci.InviteNotFound:
