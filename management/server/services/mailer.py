@@ -29,17 +29,26 @@ async def send_mail(to: str, subject: str, body_text: str) -> bool:
     msg["From"] = settings.SMTP_FROM
     msg["To"] = to
     try:
+        # TLS modes: port 465 = implicit TLS (TLS handshake immediately),
+        # port 587 = STARTTLS (plaintext EHLO, then STARTTLS upgrade).
+        # Standard providers: Gmail/O365/SES/SendGrid all use port 587 + STARTTLS.
+        implicit_tls = settings.SMTP_TLS and settings.SMTP_PORT == 465
+        starttls = settings.SMTP_TLS and not implicit_tls
+
         smtp = aiosmtplib.SMTP(
             hostname=settings.SMTP_HOST,
             port=settings.SMTP_PORT,
-            use_tls=settings.SMTP_TLS,
+            use_tls=implicit_tls,
+            start_tls=starttls,
             timeout=10,
         )
         await smtp.connect()
-        if settings.SMTP_USERNAME:
-            await smtp.login(settings.SMTP_USERNAME, settings.SMTP_PASSWORD)
-        await smtp.send_message(msg)
-        await smtp.quit()
+        try:
+            if settings.SMTP_USERNAME:
+                await smtp.login(settings.SMTP_USERNAME, settings.SMTP_PASSWORD)
+            await smtp.send_message(msg)
+        finally:
+            await smtp.quit()
         return True
     except Exception as e:
         logger.warning("envoi email à %s échoué: %s", to, e)
