@@ -3,8 +3,9 @@ import { useSearchParams } from 'react-router-dom';
 import { Table, Button, Card, Modal, Form, Input, InputNumber, App, Progress, Tag, Popconfirm, Space, Typography, Alert } from 'antd';
 import { PlusOutlined, StopOutlined, CopyOutlined } from '@ant-design/icons';
 import api from '@/lib/api';
+import CodeDashboardSection from './dashboard-section';
 
-interface CodeKey { id: string; label: string; key_masked: string | null; status: string; sync_status: string; }
+interface CodeKey { id: string; label: string; key_masked: string | null; status: string; sync_status: string; spend: number | null; }
 interface CodeTeam { id: string; name: string; max_budget: number; spend: number | null; status: string; sync_status: string; keys: CodeKey[]; }
 interface Overview {
   entitlement: { status: string; org_code_budget: number; budget_period: string } | null;
@@ -143,6 +144,7 @@ export default function CodePage() {
             style={{ width: 320 }} value={orgSearch}
             onChange={(e) => setOrgSearch(e.target.value)} />
         </div>
+        <CodeDashboardSection />
         <Card>
           <Table rowKey="org_id" size="middle" loading={summary === null}
             pagination={false} dataSource={filtered}
@@ -198,6 +200,8 @@ export default function CodePage() {
   const keyColumns = (_team: CodeTeam) => [
     { title: 'Label', dataIndex: 'label' },
     { title: 'Clé', dataIndex: 'key_masked', render: (v: string | null) => <code>{v || '—'}</code> },
+    { title: 'Dépensé', dataIndex: 'spend', width: 100,
+      render: (v: number | null) => (v == null ? '—' : `${Math.round(v * 100) / 100} €`) },
     { title: 'Statut', dataIndex: 'status', render: (s: string) => <Tag color={s === 'active' ? 'green' : 'red'}>{s}</Tag> },
     { title: 'Sync', dataIndex: 'sync_status', render: (s: string) => <Tag color={s === 'synced' ? 'blue' : 'orange'}>{s}</Tag> },
     {

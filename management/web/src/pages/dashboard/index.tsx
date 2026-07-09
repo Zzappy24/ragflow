@@ -428,6 +428,7 @@ function SuperDashboard() {
   const [quotas, setQuotas] = useState<Record<string, OrgQuotaSummary>>({});
   const [loading, setLoading] = useState(true);
   const [activeUsers, setActiveUsers] = useState<number>(0);
+  const [codeKpis, setCodeKpis] = useState<{ cycle_spend: number | null; active_orgs: number; budget_alerts: number } | null>(null);
 
   // Filters
   const [dateRange, setDateRange] = useState<[Dayjs, Dayjs] | null>(null);
@@ -448,6 +449,10 @@ function SuperDashboard() {
         setQuotas(map);
       })
       .finally(() => setLoading(false));
+  }, []);
+
+  useEffect(() => {
+    api.get('/code/dashboard').then((r) => setCodeKpis(r.data.kpis)).catch(() => {});
   }, []);
 
   // Poll active users every 60s — one Redis ZCOUNT, negligible cost
@@ -619,6 +624,21 @@ function SuperDashboard() {
           />
         </Col>
       </Row>
+
+      {codeKpis && (
+        <Row gutter={[16, 16]} className="mb-6">
+          <Col xs={24} md={8}>
+            <Card size="small" title="Produit Code" extra={<Link to="/code">→ ouvrir</Link>}>
+              <Row gutter={8}>
+                <Col span={8}><Statistic title="Dépensé (cycle)" value={codeKpis.cycle_spend ?? '—'} suffix={codeKpis.cycle_spend != null ? '€' : ''} /></Col>
+                <Col span={8}><Statistic title="Orgs actives" value={codeKpis.active_orgs} /></Col>
+                <Col span={8}><Statistic title="Alertes" value={codeKpis.budget_alerts}
+                  valueStyle={codeKpis.budget_alerts > 0 ? { color: '#cf1322' } : undefined} /></Col>
+              </Row>
+            </Card>
+          </Col>
+        </Row>
+      )}
 
       {/* Row 1: stacked area by model type + donut */}
       <Row gutter={[16, 16]} className="mb-6">
