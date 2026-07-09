@@ -262,7 +262,9 @@ def code_overview(org_id: str, user_id: str = Depends(get_current_user_id)):
     team_dicts = [{**_team_to_dict(t), "spend": _spend(t), "tokens_today": _tokens_today(t),
                   "keys": keys_by_team[t.id]} for t in teams]
     known = [d["spend"] for d in team_dicts if d["spend"] is not None]
+    from management.server.config import settings as admin_settings
     return {
+        "gateway_url": admin_settings.CODE_GATEWAY_PUBLIC_URL or None,
         "entitlement": None if ent is None else {
             "status": ent.status, "org_code_budget": ent.org_code_budget,
             "budget_period": ent.budget_period},

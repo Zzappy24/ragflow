@@ -29,6 +29,10 @@ class Settings(BaseSettings):
     # LiteLLM management API (for Code product's headless orchestration)
     LITELLM_BASE_URL: str = os.getenv("LITELLM_BASE_URL", "http://localhost:4000")
     LITELLM_MASTER_KEY: str = os.getenv("LITELLM_MASTER_KEY", "")  # K8s Secret in prod; never logged, never returned by any route
+    # Public URL clients plug into Kilo/OpenCode/Cline (shown in the panel
+    # next to their keys). Prod: the Envoy hostname fronting LiteLLM's /v1,
+    # e.g. "https://code.cyllene.cloud/v1". Empty = hidden in the UI.
+    CODE_GATEWAY_PUBLIC_URL: str = os.getenv("ADMIN_CODE_GATEWAY_PUBLIC_URL", "")
 
     INVITE_TOKEN_EXPIRE_SECONDS: int = 60 * 60 * 48
 

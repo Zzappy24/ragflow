@@ -317,3 +317,17 @@ def test_dashboard_tokens_null_when_gateway_down(panel_client, org_with_entitlem
 
     ov = client.get(f"/api/admin/orgs/{org_id}/code/overview", headers=_h(tokens["org_admin"])).json()
     assert all(t["tokens_today"] is None for t in ov["teams"])
+
+
+def test_overview_exposes_gateway_url_when_configured(panel_client, org_with_entitlement_and_users, monkeypatch):
+    from management.server.config import settings as admin_settings
+    client, _ = panel_client
+    org_id, tokens = org_with_entitlement_and_users
+
+    monkeypatch.setattr(admin_settings, "CODE_GATEWAY_PUBLIC_URL", "https://code.test.example/v1")
+    ov = client.get(f"/api/admin/orgs/{org_id}/code/overview", headers=_h(tokens["org_admin"])).json()
+    assert ov["gateway_url"] == "https://code.test.example/v1"
+
+    monkeypatch.setattr(admin_settings, "CODE_GATEWAY_PUBLIC_URL", "")
+    ov = client.get(f"/api/admin/orgs/{org_id}/code/overview", headers=_h(tokens["org_admin"])).json()
+    assert ov["gateway_url"] is None

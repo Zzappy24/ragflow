@@ -8,6 +8,7 @@ import CodeDashboardSection, { fmtTokens } from './dashboard-section';
 interface CodeKey { id: string; label: string; key_masked: string | null; status: string; sync_status: string; spend: number | null; }
 interface CodeTeam { id: string; name: string; max_budget: number; spend: number | null; status: string; sync_status: string; keys: CodeKey[]; tokens_today: number | null; }
 interface Overview {
+  gateway_url: string | null; // URL publique /v1 à configurer dans Kilo/OpenCode (null = non configurée)
   entitlement: { status: string; org_code_budget: number; budget_period: string } | null;
   allocated: number;
   org_spend: number | null; // null = gateway injoignable (≠ 0 dépensé)
@@ -228,6 +229,13 @@ export default function CodePage() {
         </Button>
       </div>
 
+      {overview?.gateway_url && (
+        <div className="mb-4 text-gray-600">
+          Endpoint (base URL à configurer dans Kilo Code / OpenCode / Cline)&nbsp;:{' '}
+          <Typography.Text copyable code>{overview.gateway_url}</Typography.Text>
+        </div>
+      )}
+
       {ent?.status === 'suspended' && (
         <Alert className="mb-4" type="warning" message="Produit Code suspendu — toutes les clés sont bloquées." />
       )}
@@ -278,9 +286,17 @@ export default function CodePage() {
         {freshKey ? (
           <Alert type="success" message="Clé créée — copiez-la MAINTENANT, elle ne sera plus jamais affichée."
                  description={
-                   <Typography.Paragraph copyable={{ icon: <CopyOutlined /> }} code>
-                     {freshKey}
-                   </Typography.Paragraph>
+                   <>
+                     <Typography.Paragraph copyable={{ icon: <CopyOutlined /> }} code>
+                       {freshKey}
+                     </Typography.Paragraph>
+                     {overview?.gateway_url && (
+                       <div className="text-gray-600">
+                         Endpoint associé&nbsp;:{' '}
+                         <Typography.Text copyable code>{overview.gateway_url}</Typography.Text>
+                       </div>
+                     )}
+                   </>
                  } />
         ) : (
           <Form form={keyForm} layout="vertical">
