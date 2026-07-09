@@ -7,10 +7,35 @@ from management.server.auth.dependencies import (
 )
 from management.server.models.schemas import (
     CodeEntitlementUpsert, CodeTeamCreate, CodeTeamUpdate, CodeTeamAdminAdd, CodeKeyCreate,
+    CodeKeyBulkCreate, CodeClaimRequest,
 )
 from management.server.services import audit as audit_svc
 
 router = APIRouter()
+
+# In-process rate limiter for the unauthenticated claim route — mono-replica
+# only (no shared state across pods). Good enough for the panel's current
+# single-instance deployment; move to Redis if the admin panel is ever
+# scaled horizontally.
+_CLAIM_HITS: dict[str, list[float]] = {}
+
+
+def _rate_limited(ip: str, limit: int = 10, window: float = 60.0) -> bool:
+    import time
+    now = time.time()
+    hits = [t for t in _CLAIM_HITS.get(ip, []) if now - t < window]
+    hits.append(now)
+    _CLAIM_HITS[ip] = hits
+    return len(hits) > limit
+
+
+def _invite_email_body(url: str, gateway_url: str | None, *, reminder: bool = False) -> str:
+    intro = "Rappel : vous avez été invité(e)" if reminder else "Vous avez été invité(e)"
+    body = (f"{intro} à rejoindre l'espace Code.\n\n"
+           f"Cliquez sur ce lien pour activer votre clé (expire dans 72 heures) :\n{url}\n")
+    if gateway_url:
+        body += f"\nURL de la gateway : {gateway_url}\n"
+    return body
 
 
 def _team_to_dict(t) -> dict:
@@ -358,6 +383,125 @@ def create_key(request: Request, team_id: str, body: CodeKeyCreate,
     return {"key": _key_to_dict(key), "plain_key": plain}
 
 
+@router.post("/code/teams/{team_id}/keys/bulk", status_code=status.HTTP_201_CREATED)
+async def bulk_invite_keys(request: Request, team_id: str, body: CodeKeyBulkCreate,
+                           user=Depends(require_code_team_admin)):
+    """Bulk seat invites: one CodeKeyInvite per email, no CodeKey created yet
+    (the seat is provisioned at claim time). Best-effort email per invite —
+    email_sent tells the admin whether they need to hand out the link
+    themselves (claim_url is only returned in that case, see item shaping below)."""
+    from management.server.services import code_invites as ci
+    from management.server.services.mailer import send_mail
+    from management.server.config import settings as admin_settings
+
+    try:
+        invites = ci.create_invites(code_team_id=team_id, emails=body.emails, created_by=user.id)
+    except ValueError as e:
+        raise HTTPException(status_code=422, detail=str(e))
+
+    gateway_url = admin_settings.CODE_GATEWAY_PUBLIC_URL or None
+    out = []
+    for inv in invites:
+        url = ci.claim_url(inv["claim_token"])
+        email_sent = await send_mail(inv["email"], "Invitation — Code product",
+                                     _invite_email_body(url, gateway_url))
+        item = {"email": inv["email"], "invite_id": inv["invite_id"], "email_sent": email_sent}
+        if not email_sent:
+            item["claim_url"] = url
+        out.append(item)
+        audit_svc.record(request=request, actor_user_id=user.id, action=audit_svc.CODE_SEAT_INVITE,
+                         org_id=None, resource_type="code_key_invite", resource_id=inv["invite_id"],
+                         details={"email": inv["email"], "team_id": team_id, "email_sent": email_sent})
+    return out
+
+
+@router.get("/code/teams/{team_id}/invites")
+def list_invites(team_id: str, user=Depends(require_code_team_admin)):
+    """Pending (unclaimed) invites for a team — no token, no claim_url."""
+    from api.db.db_models import DB, CodeKeyInvite
+    with DB.connection_context():
+        rows = list(CodeKeyInvite.select().where(
+            (CodeKeyInvite.code_team_id == team_id) & (CodeKeyInvite.claimed_key_id.is_null(True))))
+    return [{"id": r.id, "email": r.email, "expires_at": r.expires_at.isoformat(),
+            "created_by": r.created_by} for r in rows]
+
+
+@router.post("/code/invites/{invite_id}/resend")
+async def resend_invite(request: Request, invite_id: str, user_id: str = Depends(get_current_user_id)):
+    from api.db.db_models import DB, CodeKeyInvite
+    with DB.connection_context():
+        inv = CodeKeyInvite.get_or_none(CodeKeyInvite.id == invite_id)
+    if inv is None:
+        raise HTTPException(status_code=404, detail="Invite not found")
+    user = require_code_team_admin(inv.code_team_id, user_id)
+    if inv.claimed_key_id is not None:
+        raise HTTPException(status_code=409, detail="Invite already claimed")
+
+    from management.server.services import code_invites as ci
+    from management.server.services.mailer import send_mail
+    from management.server.config import settings as admin_settings
+
+    token = ci.regenerate_token(invite_id)
+    if token is None:
+        # Raced with a concurrent claim/resend between the lookup above and here.
+        raise HTTPException(status_code=409, detail="Invite already claimed")
+    url = ci.claim_url(token)
+    email_sent = await send_mail(inv.email, "Rappel — Invitation Code product",
+                                 _invite_email_body(url, admin_settings.CODE_GATEWAY_PUBLIC_URL or None,
+                                                    reminder=True))
+    audit_svc.record(request=request, actor_user_id=user.id, action=audit_svc.CODE_SEAT_INVITE,
+                     org_id=None, resource_type="code_key_invite", resource_id=invite_id,
+                     details={"email": inv.email, "resend": True, "email_sent": email_sent})
+    item = {"invite_id": invite_id, "email": inv.email, "email_sent": email_sent}
+    if not email_sent:
+        item["claim_url"] = url
+    return item
+
+
+@router.post("/code/keys/{key_id}/rotate", status_code=status.HTTP_201_CREATED)
+async def rotate_key(request: Request, key_id: str, user_id: str = Depends(get_current_user_id)):
+    """Revoke the existing key and re-invite the same email (a fresh seat is
+    provisioned at claim time, never re-using the revoked key's secret)."""
+    from api.db.db_models import DB, CodeKey
+    with DB.connection_context():
+        key = CodeKey.get_or_none(CodeKey.id == key_id)
+    if key is None:
+        raise HTTPException(status_code=404, detail="Key not found")
+    user = require_code_team_admin(key.code_team_id, user_id)
+
+    from management.server.services import code_provisioning as cp
+    from management.server.services import code_invites as ci
+    from management.server.services.mailer import send_mail
+    from management.server.config import settings as admin_settings
+
+    try:
+        cp.revoke_code_key(code_key_id=key_id)
+    except ValueError as e:
+        raise HTTPException(status_code=422, detail=str(e))
+    audit_svc.record(request=request, actor_user_id=user.id, action=audit_svc.CODE_KEY_ROTATED,
+                     org_id=None, resource_type="code_key", resource_id=key_id,
+                     details={"label": key.label})
+
+    try:
+        invites = ci.create_invites(code_team_id=key.code_team_id, emails=[key.label],
+                                    created_by=user.id)
+    except ValueError as e:
+        raise HTTPException(status_code=422, detail=str(e))
+    inv = invites[0]
+    url = ci.claim_url(inv["claim_token"])
+    email_sent = await send_mail(inv["email"], "Nouvelle invitation — Code product (rotation de clé)",
+                                 _invite_email_body(url, admin_settings.CODE_GATEWAY_PUBLIC_URL or None))
+    audit_svc.record(request=request, actor_user_id=user.id, action=audit_svc.CODE_SEAT_INVITE,
+                     org_id=None, resource_type="code_key_invite", resource_id=inv["invite_id"],
+                     details={"email": inv["email"], "team_id": key.code_team_id,
+                              "rotated_from_key": key_id, "email_sent": email_sent})
+    item = {"invite_id": inv["invite_id"], "email": inv["email"], "email_sent": email_sent,
+           "revoked_key_id": key_id}
+    if not email_sent:
+        item["claim_url"] = url
+    return item
+
+
 @router.post("/code/keys/{key_id}/revoke")
 def revoke_key(request: Request, key_id: str, user_id: str = Depends(get_current_user_id)):
     from api.db.db_models import DB, CodeKey
@@ -375,6 +519,33 @@ def revoke_key(request: Request, key_id: str, user_id: str = Depends(get_current
                      org_id=None, resource_type="code_key", resource_id=key_id,
                      details={"label": key.label})
     return _key_to_dict(key)
+
+
+@router.post("/public/code/claim")
+async def public_claim(request: Request, body: CodeClaimRequest):
+    """Unauthenticated: the invite link itself is the credential. Rate-limited
+    per source IP (mono-replica, in-process — see _CLAIM_HITS). Errors are
+    intentionally generic (404/503) — never distinguish "unknown token" from
+    "expired" or "already claimed" to avoid token enumeration."""
+    ip = request.client.host if request.client else "unknown"
+    if _rate_limited(ip):
+        raise HTTPException(status_code=429, detail="Too many attempts, please retry later")
+
+    from management.server.services import code_invites as ci
+    from management.server.config import settings as admin_settings
+    try:
+        result = ci.claim(body.token)
+    except ci.InviteNotFound:
+        raise HTTPException(status_code=404, detail="Invite not found or expired")
+    except ci.GatewayDown:
+        raise HTTPException(status_code=503, detail="Gateway unavailable, please retry")
+
+    # No audit of the token itself — only the resulting identity/email.
+    audit_svc.record(request=request, actor_user_id="", action=audit_svc.CODE_SEAT_CLAIMED,
+                     org_id=None, resource_type="code_key", resource_id=None,
+                     details={"email": result["email"]})
+    return {"plain_key": result["plain_key"], "label": result["label"],
+            "gateway_url": admin_settings.CODE_GATEWAY_PUBLIC_URL or None}
 
 
 @router.post("/code/housekeeping")

@@ -1643,6 +1643,24 @@ class CodeHousekeepingRun(DataBaseModel):
         db_table = "code_housekeeping_run"
 
 
+class CodeKeyInvite(DataBaseModel):
+    """Invitation de siège code : la clé n'existe qu'au claim (jamais de secret au repos).
+
+    token_hash = SHA-256 hex du token urlsafe — le clair n'est jamais stocké.
+    claimed_key_id non-NULL = consommée (le claim est un UPDATE conditionnel atomique).
+    """
+    id = CharField(max_length=32, primary_key=True)
+    code_team_id = CharField(max_length=32, null=False, index=True)
+    email = CharField(max_length=255, null=False, index=True)
+    token_hash = CharField(max_length=64, null=False, unique=True)
+    expires_at = DateTimeField(null=False)
+    claimed_key_id = CharField(max_length=32, null=True)
+    created_by = CharField(max_length=32, null=False, index=True)
+
+    class Meta:
+        db_table = "code_key_invite"
+
+
 # ============================================================
 # END CUSTOM B2B SaaS — Code product tables
 # ============================================================

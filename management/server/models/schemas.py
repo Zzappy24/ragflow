@@ -298,3 +298,11 @@ class CodeTeamAdminAdd(BaseModel):
 class CodeKeyCreate(BaseModel):
     label: str = Field(min_length=1, max_length=255)
     owner_user_id: str | None = None
+
+
+class CodeKeyBulkCreate(BaseModel):
+    emails: list[str] = Field(min_length=1)
+
+
+class CodeClaimRequest(BaseModel):
+    token: str = Field(min_length=1)
