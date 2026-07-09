@@ -31,19 +31,18 @@ def hk_org(org_with_entitlement):  # noqa: F811
     first).
 
     It also removes CodeHousekeepingRun rows, but ONLY the ones this test
-    created: a high-water-mark (the latest existing run, if any) is captured
-    at setup, and teardown deletes everything strictly newer than it. A bare
+    created: the set of existing run ids is captured at setup, and teardown
+    deletes everything NOT in that set. This is exact regardless of clock
+    skew between the test process and the DB server — a ran_at watermark
+    comparison is not, since it can leave rows stranded (or delete rows it
+    shouldn't) whenever the two clocks disagree. A bare
     `CodeHousekeepingRun.delete().execute()` would wipe real run history
     shared with production/other tests — never do that.
     """
     from api.db.db_models import DB, CodeSpendSnapshot, CodeTeam, CodeHousekeepingRun
 
     with DB.connection_context():
-        watermark = (CodeHousekeepingRun.select()
-                     .order_by(CodeHousekeepingRun.ran_at.desc(),
-                              CodeHousekeepingRun.id.desc()).first())
-    watermark_at = watermark.ran_at if watermark else None
-    watermark_id = watermark.id if watermark else None
+        pre_ids = {r.id for r in CodeHousekeepingRun.select(CodeHousekeepingRun.id)}
 
     yield org_with_entitlement
 
@@ -52,14 +51,8 @@ def hk_org(org_with_entitlement):  # noqa: F811
         if team_ids:
             CodeSpendSnapshot.delete().where(CodeSpendSnapshot.code_team_id.in_(team_ids)).execute()
 
-        q = CodeHousekeepingRun.select()
-        if watermark_at is not None:
-            q = q.where((CodeHousekeepingRun.ran_at > watermark_at) |
-                       ((CodeHousekeepingRun.ran_at == watermark_at) &
-                        (CodeHousekeepingRun.id != watermark_id)))
-        run_ids = [r.id for r in q]
-        if run_ids:
-            CodeHousekeepingRun.delete().where(CodeHousekeepingRun.id.in_(run_ids)).execute()
+        CodeHousekeepingRun.delete().where(
+            CodeHousekeepingRun.id.not_in(list(pre_ids))).execute()
 
 
 def test_snapshot_is_idempotent_per_day(hk_org):
@@ -133,12 +126,12 @@ def test_housekeeping_combines_and_records_run(hk_org):
     # >= 1, not == 1: housekeeping snapshots ALL active teams in the DB.
     assert report["teams_snapshotted"] >= 1
 
-    # Fetch the run this call created by matching its own reported ran_at
-    # (MySQL DATETIME has second precision, so drop tzinfo/microseconds
-    # before comparing) — never last_run(), which races a concurrent run.
-    ran_at = datetime.datetime.fromisoformat(report["ran_at"]).replace(tzinfo=None, microsecond=0)
+    # Fetch the run this call created by its own reported run_id — never by
+    # matching ran_at (MySQL DATETIME rounds fractional seconds, so a naive
+    # microsecond-stripped comparison can miss the row) and never last_run()
+    # (which races a concurrent/real housekeeping pass).
     with DB.connection_context():
-        run = CodeHousekeepingRun.get_or_none(CodeHousekeepingRun.ran_at == ran_at)
+        run = CodeHousekeepingRun.get_by_id(report["run_id"])
     assert run is not None and run.teams_snapshotted == report["teams_snapshotted"]
 
 

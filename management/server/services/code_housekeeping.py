@@ -70,13 +70,15 @@ def _housekeeping_impl(client=None) -> dict:
     teams_snapshotted = snapped if snapped is not None else 0
     errors = rec["errors"] + (1 if snapped is None else 0)
     ran_at = datetime.datetime.now(datetime.timezone.utc)
+    run_id = get_uuid()
     with DB.connection_context():
-        CodeHousekeepingRun.create(id=get_uuid(), ran_at=ran_at,
+        CodeHousekeepingRun.create(id=run_id, ran_at=ran_at,
                                    teams_snapshotted=teams_snapshotted,
                                    teams_synced=rec["teams_synced"],
                                    keys_synced=rec["keys_synced"], errors=errors)
-    return {"teams_snapshotted": teams_snapshotted, "keys_synced": rec["keys_synced"],
-            "teams_synced": rec["teams_synced"], "errors": errors, "ran_at": ran_at.isoformat()}
+    return {"run_id": run_id, "teams_snapshotted": teams_snapshotted,
+            "keys_synced": rec["keys_synced"], "teams_synced": rec["teams_synced"],
+            "errors": errors, "ran_at": ran_at.isoformat()}
 
 
 def housekeeping(client=None) -> dict:

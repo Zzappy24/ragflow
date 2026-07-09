@@ -7,7 +7,14 @@ pytestmark = pytest.mark.p1
 
 @pytest.fixture()
 def panel_client(monkeypatch, org_with_entitlement_and_users):
-    """TestClient over management.server.main:app with LiteLLM faked at module level."""
+    """TestClient over management.server.main:app with LiteLLM faked at module level.
+
+    Also cleans up any CodeHousekeepingRun rows created by tests hitting
+    POST /code/housekeeping — the same exact-by-id pattern as hk_org in
+    test_code_housekeeping.py (a ran_at watermark is not robust to clock
+    skew between the test process and the DB server).
+    """
+    from api.db.db_models import DB, CodeHousekeepingRun
     from test.multitenant.test_code_provisioning import FakeLiteLLM
     from management.server.services import code_provisioning, code_reconcile
     fake = FakeLiteLLM()
@@ -18,7 +25,15 @@ def panel_client(monkeypatch, org_with_entitlement_and_users):
     # Disable the scheduler for tests (sleep-first means no real run on boot, but disable to be safe)
     monkeypatch.setenv("ADMIN_CODE_SCHEDULER", "0")
     from management.server.main import app
-    return TestClient(app), fake
+
+    with DB.connection_context():
+        pre_ids = {r.id for r in CodeHousekeepingRun.select(CodeHousekeepingRun.id)}
+
+    yield TestClient(app), fake
+
+    with DB.connection_context():
+        CodeHousekeepingRun.delete().where(
+            CodeHousekeepingRun.id.not_in(list(pre_ids))).execute()
 
 
 def _h(token):

@@ -141,6 +141,15 @@ def code_dashboard(user=Depends(get_current_user)):
                  for t, s in sorted(known, key=lambda x: -x[1])[:5]]
 
     run = last_run()
+    if run is not None:
+        # MySQL DATETIME drops the UTC offset, so peewee reads ran_at back as
+        # a naive datetime. Without re-attaching tzinfo, isoformat() emits no
+        # +00:00 and browsers parse the string as local time — showing the
+        # last housekeeping run as hours stale.
+        from datetime import timezone
+        last_housekeeping_at = run.ran_at.replace(tzinfo=timezone.utc).isoformat()
+    else:
+        last_housekeeping_at = None
     return {
         "kpis": {"cycle_spend": cycle_spend,
                  "active_orgs": len({t.org_id for t in teams}),
@@ -148,7 +157,7 @@ def code_dashboard(user=Depends(get_current_user)):
                  "budget_alerts": alerts},
         "daily": daily_spend_series(org_ids, days=30),
         "top_orgs": top_orgs, "top_teams": top_teams,
-        "last_housekeeping_at": run.ran_at.isoformat() if run else None,
+        "last_housekeeping_at": last_housekeeping_at,
     }
 
 
