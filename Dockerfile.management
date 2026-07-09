@@ -57,6 +57,7 @@ WORKDIR /build
 RUN python -m venv /opt/venv && \
     /opt/venv/bin/pip install --no-cache-dir --upgrade pip && \
     /opt/venv/bin/pip install --no-cache-dir \
+        "aiosmtplib==5.0.0" \
         "fastapi==0.137.0" \
         "uvicorn[standard]==0.40.0" \
         "pydantic-settings==2.12.0" \
