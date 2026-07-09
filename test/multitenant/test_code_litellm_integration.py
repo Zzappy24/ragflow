@@ -83,3 +83,32 @@ def test_team_budget_blocks_in_real_time(client):
         second = call()
     assert second.status_code == 400
     assert "budget" in second.text.lower()
+
+
+def test_daily_usage_counts_real_traffic(client):
+    """Validates daily_usage() against a live container: GET /spend/logs
+    with summarize=false, per-request rows aggregated by team_id (see
+    LiteLLMClient.daily_usage docstring for the fully observed shape)."""
+    import datetime
+
+    alias = f"org:it:team:{uuid.uuid4().hex[:8]}"
+    team_id = client.create_team(alias=alias, max_budget=50.0, budget_duration="1mo", models=[])
+    out = client.generate_key(team_id=team_id, alias=f"org:it:key:{uuid.uuid4().hex[:8]}")
+    for _ in range(2):
+        resp = httpx.post(f"{BASE}/v1/chat/completions",
+                          headers={"Authorization": f"Bearer {out['plain_key']}"},
+                          json={"model": "code-mock",
+                                "messages": [{"role": "user", "content": "hi"}]},
+                          timeout=30.0)
+        assert resp.status_code == 200
+
+    today = datetime.datetime.now(datetime.timezone.utc).date()
+    deadline = time.monotonic() + 15.0
+    usage = client.daily_usage(today)
+    while team_id not in usage and time.monotonic() < deadline:
+        time.sleep(1.0)
+        usage = client.daily_usage(today)
+
+    assert team_id in usage, "spend-logs never surfaced our team's traffic"
+    assert usage[team_id]["tokens"] > 0
+    assert usage[team_id]["errors"] == 0

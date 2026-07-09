@@ -4,6 +4,8 @@ The panel is the source of truth; LiteLLM only holds Teams + virtual Keys.
 All calls are server-to-server with the MASTER_KEY (never exposed to the front).
 Deterministic aliases make create operations idempotent (spec §5).
 """
+import datetime
+
 import httpx
 
 from management.server.config import settings
@@ -104,6 +106,45 @@ class LiteLLMClient:
     def list_keys(self, team_id: str) -> list[dict]:
         data = self._request("GET", "/key/list", params={"team_id": team_id})
         return data.get("keys", data) if isinstance(data, dict) else data
+
+    # ---- usage ----
+    def daily_usage(self, day: datetime.date) -> dict[str, dict]:
+        """Tokens + errors per team for the UTC day `day`.
+
+        Validated against ghcr.io/berriai/litellm:main-v1.74.0-stable:
+        GET /spend/logs?start_date=<day>&end_date=<day+1>&summarize=false
+        returns a flat JSON array of raw per-request log rows — NOT
+        aggregated. `summarize=true` (the default) instead groups rows by
+        (api_key, user, model, startTime), which is useless for per-team
+        totals, so summarize=false is required.
+
+        start_date/end_date are parsed server-side as UTC midnight
+        (`datetime.strptime(x, "%Y-%m-%d")`) and the filter is
+        `startTime BETWEEN start_date AND end_date` — start_date == end_date
+        == day matches nothing (a zero-width instant at midnight), so
+        end_date must be day + 1 to cover the whole day.
+
+        Each row carries `team_id`, `status` ("success"/"failure") and
+        `total_tokens` (already prompt+completion) at the top level.
+        Raises LiteLLMError when the gateway is unreachable or rejects the
+        request (e.g. bad auth) — callers map that to None/NULL.
+        """
+        params = {
+            "start_date": day.isoformat(),
+            "end_date": (day + datetime.timedelta(days=1)).isoformat(),
+            "summarize": "false",
+        }
+        rows = self._request("GET", "/spend/logs", params=params)
+        out: dict[str, dict] = {}
+        for r in rows:
+            tid = r.get("team_id")
+            if not tid:
+                continue
+            agg = out.setdefault(tid, {"tokens": 0, "errors": 0})
+            agg["tokens"] += int(r.get("total_tokens") or 0)
+            if (r.get("status") or "success") != "success":
+                agg["errors"] += 1
+        return out
 
     # ---- lifecycle ----
     def close(self) -> None:

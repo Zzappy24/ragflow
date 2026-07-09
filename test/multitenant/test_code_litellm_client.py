@@ -111,3 +111,64 @@ def test_list_teams_returns_raw_list():
     client = make_client(handler)
     teams = client.list_teams()
     assert teams == [{"team_id": "t1", "team_alias": "a", "spend": 3.25}]
+
+
+def test_daily_usage_aggregates_tokens_and_errors_per_team():
+    """Mock shape reflects reality observed against a live
+    ghcr.io/berriai/litellm:main-v1.74.0-stable container (see
+    daily_usage docstring): flat per-request rows with top-level
+    team_id/status/total_tokens, summarize=false, end_date = day + 1."""
+    import datetime
+
+    def handler(request):
+        assert request.url.path == "/spend/logs"
+        params = dict(request.url.params)
+        assert params["start_date"] == "2026-07-09"
+        assert params["end_date"] == "2026-07-10"
+        assert params["summarize"] == "false"
+        return httpx.Response(200, json=[
+            {"team_id": "t1", "total_tokens": 30, "status": "success"},
+            {"team_id": "t1", "total_tokens": 0, "status": "failure"},
+            {"team_id": "t2", "total_tokens": 5, "status": "success"},
+        ])
+
+    client = make_client(handler)
+    usage = client.daily_usage(datetime.date(2026, 7, 9))
+    assert usage["t1"] == {"tokens": 30, "errors": 1}
+    assert usage["t2"] == {"tokens": 5, "errors": 0}
+
+
+def test_daily_usage_no_traffic_returns_empty_dict():
+    import datetime
+
+    def handler(request):
+        return httpx.Response(200, json=[])
+
+    client = make_client(handler)
+    assert client.daily_usage(datetime.date(2026, 7, 9)) == {}
+
+
+def test_daily_usage_rows_without_team_id_are_skipped():
+    import datetime
+
+    def handler(request):
+        return httpx.Response(200, json=[
+            {"team_id": "", "total_tokens": 100, "status": "success"},
+            {"team_id": "t1", "total_tokens": 10, "status": "success"},
+        ])
+
+    client = make_client(handler)
+    usage = client.daily_usage(datetime.date(2026, 7, 9))
+    assert usage == {"t1": {"tokens": 10, "errors": 0}}
+
+
+def test_daily_usage_gateway_down_raises():
+    from management.server.services.litellm_client import LiteLLMError
+    import datetime
+
+    def handler(request):
+        raise httpx.ConnectError("refused")
+
+    client = make_client(handler)
+    with pytest.raises(LiteLLMError):
+        client.daily_usage(datetime.date(2026, 7, 9))
