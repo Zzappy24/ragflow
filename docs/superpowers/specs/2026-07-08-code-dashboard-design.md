@@ -69,7 +69,19 @@ Une `Card` « Produit Code » dans `pages/dashboard/index.tsx` : spend total du 
 - **Scheduler** : le lifespan démarre la tâche (flag/mock) · `POST /housekeeping` déclenche reconcile+snapshot (FakeLiteLLM).
 - **Visuel** : drive Playwright du dashboard (KPIs visibles, courbe rendue, card globale présente).
 
+## Extension v1.1 (validée 2026-07-09) — tokens + erreurs
+
+Alignement avec le Dashboard RAG (qui parle en tokens) : la consommation s'affiche en **tokens**, la facturation en **€**, la santé en **erreurs**.
+
+- **Source** : spend-logs LiteLLM (chaque requête loggée avec prompt/completion tokens + statut). ⚠️ La forme exacte de l'endpoint d'agrégation OSS doit être **validée contre le vrai container en début d'implémentation** (même méthode que le champ `token` de `/key/generate`) ; le fallback si aucun agrégat OSS ne convient = lecture des logs bruts bornée à la journée (volumes faibles).
+- **Capture** : le housekeeping enrichit le snapshot du jour de colonnes `tokens` et `errors` **du jour** par team (valeurs quotidiennes directes, pas de delta).
+- **Dashboard** : KPIs « Tokens (30 j) » (format K/M identique au Dashboard RAG) et « Erreurs (30 j) » (rouge si > 0) ; tokens dans la courbe quotidienne ; tokens dans top teams.
+- **Overview org** : tokens par team.
+- **Sémantique** : `null` = donnée indisponible (gateway down / endpoint absent), jamais 0.
+
 ## Hors périmètre (différé)
 - Alerting push (email/Slack) sur dépassement — le badge suffit en v1.
 - Rétention/purge des snapshots (volumes négligeables : orgs × teams × 365 ≈ quelques milliers de lignes/an).
 - Export CSV / facturation — c'est le ledger unifié.
+- A/B testing (traffic-split pondéré du routeur LiteLLM) — quand un 2ᵉ modèle code existera.
+- Métriques perf/infra (TTFT, débit, KV-cache, GPU) — plan ops : scrape Prometheus du `/metrics` natif vLLM → Grafana, pas le panel.
