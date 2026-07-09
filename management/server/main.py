@@ -28,6 +28,12 @@ if not settings.JWT_SECRET:
 async def lifespan(app: FastAPI):
     import logging
 
+    # Sous uvicorn le root logger n'a aucun handler : les INFO applicatifs
+    # (dont le log de démarrage du scheduler housekeeping — notre signal de
+    # vie, leçon asgi.py 2026-06-30) sont avalés par le lastResort (WARNING+).
+    # basicConfig est un no-op si des handlers existent déjà (tests/pytest).
+    logging.basicConfig(level=os.getenv("ADMIN_LOG_LEVEL", "INFO"))
+
     # Pre-init settings that would otherwise trigger ES/Infinity connections
     from common import settings as rag_settings
     if not rag_settings.SECRET_KEY:
