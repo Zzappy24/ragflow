@@ -5,14 +5,23 @@ import { AreaChart, Area, XAxis, YAxis, CartesianGrid, Tooltip, ResponsiveContai
 import api from '@/lib/api';
 
 interface DashboardData {
-  kpis: { cycle_spend: number | null; active_orgs: number; teams: number; active_keys: number; budget_alerts: number };
-  daily: { date: string; spend: number }[];
+  kpis: {
+    cycle_spend: number | null; active_orgs: number; teams: number; active_keys: number; budget_alerts: number;
+    tokens_30d: number | null; errors_30d: number | null;
+  };
+  daily: { date: string; spend: number; tokens: number | null; errors: number | null }[];
   top_orgs: { org_id: string; org_name: string; spend: number }[];
-  top_teams: { code_team_id: string; name: string; org_name: string; spend: number; max_budget: number }[];
+  top_teams: { code_team_id: string; name: string; org_name: string; spend: number; max_budget: number; tokens: number | null }[];
   last_housekeeping_at: string | null;
 }
 
 const REFRESH_MS = 30_000;
+
+export const fmtTokens = (n: number): string => {
+  if (n >= 1_000_000) return `${(n / 1_000_000).toFixed(1)}M`;
+  if (n >= 1_000) return `${(n / 1_000).toFixed(1)}K`;
+  return String(n ?? 0);
+};
 
 export default function CodeDashboardSection() {
   const [data, setData] = useState<DashboardData | null>(null);
@@ -47,14 +56,19 @@ export default function CodeDashboardSection() {
 
   return (
     <div className="mb-4">
-      <Row gutter={12} className="mb-3">
-        <Col span={5}><Card size="small"><Statistic title="Dépensé (cycle)" prefix={<EuroOutlined />}
+      <Row gutter={[12, 12]} className="mb-3">
+        <Col span={4}><Card size="small"><Statistic title="Dépensé (cycle)" prefix={<EuroOutlined />}
           value={kpis.cycle_spend ?? '—'} suffix={kpis.cycle_spend != null ? '€' : ''} /></Card></Col>
-        <Col span={5}><Card size="small"><Statistic title="Orgs actives" prefix={<BankOutlined />} value={kpis.active_orgs} /></Card></Col>
-        <Col span={5}><Card size="small"><Statistic title="Teams" prefix={<TeamOutlined />} value={kpis.teams} /></Card></Col>
-        <Col span={4}><Card size="small"><Statistic title="Clés actives" prefix={<KeyOutlined />} value={kpis.active_keys} /></Card></Col>
-        <Col span={5}><Card size="small"><Statistic title="Alertes budget (≥80%)" prefix={<WarningOutlined />}
+        <Col span={3}><Card size="small"><Statistic title="Orgs actives" prefix={<BankOutlined />} value={kpis.active_orgs} /></Card></Col>
+        <Col span={3}><Card size="small"><Statistic title="Teams" prefix={<TeamOutlined />} value={kpis.teams} /></Card></Col>
+        <Col span={3}><Card size="small"><Statistic title="Clés actives" prefix={<KeyOutlined />} value={kpis.active_keys} /></Card></Col>
+        <Col span={3}><Card size="small"><Statistic title="Alertes budget (≥80%)" prefix={<WarningOutlined />}
           value={kpis.budget_alerts} valueStyle={kpis.budget_alerts > 0 ? { color: '#cf1322' } : undefined} /></Card></Col>
+        <Col span={4}><Card size="small"><Statistic title="Tokens (30 j)"
+          value={kpis.tokens_30d == null ? '—' : fmtTokens(kpis.tokens_30d)} /></Card></Col>
+        <Col span={4}><Card size="small"><Statistic title="Erreurs (30 j)"
+          value={kpis.errors_30d ?? '—'}
+          valueStyle={(kpis.errors_30d ?? 0) > 0 ? { color: '#cf1322' } : undefined} /></Card></Col>
       </Row>
       <Row gutter={12}>
         <Col span={12}>
@@ -63,9 +77,11 @@ export default function CodeDashboardSection() {
               <AreaChart data={data.daily}>
                 <CartesianGrid strokeDasharray="3 3" />
                 <XAxis dataKey="date" tickFormatter={(d: string) => d.slice(5)} />
-                <YAxis />
-                <Tooltip formatter={(v) => `${v} €`} />
-                <Area type="monotone" dataKey="spend" stroke="#6366f1" fill="#6366f1" fillOpacity={0.25} />
+                <YAxis yAxisId="left" />
+                <YAxis yAxisId="right" orientation="right" tickFormatter={(v: number) => fmtTokens(v)} />
+                <Tooltip formatter={(v, name) => (name === 'tokens' ? fmtTokens(Number(v)) : `${v} €`)} />
+                <Area yAxisId="left" type="monotone" dataKey="spend" stroke="#6366f1" fill="#6366f1" fillOpacity={0.25} />
+                <Area yAxisId="right" type="monotone" dataKey="tokens" stroke="#10b981" fill="#10b981" fillOpacity={0.15} />
               </AreaChart>
             </ResponsiveContainer>
           </Card>
@@ -87,6 +103,8 @@ export default function CodeDashboardSection() {
                 { width: 110, render: (_: unknown, r) => (
                     <Progress size="small" percent={r.max_budget ? Math.min(100, Math.round((r.spend / r.max_budget) * 100)) : 0}
                               status={r.spend >= r.max_budget ? 'exception' : undefined} />) },
+                { width: 80, align: 'right' as const, render: (_: unknown, r) => (
+                    <span className="text-gray-400 text-xs">{r.tokens == null ? '—' : `${fmtTokens(r.tokens)} tok`}</span>) },
               ]} />
           </Card>
         </Col>

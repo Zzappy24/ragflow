@@ -3,10 +3,10 @@ import { useSearchParams } from 'react-router-dom';
 import { Table, Button, Card, Modal, Form, Input, InputNumber, App, Progress, Tag, Popconfirm, Space, Typography, Alert } from 'antd';
 import { PlusOutlined, StopOutlined, CopyOutlined } from '@ant-design/icons';
 import api from '@/lib/api';
-import CodeDashboardSection from './dashboard-section';
+import CodeDashboardSection, { fmtTokens } from './dashboard-section';
 
 interface CodeKey { id: string; label: string; key_masked: string | null; status: string; sync_status: string; spend: number | null; }
-interface CodeTeam { id: string; name: string; max_budget: number; spend: number | null; status: string; sync_status: string; keys: CodeKey[]; }
+interface CodeTeam { id: string; name: string; max_budget: number; spend: number | null; status: string; sync_status: string; keys: CodeKey[]; tokens_today: number | null; }
 interface Overview {
   entitlement: { status: string; org_code_budget: number; budget_period: string } | null;
   allocated: number;
@@ -251,6 +251,7 @@ export default function CodePage() {
                      <Tag color={team.spend != null && team.spend >= team.max_budget ? 'red' : 'blue'}>
                        {team.spend != null ? `${euro(team.spend)} / ${euro(team.max_budget)}` : `— / ${euro(team.max_budget)}`}
                      </Tag>
+                     <Tag color="geekblue">{team.tokens_today == null ? '— tokens' : `${fmtTokens(team.tokens_today)} tokens auj.`}</Tag>
                      {team.sync_status !== 'synced' && <Tag color="orange">{team.sync_status}</Tag>}</Space>}
               extra={<Button size="small" icon={<PlusOutlined />}
                              onClick={() => setKeyModalTeam(team)}>Nouvelle clé</Button>}>
