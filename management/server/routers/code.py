@@ -191,22 +191,29 @@ def code_overview(org_id: str, user_id: str = Depends(get_current_user_id)):
     # None = gateway unreachable — the front renders "—", never 0.
     spend_map = cp.spend_by_litellm_team()
 
+    # Fetch key rows from the DB first, release the connection, THEN make the
+    # (potentially slow) HTTP calls to the gateway — holding a pooled DB
+    # connection idle across an outbound HTTP request starves the pool under
+    # concurrent load.
     with DB.connection_context():
-        keys_by_team = {}
-        for t in teams:
-            key_rows = list(CodeKey.select().where(CodeKey.code_team_id == t.id))
-            key_spend = None
-            if spend_map is not None and t.litellm_team_id:
-                try:
-                    from management.server.services.code_provisioning import _client
-                    key_spend = {k.get("token"): float(k.get("spend") or 0.0)
-                                 for k in _client().list_keys(t.litellm_team_id)}
-                except Exception:
-                    key_spend = None
-            keys_by_team[t.id] = [
-                {**_key_to_dict(k),
-                 "spend": (key_spend or {}).get(k.litellm_key_id) if key_spend is not None else None}
-                for k in key_rows]
+        key_rows_by_team = {t.id: list(CodeKey.select().where(CodeKey.code_team_id == t.id))
+                            for t in teams}
+
+    from management.server.services.code_provisioning import _client
+    keys_by_team = {}
+    for t in teams:
+        key_rows = key_rows_by_team[t.id]
+        key_spend = None
+        if key_rows and spend_map is not None and t.litellm_team_id:
+            try:
+                key_spend = {k.get("token"): float(k.get("spend") or 0.0)
+                             for k in _client().list_keys(t.litellm_team_id)}
+            except Exception:
+                key_spend = None
+        keys_by_team[t.id] = [
+            {**_key_to_dict(k),
+             "spend": (key_spend or {}).get(k.litellm_key_id) if key_spend is not None else None}
+            for k in key_rows]
 
     def _spend(t):
         if spend_map is None or not t.litellm_team_id:

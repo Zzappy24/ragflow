@@ -9,6 +9,7 @@ Configuration via env vars (with defaults for local dev):
   TEST_EMAIL     test user email  (default: qa@infiniflow.org)
   TEST_PASSWORD  test user password in plaintext  (default: 123)
 """
+import logging
 import os
 import sys
 from pathlib import Path
@@ -320,3 +321,41 @@ def second_org_admin():
         OrgMember.delete().where(OrgMember.org_id == org_id).execute()
         User.delete().where(User.id == uid).execute()
         Organisation.delete().where(Organisation.id == org_id).execute()
+
+
+# ---------------------------------------------------------------------------
+# Dedicated test DB guard for test/multitenant/*
+# ---------------------------------------------------------------------------
+
+# CODE_TESTS_DB: name of a dedicated MySQL/Postgres schema (e.g. "rag_flow_test")
+# to isolate this directory's tests — most notably the code_* housekeeping
+# tests, which call housekeeping()/reconcile_all()/snapshot_spend() and would
+# otherwise read/write real data in whatever DB the server is pointed at.
+# When set, Peewee is re-pointed at that schema for the whole test session and
+# tables are created there. When NOT set (the common local-dev case today),
+# tests keep running against the shared dev DB — a session-level warning is
+# logged so it's obvious in test output. A hard skip isn't used here because
+# it would break local runs for everyone until a second schema is provisioned;
+# the row-level scoping and >= 1 / teardown-only-what-you-created assertions
+# added alongside this fixture (see test_code_housekeeping.py) are what make
+# running against the shared DB safe in the meantime.
+CODE_TESTS_DB = os.getenv("CODE_TESTS_DB")
+
+
+@pytest.fixture(scope="session", autouse=True)
+def code_tests_db_guard():
+    if CODE_TESTS_DB:
+        from api.db.db_models import DB, init_database_tables
+        from common import settings
+
+        db_config = settings.DATABASE.copy()
+        db_config.pop("name", None)
+        DB.close_all()
+        DB.init(CODE_TESTS_DB, **db_config)
+        init_database_tables()
+        logging.getLogger(__name__).warning(
+            "test/multitenant running against isolated DB %r (CODE_TESTS_DB)", CODE_TESTS_DB)
+    else:
+        logging.getLogger(__name__).warning(
+            "code tests running against the SHARED dev DB — set CODE_TESTS_DB to isolate")
+    yield

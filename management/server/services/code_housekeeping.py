@@ -23,13 +23,23 @@ def snapshot_spend(client=None) -> int | None:
         logger.warning("snapshot_spend: gateway injoignable, aucun snapshot écrit")
         return None
 
-    today = datetime.date.today()
+    today = datetime.datetime.now(datetime.timezone.utc).date()
     count = 0
     with DB.connection_context():
         teams = list(CodeTeam.select().where(
             (CodeTeam.status == "active") & (CodeTeam.litellm_team_id.is_null(False))))
         for t in teams:
-            spend = spend_map.get(t.litellm_team_id, 0.0)
+            if t.litellm_team_id not in spend_map:
+                # The gateway's own team listing doesn't mention this team
+                # (deleted out-of-band, a transient listing gap, or — in
+                # tests — a stand-in client that only knows about the teams
+                # it created). Writing spend=0.0 here would fabricate a
+                # reading and clobber the team's real cumulative history;
+                # skip it, same principle as spend_map is None distinguishing
+                # "gateway unreachable" from "genuinely zero" above, just at
+                # per-team granularity.
+                continue
+            spend = spend_map[t.litellm_team_id]
             update = {CodeSpendSnapshot.spend: spend, CodeSpendSnapshot.max_budget: t.max_budget}
             insert = CodeSpendSnapshot.insert(
                 id=get_uuid(), snap_date=today, org_id=t.org_id,
@@ -59,7 +69,7 @@ def _housekeeping_impl(client=None) -> dict:
     # (which is indistinguishable from "no active teams").
     teams_snapshotted = snapped if snapped is not None else 0
     errors = rec["errors"] + (1 if snapped is None else 0)
-    ran_at = datetime.datetime.now()
+    ran_at = datetime.datetime.now(datetime.timezone.utc)
     with DB.connection_context():
         CodeHousekeepingRun.create(id=get_uuid(), ran_at=ran_at,
                                    teams_snapshotted=teams_snapshotted,
@@ -76,14 +86,21 @@ def housekeeping(client=None) -> dict:
     @DB.lock("code_housekeeping", 10)
     def _locked():
         return _housekeeping_impl(client=client)
-    return _locked()
+    # The lock's GET_LOCK/RELEASE_LOCK calls execute_sql() directly (bypassing
+    # the ORM), which checks out a thread-local pooled connection that nothing
+    # else closes when this runs off the main request thread (scheduler /
+    # to_thread). Wrapping in connection_context() ensures it's returned to
+    # the pool once the call completes.
+    with DB.connection_context():
+        return _locked()
 
 
 def last_run():
     from api.db.db_models import DB, CodeHousekeepingRun
     with DB.connection_context():
         return (CodeHousekeepingRun.select()
-                .order_by(CodeHousekeepingRun.ran_at.desc()).first())
+                .order_by(CodeHousekeepingRun.ran_at.desc(),
+                         CodeHousekeepingRun.id.desc()).first())
 
 
 def daily_spend_series(org_ids: list[str] | None, days: int = 30) -> list[dict]:
