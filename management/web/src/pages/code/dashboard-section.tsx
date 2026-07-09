@@ -1,5 +1,5 @@
 import { useCallback, useEffect, useRef, useState } from 'react';
-import { Card, Col, Row, Statistic, Table, Tag, Progress } from 'antd';
+import { Alert, Card, Col, Row, Statistic, Table, Tag, Progress } from 'antd';
 import { EuroOutlined, BankOutlined, TeamOutlined, KeyOutlined, WarningOutlined } from '@ant-design/icons';
 import { AreaChart, Area, XAxis, YAxis, CartesianGrid, Tooltip, ResponsiveContainer } from 'recharts';
 import api from '@/lib/api';
@@ -16,10 +16,13 @@ const REFRESH_MS = 30_000;
 
 export default function CodeDashboardSection() {
   const [data, setData] = useState<DashboardData | null>(null);
+  const [loadFailed, setLoadFailed] = useState(false);
   const timer = useRef<ReturnType<typeof setInterval> | null>(null);
 
   const fetchData = useCallback(() => {
-    api.get('/code/dashboard').then((res) => setData(res.data)).catch(() => {});
+    api.get('/code/dashboard')
+      .then((res) => { setData(res.data); setLoadFailed(false); })
+      .catch(() => setLoadFailed(true));
   }, []);
 
   useEffect(() => {
@@ -27,11 +30,18 @@ export default function CodeDashboardSection() {
     const start = () => { if (!timer.current) timer.current = setInterval(fetchData, REFRESH_MS); };
     const stop = () => { if (timer.current) { clearInterval(timer.current); timer.current = null; } };
     const onVisibility = () => { if (document.hidden) stop(); else { fetchData(); start(); } };
-    start();
+    // Guard against starting the refresh timer while the tab is mounted but
+    // hidden (e.g. opened in a background tab) — no point polling a page
+    // nobody is looking at until visibilitychange fires.
+    if (!document.hidden) start();
     document.addEventListener('visibilitychange', onVisibility);
     return () => { stop(); document.removeEventListener('visibilitychange', onVisibility); };
   }, [fetchData]);
 
+  if (loadFailed && !data) {
+    return <Alert className="mb-4" type="error" message="Dashboard indisponible"
+      description="Impossible de charger les données du tableau de bord Code. Nouvelle tentative automatique en cours." />;
+  }
   if (!data) return <Card loading className="mb-4" />;
   const { kpis } = data;
 
