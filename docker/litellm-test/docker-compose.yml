@@ -11,7 +11,7 @@ services:
     ports: ["127.0.0.1:5433:5432"]
 
   litellm:
-    image: ghcr.io/berriai/litellm:main-v1.74.0-stable  # pin — bump consciously
+    image: ghcr.io/berriai/litellm:v1.91.1  # pin — bump consciously (validated by test_code_litellm_integration)
     depends_on: [litellm-db]
     ports: ["127.0.0.1:4000:4000"]
     volumes:

@@ -81,7 +81,9 @@ def test_team_budget_blocks_in_real_time(client):
     while second.status_code == 200 and time.monotonic() < deadline:
         time.sleep(0.5)
         second = call()
-    assert second.status_code == 400
+    # v1.74 renvoyait 400 ; v1.91+ renvoie 429 (sémantiquement plus juste).
+    # Les deux signifient « budget dépassé, requête refusée » côté client.
+    assert second.status_code in (400, 429)
     assert "budget" in second.text.lower()
 
 

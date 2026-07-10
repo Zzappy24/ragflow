@@ -111,7 +111,8 @@ class LiteLLMClient:
     def daily_usage(self, day: datetime.date) -> dict[str, dict]:
         """Tokens + errors per team for the UTC day `day`.
 
-        Validated against ghcr.io/berriai/litellm:main-v1.74.0-stable:
+        Validated against ghcr.io/berriai/litellm main-v1.74.0-stable AND v1.91.1
+        (only drift between the two: budget-exceeded on /v1 is 400 -> 429):
         GET /spend/logs?start_date=<day>&end_date=<day+1>&summarize=false
         returns a flat JSON array of raw per-request log rows — NOT
         aggregated. `summarize=true` (the default) instead groups rows by
