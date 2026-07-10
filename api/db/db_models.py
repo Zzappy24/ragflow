@@ -36,6 +36,7 @@ from peewee import (
     BooleanField,
     CharField,
     CompositeKey,
+    DateField,
     DateTimeField,
     Field,
     FloatField,
@@ -1537,6 +1538,132 @@ class WsGroupDataset(DataBaseModel):
         db_table = "ws_group_dataset"
 
 
+# ============================================================
+# CUSTOM B2B SaaS — Code product tables (control plane for the LiteLLM data
+# plane): entitlements, teams, delegated team admins, virtual keys. Entirely
+# new tables, no upstream equivalent — never expected to conflict on merge.
+# ============================================================
+class CodeEntitlement(DataBaseModel):
+    """Code product entitlement — one row per org. Cyllene-controlled (the 'how much')."""
+    id = CharField(max_length=32, primary_key=True)
+    org_id = CharField(max_length=32, null=False, unique=True, index=True)
+    status = CharField(max_length=16, null=False, default="active", index=True)  # active | suspended
+    org_code_budget = FloatField(null=False, default=0.0)  # EUR per budget_period
+    budget_period = CharField(max_length=8, null=False, default="1mo")  # LiteLLM budget_duration format
+    created_by = CharField(max_length=32, null=False, index=True)
+
+    class Meta:
+        db_table = "code_entitlement"
+
+
+class CodeTeam(DataBaseModel):
+    """A client squad = one LiteLLM Team. status = DESIRED state; sync_status tells if LiteLLM matches."""
+    id = CharField(max_length=32, primary_key=True)
+    org_id = CharField(max_length=32, null=False, index=True)
+    name = CharField(max_length=255, null=False)
+    # 128: deterministic alias "org:<32-hex>:team:<32-hex>" (+ LiteLLM-side prefix) can
+    # exceed 64 and get silently truncated by MySQL in non-strict mode (bug found in Task 3 tests).
+    litellm_team_id = CharField(max_length=128, null=True, index=True)
+    max_budget = FloatField(null=False, default=0.0)  # EUR per entitlement.budget_period (cycle imposed)
+    model_access = JSONField(null=True, default=[])  # [] = all models exposed by the proxy
+    status = CharField(max_length=16, null=False, default="active", index=True)  # active | deleted
+    sync_status = CharField(max_length=16, null=False, default="pending", index=True)  # pending | synced | error
+    sync_error = TextField(null=True)
+    created_by = CharField(max_length=32, null=False, index=True)
+
+    class Meta:
+        db_table = "code_team"
+
+
+class CodeTeamMember(DataBaseModel):
+    """Delegated code-team admins (spec §4 'Modèle 1'). role kept for future non-admin roles."""
+    id = CharField(max_length=32, primary_key=True)
+    code_team_id = CharField(max_length=32, null=False, index=True)
+    user_id = CharField(max_length=32, null=False, index=True)
+    role = CharField(max_length=16, null=False, default="admin")
+
+    class Meta:
+        db_table = "code_team_member"
+
+
+class CodeKey(DataBaseModel):
+    """A seat/dev = one LiteLLM virtual key. NEVER stores the plaintext key.
+
+    litellm_key_id = hashed token returned by /key/generate (usable for /key/block).
+    status is the DESIRED state: active | revoked (seat-level) | blocked (org suspension fan-out).
+    """
+    id = CharField(max_length=32, primary_key=True)
+    code_team_id = CharField(max_length=32, null=False, index=True)
+    label = CharField(max_length=255, null=False)
+    litellm_key_id = CharField(max_length=128, null=True, index=True)
+    key_masked = CharField(max_length=32, null=True)
+    owner_user_id = CharField(max_length=32, null=True, index=True)
+    status = CharField(max_length=16, null=False, default="active", index=True)  # active | revoked | blocked
+    sync_status = CharField(max_length=16, null=False, default="pending", index=True)  # pending | synced | error
+    sync_error = TextField(null=True)
+    created_by = CharField(max_length=32, null=False, index=True)
+
+    class Meta:
+        db_table = "code_key"
+
+
+class CodeSpendSnapshot(DataBaseModel):
+    """Daily cumulative-spend snapshot per code team (source of the dashboard curve).
+
+    spend is the CYCLE-CUMULATIVE value LiteLLM reports at snapshot time; the
+    daily curve is the delta between consecutive snapshots (negative delta =
+    cycle reset -> that day's delta is the day's raw value).
+    """
+    id = CharField(max_length=32, primary_key=True)
+    snap_date = DateField(null=False, index=True)
+    org_id = CharField(max_length=32, null=False, index=True)
+    code_team_id = CharField(max_length=32, null=False, index=True)
+    spend = FloatField(null=False, default=0.0)
+    max_budget = FloatField(null=False, default=0.0)
+    # CUSTOM B2B SaaS — Code product: daily token/error counts from LiteLLM's
+    # spend-logs endpoint. NULL = gateway unreachable at snapshot time (spend
+    # is still written); 0 = gateway reachable but no traffic for this team.
+    tokens = IntegerField(null=True)
+    errors = IntegerField(null=True)
+
+    class Meta:
+        db_table = "code_spend_snapshot"
+
+
+class CodeHousekeepingRun(DataBaseModel):
+    """One row per housekeeping pass (reconcile + snapshot) — scheduler observability."""
+    id = CharField(max_length=32, primary_key=True)
+    ran_at = DateTimeField(null=False, index=True)
+    teams_snapshotted = IntegerField(null=False, default=0)
+    teams_synced = IntegerField(null=False, default=0)
+    keys_synced = IntegerField(null=False, default=0)
+    errors = IntegerField(null=False, default=0)
+
+    class Meta:
+        db_table = "code_housekeeping_run"
+
+
+class CodeKeyInvite(DataBaseModel):
+    """Invitation de siège code : la clé n'existe qu'au claim (jamais de secret au repos).
+
+    token_hash = SHA-256 hex du token urlsafe — le clair n'est jamais stocké.
+    claimed_key_id non-NULL = consommée (le claim est un UPDATE conditionnel atomique).
+    """
+    id = CharField(max_length=32, primary_key=True)
+    code_team_id = CharField(max_length=32, null=False, index=True)
+    email = CharField(max_length=255, null=False, index=True)
+    token_hash = CharField(max_length=64, null=False, unique=True)
+    expires_at = DateTimeField(null=False)
+    claimed_key_id = CharField(max_length=32, null=True)
+    created_by = CharField(max_length=32, null=False, index=True)
+
+    class Meta:
+        db_table = "code_key_invite"
+
+
+# ============================================================
+# END CUSTOM B2B SaaS — Code product tables
+# ============================================================
 class AuditLog(DataBaseModel):
     id = CharField(max_length=32, primary_key=True)
     org_id = CharField(max_length=32, null=True, index=True)
@@ -2017,6 +2144,15 @@ def migrate_db():
     # RBAC Multi-Tenant: composite unique indexes
     _add_rbac_unique_indexes(migrator)
 
+    # CUSTOM B2B SaaS — code_team.litellm_team_id was varchar(64); the deterministic
+    # alias format silently truncated on MySQL non-strict mode. Widen to 128.
+    alter_db_column_type(migrator, "code_team", "litellm_team_id", CharField(max_length=128, null=True, index=True))
+
+    # CUSTOM B2B SaaS — Code product: daily tokens/errors captured from LiteLLM's
+    # spend-logs endpoint (NULL = gateway unreachable at snapshot time).
+    alter_db_add_column(migrator, "code_spend_snapshot", "tokens", IntegerField(null=True))
+    alter_db_add_column(migrator, "code_spend_snapshot", "errors", IntegerField(null=True))
+
 
 def _add_rbac_unique_indexes(migrator):
     """Add composite unique indexes for RBAC tables. Safe to call multiple times."""
@@ -2026,6 +2162,10 @@ def _add_rbac_unique_indexes(migrator):
         ("ws_group", ("workspace_id", "name"), True),
         ("ws_group_member", ("group_id", "user_id"), True),
         ("ws_group_dataset", ("group_id", "dataset_id"), True),
+        # CUSTOM B2B SaaS — Code product: a user can only be delegated once per code team.
+        ("code_team_member", ("code_team_id", "user_id"), True),
+        # CUSTOM B2B SaaS — Code product: one snapshot per day per team (upsert semantics).
+        ("code_spend_snapshot", ("snap_date", "code_team_id"), True),
     ]
     for table, columns, unique in indexes:
         try:

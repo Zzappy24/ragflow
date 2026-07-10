@@ -26,7 +26,28 @@ class Settings(BaseSettings):
     # Dev: the RAGFlow frontend (vite/umi). Prod: your customer-facing domain.
     RAGFLOW_BASE_URL: str = os.getenv("RAGFLOW_BASE_URL", "http://localhost:9222")
 
+    # LiteLLM management API (for Code product's headless orchestration)
+    LITELLM_BASE_URL: str = os.getenv("LITELLM_BASE_URL", "http://localhost:4000")
+    LITELLM_MASTER_KEY: str = os.getenv("LITELLM_MASTER_KEY", "")  # K8s Secret in prod; never logged, never returned by any route
+    # Public URL clients plug into Kilo/OpenCode/Cline (shown in the panel
+    # next to their keys). Prod: the Envoy hostname fronting LiteLLM's /v1,
+    # e.g. "https://code.cyllene.cloud/v1". Empty = hidden in the UI.
+    CODE_GATEWAY_PUBLIC_URL: str = os.getenv("ADMIN_CODE_GATEWAY_PUBLIC_URL", "")
+
     INVITE_TOKEN_EXPIRE_SECONDS: int = 60 * 60 * 48
+
+    # SMTP du panel (invitations RAG + sièges code). Vide = emails désactivés,
+    # les liens restent affichés au front. Prod : SPF/DKIM requis sur le
+    # domaine expéditeur (cf. DEPLOYMENT_CHECKLIST).
+    SMTP_HOST: str = os.getenv("ADMIN_SMTP_HOST", "")
+    SMTP_PORT: int = int(os.getenv("ADMIN_SMTP_PORT", "587"))
+    SMTP_USERNAME: str = os.getenv("ADMIN_SMTP_USERNAME", "")
+    SMTP_PASSWORD: str = os.getenv("ADMIN_SMTP_PASSWORD", "")
+    SMTP_FROM: str = os.getenv("ADMIN_SMTP_FROM", "Cyllene <no-reply@cyllene.com>")
+    SMTP_TLS: bool = os.getenv("ADMIN_SMTP_TLS", "true").lower() == "true"
+    # Base publique du panel — sert à construire les liens de claim,
+    # ex. "https://admin.cyllene.cloud". Vide = liens relatifs (dev).
+    PANEL_PUBLIC_URL: str = os.getenv("ADMIN_PANEL_PUBLIC_URL", "")
 
     class Config:
         env_prefix = "ADMIN_"

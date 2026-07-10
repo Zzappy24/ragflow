@@ -9,6 +9,7 @@ Configuration via env vars (with defaults for local dev):
   TEST_EMAIL     test user email  (default: qa@infiniflow.org)
   TEST_PASSWORD  test user password in plaintext  (default: 123)
 """
+import logging
 import os
 import sys
 from pathlib import Path
@@ -226,3 +227,136 @@ def ws_dataset(ws_auth):
     kb_id = _create_dataset(ws_auth)
     yield kb_id
     _delete_dataset(ws_auth, kb_id)
+
+
+# ---------------------------------------------------------------------------
+# Code product — org + entitlement + RBAC-ready users fixture
+# ---------------------------------------------------------------------------
+
+@pytest.fixture()
+def org_with_entitlement_and_users():
+    """Org + active entitlement (100 EUR / 1mo) + 3 users wired for Code RBAC tests.
+
+    Mirrors test_code_provisioning.org_with_entitlement's seeding, plus:
+      - a superuser (is_superuser=1)
+      - an org_admin (OrgMember role=org_admin)
+      - a plain_member (OrgMember role=member)
+    Each user gets a minted access JWT via management.server.auth.jwt.create_access_token.
+    Yields (org_id, {"superuser": ..., "org_admin": ..., "plain_member": ...,
+                     "plain_member_email": ...}).
+    """
+    from api.db.db_models import (
+        DB, Organisation, CodeEntitlement, CodeTeam, CodeTeamMember, CodeKey,
+        CodeSpendSnapshot, User, OrgMember,
+    )
+    from common.misc_utils import get_uuid
+    from management.server.auth.jwt import create_access_token
+
+    org_id = get_uuid()
+    user_ids = {}
+    emails = {}
+    with DB.connection_context():
+        Organisation.create(id=org_id, name=f"code-rbac-{org_id[:6]}",
+                            slug=f"code-rbac-{org_id[:6]}", created_by="tester")
+        CodeEntitlement.create(id=get_uuid(), org_id=org_id, status="active",
+                               org_code_budget=100.0, budget_period="1mo", created_by="tester")
+
+        for role in ("superuser", "org_admin", "plain_member"):
+            uid = get_uuid()
+            email = f"code-rbac-{role}-{uid[:6]}@example.com"
+            User.create(id=uid, nickname=f"code-rbac-{role}", email=email,
+                       password="x", is_superuser=(role == "superuser"))
+            user_ids[role] = uid
+            emails[role] = email
+
+        OrgMember.create(id=get_uuid(), org_id=org_id, user_id=user_ids["org_admin"],
+                         role="org_admin")
+        OrgMember.create(id=get_uuid(), org_id=org_id, user_id=user_ids["plain_member"],
+                         role="member")
+
+    tokens = {role: create_access_token(uid) for role, uid in user_ids.items()}
+    tokens["plain_member_email"] = emails["plain_member"]
+
+    yield org_id, tokens
+
+    with DB.connection_context():
+        team_ids = [t.id for t in CodeTeam.select().where(CodeTeam.org_id == org_id)]
+        if team_ids:
+            CodeKey.delete().where(CodeKey.code_team_id.in_(team_ids)).execute()
+            CodeTeamMember.delete().where(CodeTeamMember.code_team_id.in_(team_ids)).execute()
+            CodeSpendSnapshot.delete().where(CodeSpendSnapshot.code_team_id.in_(team_ids)).execute()
+        CodeTeam.delete().where(CodeTeam.org_id == org_id).execute()
+        CodeEntitlement.delete().where(CodeEntitlement.org_id == org_id).execute()
+        OrgMember.delete().where(OrgMember.org_id == org_id).execute()
+        User.delete().where(User.id.in_(list(user_ids.values()))).execute()
+        Organisation.delete().where(Organisation.id == org_id).execute()
+
+
+@pytest.fixture()
+def second_org_admin():
+    """A second, unrelated org with its own org_admin — for cross-org IDOR tests.
+
+    Yields (org_id, access_token, admin_email). Not a member of the org created
+    by org_with_entitlement_and_users, so it can be used to prove that org A's
+    resources (teams/keys) are inaccessible to org B's admin.
+    """
+    from api.db.db_models import DB, Organisation, User, OrgMember
+    from common.misc_utils import get_uuid
+    from management.server.auth.jwt import create_access_token
+
+    org_id = get_uuid()
+    uid = get_uuid()
+    email = f"code-rbac-org-b-admin-{uid[:6]}@example.com"
+    with DB.connection_context():
+        Organisation.create(id=org_id, name=f"code-rbac-b-{org_id[:6]}",
+                            slug=f"code-rbac-b-{org_id[:6]}", created_by="tester")
+        User.create(id=uid, nickname="code-rbac-org-b-admin", email=email,
+                   password="x", is_superuser=False)
+        OrgMember.create(id=get_uuid(), org_id=org_id, user_id=uid, role="org_admin")
+
+    token = create_access_token(uid)
+
+    yield org_id, token, email
+
+    with DB.connection_context():
+        OrgMember.delete().where(OrgMember.org_id == org_id).execute()
+        User.delete().where(User.id == uid).execute()
+        Organisation.delete().where(Organisation.id == org_id).execute()
+
+
+# ---------------------------------------------------------------------------
+# Dedicated test DB guard for test/multitenant/*
+# ---------------------------------------------------------------------------
+
+# CODE_TESTS_DB: name of a dedicated MySQL/Postgres schema (e.g. "rag_flow_test")
+# to isolate this directory's tests — most notably the code_* housekeeping
+# tests, which call housekeeping()/reconcile_all()/snapshot_spend() and would
+# otherwise read/write real data in whatever DB the server is pointed at.
+# When set, Peewee is re-pointed at that schema for the whole test session and
+# tables are created there. When NOT set (the common local-dev case today),
+# tests keep running against the shared dev DB — a session-level warning is
+# logged so it's obvious in test output. A hard skip isn't used here because
+# it would break local runs for everyone until a second schema is provisioned;
+# the row-level scoping and >= 1 / teardown-only-what-you-created assertions
+# added alongside this fixture (see test_code_housekeeping.py) are what make
+# running against the shared DB safe in the meantime.
+CODE_TESTS_DB = os.getenv("CODE_TESTS_DB")
+
+
+@pytest.fixture(scope="session", autouse=True)
+def code_tests_db_guard():
+    if CODE_TESTS_DB:
+        from api.db.db_models import DB, init_database_tables
+        from common import settings
+
+        db_config = settings.DATABASE.copy()
+        db_config.pop("name", None)
+        DB.close_all()
+        DB.init(CODE_TESTS_DB, **db_config)
+        init_database_tables()
+        logging.getLogger(__name__).warning(
+            "test/multitenant running against isolated DB %r (CODE_TESTS_DB)", CODE_TESTS_DB)
+    else:
+        logging.getLogger(__name__).warning(
+            "code tests running against the SHARED dev DB — set CODE_TESTS_DB to isolate")
+    yield

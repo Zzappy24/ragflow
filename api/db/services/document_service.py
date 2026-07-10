@@ -732,6 +732,13 @@ class DocumentService(CommonService):
             .where(Knowledgebase.id == doc.kb_id)
             .execute()
         )
+        # CUSTOM B2B SaaS — reset AUSSI le compteur au niveau du document.
+        # Upstream décrémente le KB mais oublie de reset doc.token_num/chunk_num,
+        # donc au re-parse increment_chunk_num double le compteur du document
+        # (34 initial + 34 nouveaux = 68 affiché en UI alors qu'il n'y a que 34
+        # chunks réels en base). Confirmé sur re-parse d'un même doc en changeant
+        # le chunk_method 2026-07-07.
+        cls.model.update(token_num=0, chunk_num=0).where(cls.model.id == doc_id).execute()
         return num
 
     @classmethod

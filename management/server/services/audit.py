@@ -41,6 +41,19 @@ WS_MEMBER_ADD = "WS_MEMBER_ADD"
 WS_MEMBER_REMOVE = "WS_MEMBER_REMOVE"
 WS_MEMBER_ROLE_CHANGE = "WS_MEMBER_ROLE_CHANGE"
 
+# Code product
+# NOTE: aligned to the SCREAMING_SNAKE_CASE convention of the constants above
+# (was dot-style "code.entitlement.set" — no prod data existed yet, safe to rename).
+CODE_ENTITLEMENT_SET = "CODE_ENTITLEMENT_SET"
+CODE_TEAM_CREATE = "CODE_TEAM_CREATE"
+CODE_TEAM_UPDATE = "CODE_TEAM_UPDATE"
+CODE_TEAM_ADMIN_ADD = "CODE_TEAM_ADMIN_ADD"
+CODE_KEY_CREATE = "CODE_KEY_CREATE"
+CODE_KEY_REVOKE = "CODE_KEY_REVOKE"
+CODE_SEAT_INVITE = "CODE_SEAT_INVITE"
+CODE_SEAT_CLAIMED = "CODE_SEAT_CLAIMED"
+CODE_KEY_ROTATED = "CODE_KEY_ROTATED"
+
 
 # ---------------------------------------------------------------------------
 # Helper

@@ -17,7 +17,8 @@
 # Sur des docs occidentaux non-tournés (99%+ des cas Cyllene), 0° gagne
 # toujours (voir le code upstream deepdoc/parser/pdf_parser.py:397-399 qui
 # admet lui-même que non-0° n'est adopté que si le score dépasse 0° de 0.2).
-# Gain observé: TSR passe de ~80s à ~30s sur un doc 11 pages avec ~3 tables.
+# Gain observé: TSR passe de ~80s à ~30s sur un doc 11 pages avec ~3 tables,
+# doc total 1m50 → ~1m10. Nombre de chunks identique à paper (validé 2026-07-07).
 #
 # Trade-off: les tables dans des documents scannés retournés seront mal
 # parsées (texte des cellules illisible). Pour ces docs, utiliser le mode
@@ -47,6 +48,13 @@ class Pdf(_paper.Pdf):
     Override `_evaluate_table_orientation` pour retourner 0° immédiatement
     sans faire les 4 OCR de rotation. Voir le module header pour la
     justification et le trade-off.
+
+    Note: `_ocr_rotated_tables` est appelée systématiquement par le parent
+    (car `auto_rotate=True` par défaut) mais fait `continue` sur best_angle=0
+    (voir pdf_parser.py:666-668). Aucune modification de boxes en downstream.
+    Le résultat chunking est identique au mode `paper` upstream sur les docs
+    où 0° gagne (99%+ des cas). Testé sur `Authorisation in S3 Echo (1).pdf`
+    2026-07-07: 34 chunks paper == 34 chunks paper_fast.
     """
 
     def _evaluate_table_orientation(self, table_img, sample_ratio=0.3):

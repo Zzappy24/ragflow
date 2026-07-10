@@ -1,6 +1,7 @@
 import { Routes, Route, Navigate } from 'react-router-dom';
 import AppLayout from '@/components/Layout';
 import LoginPage from '@/pages/login';
+import ClaimPage from '@/pages/claim';
 import DashboardPage from '@/pages/dashboard';
 import OrganisationsPage from '@/pages/organisations';
 import OrgDetailPage from '@/pages/organisations/detail';
@@ -12,6 +13,7 @@ import ApiKeysPage from '@/pages/api-keys';
 import AuditPage from '@/pages/audit';
 import GlobalAuditPage from '@/pages/audit/global';
 import ArchivesPage from '@/pages/archives';
+import CodePage from '@/pages/code';
 import { useAuthStore } from '@/stores/auth';
 
 function SuperuserRoute({ children }: { children: React.ReactNode }) {
@@ -24,6 +26,7 @@ export default function App() {
   return (
     <Routes>
       <Route path="/login" element={<LoginPage />} />
+      <Route path="/claim" element={<ClaimPage />} />
       <Route element={<AppLayout />}>
         <Route index element={<DashboardPage />} />
         <Route path="/organisations" element={<OrganisationsPage />} />
@@ -42,6 +45,7 @@ export default function App() {
         <Route path="/api-keys" element={<ApiKeysPage />} />
         <Route path="/audit" element={<SuperuserRoute><GlobalAuditPage /></SuperuserRoute>} />
         <Route path="/archives" element={<SuperuserRoute><ArchivesPage /></SuperuserRoute>} />
+        <Route path="/code" element={<CodePage />} />
       </Route>
     </Routes>
   );

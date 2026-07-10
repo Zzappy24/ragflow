@@ -7,7 +7,7 @@
 global:
   imageRegistry: "harbor.cylndata.cyllene.pro"
   imageRepository: "data/ragflow"
-  imageTag: "v0.7.19"
+  imageTag: "v0.7.20"
   hostname: "ragflow.cyllene.cloud"
   # TLS not yet enabled on the frontend in alterai prod — admin panel
   # generates invite links with this scheme. Switch to "https" once
@@ -252,3 +252,8 @@ vllm:
   chatModel: "Qwen/Qwen3.6-27B-FP8"
   embedModel: "BAAI/bge-m3"                  # ← vrai embedding
   rerankModel: "BAAI/bge-reranker-v2-m3"     # ← vrai rerank
+# CUSTOM B2B SaaS — produit Code (data plane LiteLLM, repo infra argo-helm/litellm-helm)
+ragflow-management-backend:
+  code:
+    litellmBaseUrl: "http://litellm.litellm.svc.cluster.local:4000"
+    gatewayPublicUrl: "http://litellm.cyllene.cloud/v1"  # TODO: passer en https dès le cert devops

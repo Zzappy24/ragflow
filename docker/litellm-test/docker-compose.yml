@@ -1,0 +1,23 @@
+# Local integration stack for the Code product — NO GPU, NO vLLM.
+# The mock model answers via mock_response; cost-per-token is inflated so
+# a single call exhausts a tiny budget (budget-enforcement test).
+services:
+  litellm-db:
+    image: postgres:16-alpine
+    environment:
+      POSTGRES_USER: litellm
+      POSTGRES_PASSWORD: litellm-test
+      POSTGRES_DB: litellm
+    ports: ["127.0.0.1:5433:5432"]
+
+  litellm:
+    image: ghcr.io/berriai/litellm:v1.91.1  # pin — bump consciously (validated by test_code_litellm_integration)
+    depends_on: [litellm-db]
+    ports: ["127.0.0.1:4000:4000"]
+    volumes:
+      - ./litellm_config.yaml:/app/config.yaml
+    environment:
+      DATABASE_URL: postgresql://litellm:litellm-test@litellm-db:5432/litellm
+      LITELLM_MASTER_KEY: sk-master-test-only
+      LITELLM_TELEMETRY: "False"
+    command: ["--config", "/app/config.yaml", "--port", "4000"]

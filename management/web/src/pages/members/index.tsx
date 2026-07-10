@@ -1,6 +1,6 @@
 import { useEffect, useState } from 'react';
 import { useSearchParams, useParams } from 'react-router-dom';
-import { Table, Button, Card, Modal, Form, Input, Select, App, Popconfirm, Space, Typography, Tooltip } from 'antd';
+import { Table, Button, Card, Modal, Form, Input, Select, App, Popconfirm, Space, Typography, Tooltip, Tag } from 'antd';
 import { PlusOutlined, UserAddOutlined, CopyOutlined, FireOutlined, MinusCircleOutlined } from '@ant-design/icons';
 import type { ColumnsType } from 'antd/es/table';
 import api from '@/lib/api';
@@ -13,6 +13,7 @@ interface Member {
   email: string | null;
   nickname: string | null;
   role: string;
+  is_active?: string; // '0' = invitation jamais consommée
 }
 
 export default function MembersPage({
@@ -35,7 +36,7 @@ export default function MembersPage({
   const [inviteOpen, setInviteOpen] = useState(false);
   const [inviteForm] = Form.useForm();
   const [inviteBusy, setInviteBusy] = useState(false);
-  const [inviteResult, setInviteResult] = useState<{ email: string; invite_url: string } | null>(null);
+  const [inviteResult, setInviteResult] = useState<{ email: string; invite_url: string; email_sent: boolean } | null>(null);
 
   const isSuperuser = useAuthStore((s) => s.user?.is_superuser ?? false);
 
@@ -123,7 +124,7 @@ export default function MembersPage({
         org_id: scopeId,
         org_role: values.org_role,
       });
-      setInviteResult({ email: res.data.email, invite_url: res.data.invite_url });
+      setInviteResult({ email: res.data.email, invite_url: res.data.invite_url, email_sent: res.data.email_sent });
       setInviteOpen(false);
       inviteForm.resetFields();
       refresh();
@@ -149,9 +150,41 @@ export default function MembersPage({
     ? [{ value: 'ws_admin', label: 'WS Admin' }, { value: 'editor', label: 'Editor' }, { value: 'viewer', label: 'Viewer' }]
     : [{ value: 'org_admin', label: 'Org Admin' }, { value: 'member', label: 'Member' }];
 
+  const onResendInvite = async (userId: string) => {
+    try {
+      const res = await api.post(`/users/${userId}/resend-invite`);
+      Modal.info({
+        title: res.data.email_sent
+          ? 'Invitation renvoyée par email'
+          : 'Nouveau lien généré — email non envoyé, transmettez-le manuellement',
+        content: (
+          <Typography.Paragraph copyable code>{res.data.invite_url}</Typography.Paragraph>
+        ),
+      });
+    } catch (err: unknown) {
+      const msg = (err as { response?: { data?: { detail?: string } } })?.response?.data?.detail;
+      message.error(msg ?? "Échec du renvoi de l'invitation");
+    }
+  };
+
   const columns: ColumnsType<Member> = [
     { title: 'Email', dataIndex: 'email' },
-    { title: 'Nickname', dataIndex: 'nickname' },
+    {
+      title: 'Nickname',
+      dataIndex: 'nickname',
+      render: (v: string | null, record: Member) => (
+        <span>
+          {v}
+          {record.is_active === '0' && (
+            <Tooltip title="Invitation jamais consommée — renvoyer un lien frais">
+              <Button type="link" size="small" onClick={() => onResendInvite(record.user_id)}>
+                Renvoyer l'invitation
+              </Button>
+            </Tooltip>
+          )}
+        </span>
+      ),
+    },
     {
       title: 'Role',
       dataIndex: 'role',
@@ -299,6 +332,11 @@ export default function MembersPage({
         <p className="text-gray-500 mb-2">
           Send this single-use link to <b>{inviteResult?.email}</b>. They will set their
           password and be logged into RAGFlow automatically.
+        </p>
+        <p className="mb-2">
+          {inviteResult?.email_sent
+            ? <Tag color="green">Email d'invitation envoyé</Tag>
+            : <Tag color="orange">Email non envoyé — transmettez le lien ci-dessous</Tag>}
         </p>
         <Typography.Paragraph
           code

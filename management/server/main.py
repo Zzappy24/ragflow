@@ -28,6 +28,12 @@ if not settings.JWT_SECRET:
 async def lifespan(app: FastAPI):
     import logging
 
+    # Sous uvicorn le root logger n'a aucun handler : les INFO applicatifs
+    # (dont le log de démarrage du scheduler housekeeping — notre signal de
+    # vie, leçon asgi.py 2026-06-30) sont avalés par le lastResort (WARNING+).
+    # basicConfig est un no-op si des handlers existent déjà (tests/pytest).
+    logging.basicConfig(level=os.getenv("ADMIN_LOG_LEVEL", "INFO"))
+
     # Pre-init settings that would otherwise trigger ES/Infinity connections
     from common import settings as rag_settings
     if not rag_settings.SECRET_KEY:
@@ -45,7 +51,40 @@ async def lifespan(app: FastAPI):
         rag_settings.DOC_ENGINE = os.getenv("DOC_ENGINE", "infinity")
         rag_settings.DOC_ENGINE_INFINITY = True
 
+    # CUSTOM B2B SaaS — Code product : housekeeping scheduler in-process.
+    # Sleep-first (pas de run au boot), DB.lock dans housekeeping() -> multi-replica safe.
+    # Désactivable via ADMIN_CODE_SCHEDULER=0 (tests / TestClient).
+    import asyncio
+    scheduler_task = None
+    if os.getenv("ADMIN_CODE_SCHEDULER", "1") == "1":
+        # 15 min par défaut : cadence des relevés tokens/erreurs — le marché
+        # affiche l'usage en ~10 min-1 h (Anthropic/OpenAI/Datadog) ; 96
+        # lectures /spend/logs par jour restent triviales côté gateway.
+        interval = int(os.getenv("ADMIN_CODE_SCHEDULER_INTERVAL_S", "900"))
+
+        async def _code_housekeeping_loop():
+            from management.server.services.code_housekeeping import housekeeping
+            while True:
+                await asyncio.sleep(interval)
+                try:
+                    report = await asyncio.to_thread(housekeeping)
+                    logging.info(f"code housekeeping run: {report}")
+                except Exception:
+                    logging.exception("code housekeeping run failed")
+
+        scheduler_task = asyncio.get_running_loop().create_task(_code_housekeeping_loop())
+        logging.info(f"code housekeeping scheduler started (interval={interval}s)")
+    else:
+        logging.warning("code housekeeping scheduler DISABLED (ADMIN_CODE_SCHEDULER=0)")
+
     yield
+
+    if scheduler_task is not None:
+        import contextlib
+
+        scheduler_task.cancel()
+        with contextlib.suppress(asyncio.CancelledError):
+            await scheduler_task
 
 
 app = FastAPI(
@@ -85,6 +124,7 @@ from management.server.routers import (
     models,
     archives,
     stats,
+    code,
 )
 
 app.include_router(auth.router, prefix="/api/admin/auth", tags=["Auth"])
@@ -99,3 +139,4 @@ app.include_router(system.router, prefix="/api/admin/system", tags=["System"])
 app.include_router(models.router, prefix="/api/admin", tags=["Workspace Models"])
 app.include_router(archives.router, prefix="/api/admin", tags=["Archives"])
 app.include_router(stats.router, prefix="/api/admin", tags=["Stats"])
+app.include_router(code.router, prefix="/api/admin", tags=["Code Product"])

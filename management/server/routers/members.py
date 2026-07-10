@@ -18,6 +18,8 @@ def _member_to_response(member, user=None) -> dict:
         "nickname": getattr(user, "nickname", None) if user else None,
         "role": member.role,
         "create_time": getattr(member, "create_time", None),
+        # '0' = invitation jamais consommée → le front propose « Renvoyer l'invitation »
+        "is_active": str(getattr(user, "is_active", "1")) if user else "1",
     }
 
 

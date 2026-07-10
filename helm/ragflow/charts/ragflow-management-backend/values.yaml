@@ -11,7 +11,7 @@ replicas: 2
 image:
   repository: harbor.cylndata.cyllene.pro/data/ragflow-mgmt
   repositorySuffix: "-mgmt"
-  tag: v0.7.19
+  tag: v0.7.20
   pullPolicy: IfNotPresent
   imagePullSecrets:
     - name: harbor-pull-secret
@@ -45,3 +45,11 @@ livenessProbe:
   periodSeconds: 20
   failureThreshold: 3
   timeoutSeconds: 2
+# CUSTOM B2B SaaS — produit Code : câblage vers le data plane LiteLLM.
+# Le secret master-key est optionnel (panel dormant tant qu'absent).
+code:
+  litellmBaseUrl: "http://litellm.litellm.svc.cluster.local:4000"
+  masterKeySecretName: "litellm-master-key-secret"
+  masterKeySecretKey: "master-key"
+  # URL publique /v1 affichée aux clients (panel + emails). Vide = masquée.
+  gatewayPublicUrl: ""

@@ -360,8 +360,10 @@ These files contain custom multi-tenant code that will likely conflict with upst
 | `rag/app/paper_fast.py` + `FACTORY["paper_fast"]` dans task_executor.py | Nouveau mode chunk_method "paper_fast" (variante paper avec skip auto-rotate tables). Coexiste avec "paper" upstream (inchangé). Sélectionnable par KB dans admin panel. ~50% du temps TSR économisé. Duplication de `paper.chunk()` — resync si upstream change. |
 | `api/apps/sdk/doc.py:184` + `api/utils/validation_utils.py:468` | `"paper_fast"` ajouté au set `valid_chunk_method` pour que le SDK/validator accepte ce nouveau mode. |
 | `web/src/hooks/use-user-setting-request.tsx:118` + `web/src/components/chunk-method-dialog/hooks.ts:12` | `"paper_fast"` ajouté à la liste des chunk methods sélectionnables dans l'UI (KB config). |
+| `api/db/services/document_service.py:clear_chunk_num_when_rerun` | Reset AUSSI `doc.token_num`/`chunk_num` (upstream décrémente juste le KB, pas le doc → compteur doublé au re-parse). Bug upstream 2026-07-07. |
 | `web/src/constants/knowledge.ts:102` + `web/src/pages/dataset/dataset-setting/chunk-method-form.tsx:28` + `.../utils.ts:13` | Enum `DocumentParserType.PaperFast` + mapping vers `PaperConfiguration` (réutilise UI) + `ImageMap.paper_fast` (illustrations). |
 | `management/server/services/provisioning.py:29` (`_DEFAULT_PARSER_IDS`) + `common/settings.py:257` (`PARSERS` fallback) | `paper_fast:Paper (fast)` ajouté au default. Le hook UI `useSelectParserList` filtre par `tenant.parser_ids` — sans ça, invisible dans le dropdown même après build. **Migration SQL requise pour tenants existants** (voir memory `mgmt-paper-fast-migration`). |
+| `api/db/db_models.py` (Code product tables) | `CodeEntitlement`/`CodeTeam`/`CodeTeamMember`/`CodeKey` — control plane for the LiteLLM data plane, marked `CUSTOM B2B SaaS — Code product tables`. `management/server/{routers/code.py,services/litellm_client.py,services/code_provisioning.py,services/code_reconcile.py}` are fully custom too but live under `management/` which never conflicts on upstream merge. |
 
 ### Go server — upstream migration watch
 
