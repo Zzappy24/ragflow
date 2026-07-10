@@ -1,6 +1,6 @@
 import { useEffect, useState, useCallback } from 'react';
 import { useSearchParams } from 'react-router-dom';
-import { Table, Button, Card, Modal, Form, Input, InputNumber, App, Progress, Tag, Popconfirm, Space, Typography, Alert } from 'antd';
+import { Table, Button, Card, Modal, Form, Input, InputNumber, App, Progress, Tag, Popconfirm, Space, Tooltip, Typography, Alert } from 'antd';
 import { PlusOutlined, StopOutlined, CopyOutlined, MailOutlined, ReloadOutlined } from '@ant-design/icons';
 import api from '@/lib/api';
 import CodeDashboardSection, { fmtTokens } from './dashboard-section';
@@ -367,10 +367,14 @@ export default function CodePage() {
                      <Tag color="geekblue">{team.tokens_today == null ? '— tokens' : `${fmtTokens(team.tokens_today)} tokens auj.`}</Tag>
                      {team.sync_status !== 'synced' && <Tag color="orange">{team.sync_status}</Tag>}</Space>}
               extra={<Space>
-                       <Button size="small" icon={<MailOutlined />}
-                               onClick={() => setBulkModalTeam(team)}>Inviter des sièges</Button>
-                       <Button size="small" icon={<PlusOutlined />}
-                               onClick={() => setKeyModalTeam(team)}>Nouvelle clé</Button>
+                       <Tooltip title="Le flux nominal pour des développeurs : chaque email reçoit un lien one-time et récupère sa clé lui-même — vous ne voyez jamais la clé.">
+                         <Button size="small" type="primary" ghost icon={<MailOutlined />}
+                                 onClick={() => setBulkModalTeam(team)}>Inviter par email</Button>
+                       </Tooltip>
+                       <Tooltip title="Cas service (CI, intégration, test) : la clé est créée et affichée immédiatement, sans email — c'est vous qui la transmettez.">
+                         <Button size="small" icon={<PlusOutlined />}
+                                 onClick={() => setKeyModalTeam(team)}>Clé directe</Button>
+                       </Tooltip>
                      </Space>}>
           <Table rowKey="id" size="small" pagination={false}
                  columns={keyColumns(team)} dataSource={team.keys} />
@@ -413,7 +417,7 @@ export default function CodePage() {
         </Form>
       </Modal>
 
-      <Modal title={`Nouvelle clé — ${keyModalTeam?.name ?? ''}`} open={!!keyModalTeam}
+      <Modal title={`Clé directe — ${keyModalTeam?.name ?? ''}`} open={!!keyModalTeam}
              onOk={freshKey ? () => { setFreshKey(null); setKeyModalTeam(null); } : onCreateKey}
              okText={freshKey ? 'Fermer' : 'Créer'}
              cancelButtonProps={freshKey ? { style: { display: 'none' } } : undefined}
@@ -436,13 +440,13 @@ export default function CodePage() {
         ) : (
           <Form form={keyForm} layout="vertical">
             <Form.Item name="label" label="Label (dev / siège)" rules={[{ required: true }]}>
-              <Input placeholder="dev-alice" />
+              <Input placeholder="ci-pipeline, integration-test… (ou un email)" />
             </Form.Item>
           </Form>
         )}
       </Modal>
 
-      <Modal title={`Inviter des sièges — ${bulkModalTeam?.name ?? ''}`} open={!!bulkModalTeam}
+      <Modal title={`Inviter par email — ${bulkModalTeam?.name ?? ''}`} open={!!bulkModalTeam}
              onOk={bulkResults
                ? () => { setBulkModalTeam(null); setBulkResults(null); setBulkText(''); }
                : onBulkInvite}
