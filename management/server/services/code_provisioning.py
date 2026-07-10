@@ -218,6 +218,79 @@ def update_code_team_budget(*, code_team_id: str, new_budget: float, client=None
         return CodeTeam.get_by_id(code_team_id)
 
 
+def delete_code_team(*, code_team_id: str, client=None):
+    """Suppression d'une team. Deux comportements :
+
+    - Team VIERGE (aucune CodeKey jamais créée, donc zéro spend possible) :
+      hard delete — la row disparaît, la team LiteLLM aussi. Le cas
+      « créée par erreur ».
+    - Team avec historique : soft-archive — status='deleted', toutes les
+      clés non-révoquées passent 'revoked' (bloquées upstream best-effort,
+      le reconciler phase 1 rattrape), invites en attente supprimées.
+      Le spend et les snapshots restent (dashboard/audit intacts).
+
+    Dans les deux cas l'allocation budget est libérée immédiatement :
+    l'invariant Σ(team budgets) ne compte que les teams status='active'.
+
+    Si LiteLLM est down pendant un hard delete, on retombe en soft-archive
+    (sync_error posé) plutôt que de laisser une team orpheline upstream.
+
+    Race connue (même classe que celles notées dans code_reconcile) : un
+    create_code_key en vol entre notre exists() et le passage en 'deleted'
+    peut laisser une CodeKey orpheline — cadence admin humaine, acceptable.
+
+    Returns (mode, row) : ("hard", None) ou ("soft", CodeTeam archivée).
+    """
+    from api.db.db_models import DB, CodeTeam, CodeTeamMember, CodeKey, CodeKeyInvite
+    with DB.connection_context():
+        team = CodeTeam.get_or_none(CodeTeam.id == code_team_id)
+    if team is None or team.status != "active":
+        raise ValueError("code team not found")
+
+    with DB.connection_context():
+        with DB.atomic():
+            # Invites supprimées dans la MEME transaction que le passage en
+            # 'deleted' : un claim concurrent retombe sur un 404 propre.
+            CodeKeyInvite.delete().where(
+                (CodeKeyInvite.code_team_id == code_team_id)
+                & (CodeKeyInvite.claimed_key_id.is_null(True))).execute()
+            has_keys = CodeKey.select().where(
+                CodeKey.code_team_id == code_team_id).exists()
+            mode = "soft" if has_keys else "hard"
+            # desired state FIRST, comme partout dans ce module
+            CodeTeam.update(status="deleted", sync_status="pending").where(
+                CodeTeam.id == code_team_id).execute()
+            if mode == "soft":
+                CodeKey.update(status="revoked", sync_status="pending").where(
+                    (CodeKey.code_team_id == code_team_id)
+                    & (CodeKey.status != "revoked")).execute()
+
+    if mode == "soft":
+        # La team LiteLLM n'est PAS supprimée (historique de spend) ; on
+        # bloque juste ses clés. sync_status de la team repasse 'synced' :
+        # il n'y a rien d'autre à converger pour elle.
+        _sync_pending_keys_for_org(team.org_id, client=client)
+        _mark(CodeTeam, code_team_id, sync_status="synced", sync_error=None)
+        with DB.connection_context():
+            return mode, CodeTeam.get_by_id(code_team_id)
+
+    cl = _client(client)
+    try:
+        if team.litellm_team_id:
+            cl.delete_team(team.litellm_team_id)
+        with DB.connection_context():
+            CodeTeamMember.delete().where(
+                CodeTeamMember.code_team_id == code_team_id).execute()
+            CodeTeam.delete().where(CodeTeam.id == code_team_id).execute()
+        return mode, None
+    except LiteLLMError as e:
+        logger.warning("code_team %s hard delete deferred (gateway down): %s",
+                       code_team_id, e)
+        _mark(CodeTeam, code_team_id, sync_error=str(e)[:1000])
+        with DB.connection_context():
+            return "soft", CodeTeam.get_by_id(code_team_id)
+
+
 def create_code_key(*, code_team_id: str, label: str, owner_user_id: str | None,
                     created_by: str, client=None):
     """Returns (row, plain_key). plain_key is None when LiteLLM is down —

@@ -1,7 +1,7 @@
 import { useEffect, useState, useCallback } from 'react';
 import { useSearchParams } from 'react-router-dom';
 import { Table, Button, Card, Modal, Form, Input, InputNumber, App, Progress, Tag, Popconfirm, Space, Tooltip, Typography, Alert } from 'antd';
-import { PlusOutlined, StopOutlined, CopyOutlined, MailOutlined, ReloadOutlined } from '@ant-design/icons';
+import { PlusOutlined, StopOutlined, CopyOutlined, MailOutlined, ReloadOutlined, DeleteOutlined } from '@ant-design/icons';
 import api from '@/lib/api';
 import CodeDashboardSection, { fmtTokens } from './dashboard-section';
 
@@ -140,6 +140,19 @@ export default function CodePage() {
     } catch (err: unknown) {
       const msg = (err as { response?: { data?: { detail?: string } } })?.response?.data?.detail;
       message.error(msg ?? 'Échec de la révocation de la clé');
+    }
+  };
+
+  const onDeleteTeam = async (team: CodeTeam) => {
+    try {
+      const res = await api.delete(`/code/teams/${team.id}`);
+      message.success(res.data.deleted === 'hard'
+        ? 'Team supprimée'
+        : 'Team archivée — clés révoquées, historique de dépense conservé');
+      fetchOverview();
+    } catch (err: unknown) {
+      const msg = (err as { response?: { data?: { detail?: string } } })?.response?.data?.detail;
+      message.error(msg ?? 'Échec de la suppression de la team');
     }
   };
 
@@ -375,6 +388,15 @@ export default function CodePage() {
                          <Button size="small" icon={<PlusOutlined />}
                                  onClick={() => setKeyModalTeam(team)}>Clé directe</Button>
                        </Tooltip>
+                       <Popconfirm
+                         title="Supprimer cette team ?"
+                         description={(team.keys?.length ?? 0) > 0
+                           ? 'Ses clés seront révoquées et ses invitations annulées. L\'historique de dépense est conservé. Le budget alloué est libéré.'
+                           : 'Aucune clé créée : la team sera supprimée définitivement.'}
+                         okText="Supprimer" okButtonProps={{ danger: true }}
+                         onConfirm={() => onDeleteTeam(team)}>
+                         <Button size="small" danger icon={<DeleteOutlined />} />
+                       </Popconfirm>
                      </Space>}>
           <Table rowKey="id" size="small" pagination={false}
                  columns={keyColumns(team)} dataSource={team.keys} />
