@@ -372,6 +372,27 @@ def update_team(request: Request, team_id: str, body: CodeTeamUpdate,
     return _team_to_dict(team)
 
 
+@router.delete("/code/teams/{team_id}")
+def delete_team(request: Request, team_id: str, user_id: str = Depends(get_current_user_id)):
+    """Vierge (0 clé) -> hard delete ; sinon soft-archive (clés révoquées,
+    invites annulées, spend/snapshots conservés). Budget libéré immédiatement."""
+    from api.db.db_models import DB, CodeTeam
+    with DB.connection_context():
+        team = CodeTeam.get_or_none(CodeTeam.id == team_id)
+    if team is None or team.status != "active":
+        raise HTTPException(status_code=404, detail="Code team not found")
+    user = require_org_admin(team.org_id, user_id)
+    from management.server.services import code_provisioning as cp
+    try:
+        mode, _row = cp.delete_code_team(code_team_id=team_id)
+    except ValueError as e:
+        raise HTTPException(status_code=404, detail=str(e))
+    audit_svc.record(request=request, actor_user_id=user.id, action=audit_svc.CODE_TEAM_DELETE,
+                     org_id=team.org_id, resource_type="code_team", resource_id=team_id,
+                     details={"name": team.name, "mode": mode})
+    return {"team_id": team_id, "deleted": mode}
+
+
 @router.post("/code/teams/{team_id}/admins", status_code=status.HTTP_201_CREATED)
 def add_team_admin(request: Request, team_id: str, body: CodeTeamAdminAdd,
                    user_id: str = Depends(get_current_user_id)):

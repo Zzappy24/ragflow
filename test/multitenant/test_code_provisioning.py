@@ -51,6 +51,11 @@ class FakeLiteLLM:
         self.teams[team_id]["max_budget"] = max_budget
         self.calls.append(("update_team", team_id, max_budget))
 
+    def delete_team(self, team_id):
+        self._maybe_down()
+        self.teams.pop(team_id, None)
+        self.calls.append(("delete_team", team_id))
+
     def generate_key(self, *, team_id, alias):
         self._maybe_down()
         self.calls.append(("generate_key", alias))
@@ -222,3 +227,71 @@ def test_suspend_entitlement_fans_out_blocks(org_with_entitlement):
                           org_code_budget=100.0, budget_period="1mo",
                           actor_id="tester", client=fake)
     assert not fake.blocked
+
+
+def test_delete_virgin_team_hard_deletes(org_with_entitlement):
+    """0 clé jamais créée => hard delete : row DB supprimée, team LiteLLM aussi,
+    et le budget alloué est libéré immédiatement."""
+    from api.db.db_models import DB, CodeTeam
+    from management.server.services import code_provisioning as cp
+    fake = FakeLiteLLM()
+    team = cp.create_code_team(org_id=org_with_entitlement, name="oops", max_budget=60.0,
+                               model_access=[], created_by="tester", client=fake)
+    assert cp.allocated_budget(org_with_entitlement) == 60.0
+
+    mode, row = cp.delete_code_team(code_team_id=team.id, client=fake)
+    assert mode == "hard" and row is None
+    with DB.connection_context():
+        assert CodeTeam.get_or_none(CodeTeam.id == team.id) is None
+    assert team.litellm_team_id not in fake.teams
+    assert cp.allocated_budget(org_with_entitlement) == 0.0
+
+
+def test_delete_team_with_keys_soft_archives(org_with_entitlement):
+    """Clés existantes => soft-archive : status='deleted', clés révoquées et
+    bloquées upstream, invites pendantes supprimées, team LiteLLM CONSERVÉE
+    (historique de spend), budget libéré."""
+    import datetime
+    from api.db.db_models import DB, CodeKey, CodeKeyInvite
+    from common.misc_utils import get_uuid
+    from management.server.services import code_provisioning as cp
+    fake = FakeLiteLLM()
+    team = cp.create_code_team(org_id=org_with_entitlement, name="squad", max_budget=60.0,
+                               model_access=[], created_by="tester", client=fake)
+    key, _ = cp.create_code_key(code_team_id=team.id, label="dev", owner_user_id=None,
+                                created_by="tester", client=fake)
+    with DB.connection_context():
+        CodeKeyInvite.create(id=get_uuid(), code_team_id=team.id, email="a@b.co",
+                             token_hash=get_uuid() + get_uuid(),
+                             expires_at=datetime.datetime.now() + datetime.timedelta(hours=72),
+                             created_by="tester")
+
+    mode, row = cp.delete_code_team(code_team_id=team.id, client=fake)
+    assert mode == "soft"
+    assert row.status == "deleted" and row.sync_status == "synced"
+    with DB.connection_context():
+        assert CodeKey.get_by_id(key.id).status == "revoked"
+        assert not CodeKeyInvite.select().where(CodeKeyInvite.code_team_id == team.id).exists()
+    assert key.litellm_key_id in fake.blocked
+    assert team.litellm_team_id in fake.teams  # spend history preserved upstream
+    assert cp.allocated_budget(org_with_entitlement) == 0.0
+    # une team archivée ne peut pas être re-supprimée
+    with pytest.raises(ValueError, match="not found"):
+        cp.delete_code_team(code_team_id=team.id, client=fake)
+
+
+def test_delete_virgin_team_gateway_down_falls_back_to_soft(org_with_entitlement):
+    """LiteLLM down pendant un hard delete => on n'orpheline pas la team
+    upstream : la row reste en soft-archive avec sync_error, budget libéré."""
+    from api.db.db_models import DB, CodeTeam
+    from management.server.services import code_provisioning as cp
+    fake = FakeLiteLLM()
+    team = cp.create_code_team(org_id=org_with_entitlement, name="t", max_budget=10.0,
+                               model_access=[], created_by="tester", client=fake)
+    fake.down = True
+    mode, row = cp.delete_code_team(code_team_id=team.id, client=fake)
+    assert mode == "soft"
+    with DB.connection_context():
+        kept = CodeTeam.get_by_id(team.id)
+    assert kept.status == "deleted" and kept.sync_error
+    assert cp.allocated_budget(org_with_entitlement) == 0.0

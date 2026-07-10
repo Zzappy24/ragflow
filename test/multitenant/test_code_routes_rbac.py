@@ -331,3 +331,34 @@ def test_overview_exposes_gateway_url_when_configured(panel_client, org_with_ent
     monkeypatch.setattr(admin_settings, "CODE_GATEWAY_PUBLIC_URL", "")
     ov = client.get(f"/api/admin/orgs/{org_id}/code/overview", headers=_h(tokens["org_admin"])).json()
     assert ov["gateway_url"] is None
+
+
+def test_delete_team_org_admin_only_and_archives(panel_client, org_with_entitlement_and_users):
+    """DELETE /code/teams : plain member -> 403 ; org admin -> hard (vierge)
+    puis 404 sur re-suppression ; soft quand une clé existe."""
+    client, fake = panel_client
+    org_id, tokens = org_with_entitlement_and_users
+
+    team = client.post(f"/api/admin/orgs/{org_id}/code/teams",
+                       json={"name": "todel", "max_budget": 10.0, "model_access": []},
+                       headers=_h(tokens["org_admin"])).json()
+
+    assert client.delete(f"/api/admin/code/teams/{team['id']}",
+                         headers=_h(tokens["plain_member"])).status_code == 403
+
+    r = client.delete(f"/api/admin/code/teams/{team['id']}", headers=_h(tokens["org_admin"]))
+    assert r.status_code == 200 and r.json()["deleted"] == "hard"
+    assert client.delete(f"/api/admin/code/teams/{team['id']}",
+                         headers=_h(tokens["org_admin"])).status_code == 404
+
+    # avec une clé -> soft-archive, et la team disparaît de l'overview
+    team2 = client.post(f"/api/admin/orgs/{org_id}/code/teams",
+                        json={"name": "todel2", "max_budget": 10.0, "model_access": []},
+                        headers=_h(tokens["org_admin"])).json()
+    client.post(f"/api/admin/code/teams/{team2['id']}/keys",
+                json={"label": "dev"}, headers=_h(tokens["org_admin"]))
+    r = client.delete(f"/api/admin/code/teams/{team2['id']}", headers=_h(tokens["org_admin"]))
+    assert r.status_code == 200 and r.json()["deleted"] == "soft"
+    ov = client.get(f"/api/admin/orgs/{org_id}/code/overview",
+                    headers=_h(tokens["org_admin"])).json()
+    assert team2["id"] not in [t["id"] for t in ov["teams"]]

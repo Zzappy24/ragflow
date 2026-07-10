@@ -77,6 +77,11 @@ class LiteLLMClient:
     def team_info(self, team_id: str) -> dict:
         return self._request("GET", "/team/info", params={"team_id": team_id})
 
+    def delete_team(self, team_id: str) -> None:
+        """Hard delete upstream — reserved for virgin teams (no key ever created,
+        hence zero spend history to preserve)."""
+        self._request("POST", "/team/delete", json={"team_ids": [team_id]})
+
     # ---- keys ----
     def generate_key(self, *, team_id: str, alias: str) -> dict:
         data = self._request("POST", "/key/generate",
