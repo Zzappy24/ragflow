@@ -108,6 +108,8 @@ PATH=/opt/homebrew/bin:$PATH npm run dev
 
 ## 5. Produit Code — prérequis prod
 
+> **Helm LiteLLM** : les values/HTTPRoute vivent dans le repo infra (pas ici). Référence : chart OFFICIEL `oci://ghcr.io/berriai/litellm-helm` (branche main — PAS `litellm_internal_staging`), image `litellm-database` pinnée. **Tout bump d'image doit repasser `test/multitenant/test_code_litellm_integration.py`** (repointer le tag dans `docker/litellm-test/docker-compose.yml`). Validés : main-v1.74.0-stable, v1.91.1 (drift : budget /v1 400→429).
+
 ### a. Variables d'environnement SMTP + URLs publiques
 
 | Variable | Description | Exemple |
