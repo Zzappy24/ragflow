@@ -97,6 +97,17 @@ spec:
                 name: {{ .Release.Name }}-app-config
             - secretRef:
                 name: ragflow-app-secrets
+            # CUSTOM B2B SaaS — SMTP du panel (ADMIN_SMTP_HOST/PORT/USERNAME/
+            # PASSWORD/FROM/TLS). Optional : sans ce secret, les emails sont
+            # désactivés proprement (liens affichés au front en fallback).
+            # Activer = créer le secret, redémarrer le pod, rien d'autre :
+            #   kubectl -n <ns> create secret generic ragflow-mgmt-smtp \
+            #     --from-literal=ADMIN_SMTP_HOST=... --from-literal=ADMIN_SMTP_PORT=587 \
+            #     --from-literal=ADMIN_SMTP_USERNAME=... --from-literal=ADMIN_SMTP_PASSWORD=... \
+            #     --from-literal=ADMIN_SMTP_FROM="Cyllene <no-reply@cyllene.com>"
+            - secretRef:
+                name: ragflow-mgmt-smtp
+                optional: true
           env:
             - name: POD_NAME
               valueFrom: { fieldRef: { fieldPath: metadata.name } }
@@ -122,6 +133,26 @@ spec:
             # ConfigMap via envFrom above) is the shared secret used in
             # the X-Internal-Secret header. RAGFLOW_API_URL points at
             # the api service.
+
+            # CUSTOM B2B SaaS — produit Code : data plane LiteLLM (headless).
+            # Le secret master-key est `optional: true` : tant que le data
+            # plane n'est pas déployé, le panel boote normalement et l'onglet
+            # Code reste dormant (« non activé » partout, aucun crash).
+            - name: LITELLM_BASE_URL
+              value: {{ .Values.code.litellmBaseUrl | quote }}
+            - name: LITELLM_MASTER_KEY
+              valueFrom:
+                secretKeyRef:
+                  name: {{ .Values.code.masterKeySecretName }}
+                  key: {{ .Values.code.masterKeySecretKey }}
+                  optional: true
+            {{- if .Values.code.gatewayPublicUrl }}
+            - name: ADMIN_CODE_GATEWAY_PUBLIC_URL
+              value: {{ .Values.code.gatewayPublicUrl | quote }}
+            {{- end }}
+            # Base publique du panel — liens de claim des sièges code.
+            - name: ADMIN_PANEL_PUBLIC_URL
+              value: "{{ .Values.global.scheme | default "https" }}://ragflow-management.{{ trimPrefix "ragflow." .Values.global.hostname }}"
 
           resources:
             {{- toYaml .Values.resources | nindent 12 }}
