@@ -1,0 +1,115 @@
+# =============================================================================
+#  LiteLLM data plane du produit Code — values pour le chart OFFICIEL
+#  oci://ghcr.io/berriai/litellm-helm  (source: BerriAI/litellm main, helm/litellm-helm)
+# -----------------------------------------------------------------------------
+#  ⚠️ NE PAS utiliser le chart de la branche `litellm_internal_staging`
+#  (split gateway/backend/ui, images -rc) : chantier interne BerriAI, non
+#  releasé, contrat non validé par notre suite d'intégration.
+#
+#  Version d'image VALIDÉE par test/multitenant/test_code_litellm_integration.py
+#  (4/4 le 2026-07-10 : /key/generate token, /spend/logs summarize=false,
+#  block, budget temps réel — seul drift vs 1.74 : budget 400→429 sur /v1).
+#  Tout bump d'image DOIT repasser cette suite avant déploiement.
+# =============================================================================
+
+image:
+  # litellm-database = image avec Prisma : exécute les migrations de schéma au
+  # boot (pas de job de migration séparé dans le chart officiel).
+  repository: ghcr.io/berriai/litellm-database
+  tag: "v1.91.1"          # pin — bump uniquement via la suite d'intégration
+  pullPolicy: IfNotPresent
+
+fullnameOverride: "litellm"
+
+replicaCount: 1
+# ⚠️ >1 replica exige Redis (cohérence des budgets/rate-limits entre pods).
+# Tant que redis.enabled=false ci-dessous, rester à 1.
+
+# Master key depuis un Secret existant (créé hors chart — voir README) :
+#   kubectl create secret generic litellm-master-key-secret \
+#     --from-literal=master-key="sk-$(openssl rand -hex 32)"
+masterkeySecretName: "litellm-master-key-secret"
+masterkeySecretKey: "master-key"
+
+proxyConfigMap:
+  create: true
+
+# La config proxy — VERSIONNÉE ICI, pas en DB (STORE_MODEL_IN_DB volontairement
+# absent) : la grille tarifaire et le catalogue de modèles passent en revue de
+# code, pas à la souris dans une UI.
+proxy_config:
+  model_list:
+    # ---- Modèle code sur le vLLM H200 -------------------------------------
+    # TODO(deploy): remplacer api_base par le Service K8s réel du vLLM H200
+    # et ajuster le nom du modèle servi par vLLM (`served-model-name`).
+    - model_name: qwen-code
+      litellm_params:
+        model: openai/Qwen/Qwen3.6-Coder        # préfixe openai/ = endpoint OpenAI-compatible (vLLM)
+        api_base: http://vllm-code-h200.vllm.svc.cluster.local/v1   # TODO(deploy)
+        api_key: not-used                        # vLLM sans auth interne cluster
+      model_info:
+        # ⚠️ SANS ces coûts, spend = 0 partout dans le panel (budgets inopérants).
+        # C'est TA grille tarifaire client (€/token), pas un coût d'infra.
+        input_cost_per_token: 0.000002           # TODO(pricing): valider avec le CEO
+        output_cost_per_token: 0.000006          # TODO(pricing)
+  litellm_settings:
+    telemetry: false
+  general_settings:
+    master_key: os.environ/PROXY_MASTER_KEY      # câblé par le chart depuis le Secret
+
+service:
+  type: ClusterIP
+  port: 4000
+# Pas d'Ingress via le chart : l'exposition publique se fait par HTTPRoute
+# Envoy (voir httproute.yaml à côté) et n'expose QUE /v1/* — l'API de
+# management (/team, /key, /spend) reste cluster-interne, seule la master key
+# du mgmt-backend y accède.
+ingress:
+  enabled: false
+
+resources:
+  requests:
+    cpu: 400m
+    memory: 1Gi
+  limits:
+    cpu: "1"
+    memory: 2Gi
+
+# Placement : mêmes contraintes que le reste du stack alterai — les CPU
+# workers sont saturés (cf. values-alterai.yaml ragflow), on suit ragflow-api
+# sur le nœud gpt. À revoir si un nœud "services" apparaît.
+affinity:
+  nodeAffinity:
+    requiredDuringSchedulingIgnoredDuringExecution:
+      nodeSelectorTerms:
+        - matchExpressions:
+            - key: node-role.kubernetes.io/gpt
+              operator: In
+              values: ["true"]
+tolerations:
+  - key: nvidia.com/gpu
+    operator: Exists
+    effect: NoSchedule
+
+db:
+  useExisting: false
+  deployStandalone: true    # postgres bitnami standalone (subchart), PVC dédié
+
+postgresql:
+  architecture: standalone
+  auth:
+    username: litellm
+    database: litellm
+    # ⚠️ JAMAIS de mot de passe en clair ici (audit souveraineté).
+    # Créer le secret AVANT l'install (clés attendues par bitnami) :
+    #   kubectl create secret generic litellm-postgres-secret \
+    #     --from-literal=password="$(openssl rand -hex 24)" \
+    #     --from-literal=postgres-password="$(openssl rand -hex 24)"
+    existingSecret: "litellm-postgres-secret"
+  primary:
+    persistence:
+      enabled: true
+      size: 10Gi
+
+redis:
+  enabled: false   # requis seulement si replicaCount > 1
