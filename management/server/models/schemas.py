@@ -116,6 +116,7 @@ class MemberResponse(BaseModel):
     nickname: str | None = None
     role: str
     create_time: datetime | None = None
+    is_active: str = "1"  # '0' = invitation jamais consommée
 
 
 # -- User provisioning -------------------------------------------------------

@@ -157,6 +157,23 @@ export default function CodePage() {
     }
   };
 
+  const onResendAll = async (team: CodeTeam) => {
+    try {
+      const res = await api.post(`/code/teams/${team.id}/invites/resend-all`);
+      const sent = (res.data as BulkResult[]).filter((r) => r.email_sent).length;
+      message.success(`${res.data.length} invitation(s) re-générée(s), ${sent} email(s) envoyé(s)`);
+      // Réutilise le modal de résultats du bulk pour exposer les liens fallback.
+      if ((res.data as BulkResult[]).some((r) => !r.email_sent)) {
+        setBulkModalTeam(team);
+        setBulkResults(res.data);
+      }
+      fetchInvites(team.id);
+    } catch (err: unknown) {
+      const msg = (err as { response?: { data?: { detail?: string } } })?.response?.data?.detail;
+      message.error(msg ?? 'Échec du renvoi groupé');
+    }
+  };
+
   const onResend = async (inviteId: string, teamId: string) => {
     try {
       const res = await api.post(`/code/invites/${inviteId}/resend`);
@@ -360,7 +377,14 @@ export default function CodePage() {
 
           {(invitesByTeam[team.id] ?? []).length > 0 && (
             <div className="mt-3">
-              <Typography.Text type="secondary">Invitations en attente</Typography.Text>
+              <Space>
+                <Typography.Text type="secondary">Invitations en attente</Typography.Text>
+                <Popconfirm
+                  title="Re-générer et renvoyer TOUTES les invitations pendantes ? (les anciens liens seront invalidés, l'expiration repart de 72 h)"
+                  onConfirm={() => onResendAll(team)}>
+                  <Button size="small" icon={<MailOutlined />}>Renvoyer tout</Button>
+                </Popconfirm>
+              </Space>
               <Table rowKey="id" size="small" pagination={false} showHeader={false}
                      className="mt-1"
                      dataSource={invitesByTeam[team.id]}

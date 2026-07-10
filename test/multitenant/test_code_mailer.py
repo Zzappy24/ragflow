@@ -204,3 +204,86 @@ def test_post_users_sends_invite_email(panel_client, org_with_entitlement_and_us
         if uid:
             client.delete(f"/api/admin/users/{uid}", headers=_h(tokens["superuser"]))
         client.delete(f"/api/admin/orgs/{org_id}/workspaces/{ws_id}", headers=_h(tokens["org_admin"]))
+
+
+def test_resend_invite_pending_user(panel_client, org_with_entitlement_and_users, monkeypatch):  # noqa: F811
+    """POST /users/{uid}/resend-invite : re-mint pour un user inactif ; 409 si actif ; 403 membre simple."""
+    import uuid
+
+    import httpx
+
+    from management.server.routers import users as users_router
+
+    client, _ = panel_client
+    org_id, tokens = org_with_entitlement_and_users
+    sent = {}
+
+    async def fake_send(to, subject, body_text):
+        sent["to"] = to
+        sent["body"] = body_text
+        return True
+
+    monkeypatch.setattr(users_router, "send_mail", fake_send, raising=False)
+
+    class _FakeInviteResponse:
+        def raise_for_status(self):
+            pass
+
+        def json(self):
+            return {"code": 0, "data": {"code": "fresh-invite-code"}}
+
+    class _FakeAsyncClient:
+        async def __aenter__(self):
+            return self
+
+        async def __aexit__(self, *exc):
+            return False
+
+        async def post(self, *args, **kwargs):
+            return _FakeInviteResponse()
+
+    monkeypatch.setattr(httpx, "AsyncClient", _FakeAsyncClient)
+
+    ws_resp = client.post(
+        f"/api/admin/orgs/{org_id}/workspaces",
+        json={"name": f"resend-test-ws-{uuid.uuid4().hex[:6]}"},
+        headers=_h(tokens["org_admin"]),
+    )
+    assert ws_resp.status_code == 201, ws_resp.text
+    ws_id = ws_resp.json()["id"]
+
+    email = f"resend-{uuid.uuid4().hex[:8]}@client.fr"
+    uid = None
+    try:
+        r = client.post(
+            "/api/admin/users",
+            json={"email": email, "nickname": "Resend Target", "org_id": org_id, "org_role": "member"},
+            headers=_h(tokens["superuser"]),
+        )
+        assert r.status_code in (200, 201), r.text
+        uid = r.json()["user_id"]
+        sent.clear()
+
+        # membre simple → 403
+        assert client.post(f"/api/admin/users/{uid}/resend-invite",
+                           headers=_h(tokens["plain_member"])).status_code == 403
+
+        # org admin → 200, email renvoyé avec le nouveau lien
+        r2 = client.post(f"/api/admin/users/{uid}/resend-invite", headers=_h(tokens["org_admin"]))
+        assert r2.status_code == 200, r2.text
+        body = r2.json()
+        assert body["email_sent"] is True
+        assert sent["to"] == email
+        assert body["invite_url"] in sent["body"]
+        assert "fresh-invite-code" in body["invite_url"]
+
+        # user devenu actif → 409
+        from api.db.db_models import DB, User
+        with DB.connection_context():
+            User.update(is_active="1").where(User.id == uid).execute()
+        assert client.post(f"/api/admin/users/{uid}/resend-invite",
+                           headers=_h(tokens["org_admin"])).status_code == 409
+    finally:
+        if uid:
+            client.delete(f"/api/admin/users/{uid}", headers=_h(tokens["superuser"]))
+        client.delete(f"/api/admin/orgs/{org_id}/workspaces/{ws_id}", headers=_h(tokens["org_admin"]))

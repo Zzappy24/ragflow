@@ -495,6 +495,39 @@ async def resend_invite(request: Request, invite_id: str, user_id: str = Depends
     return item
 
 
+@router.post("/code/teams/{team_id}/invites/resend-all")
+async def resend_all_invites(request: Request, team_id: str, user=Depends(require_code_team_admin)):
+    """Re-mint + renvoie TOUTES les invitations pendantes de la team (y compris
+    expirées — regenerate_token rafraîchit le TTL, c'est le cas d'usage : un
+    lot envoyé vendredi et mort lundi, ou un SMTP en panne au premier envoi)."""
+    from api.db.db_models import DB, CodeKeyInvite
+    from management.server.services import code_invites as ci
+    from management.server.services.mailer import send_mail
+
+    with DB.connection_context():
+        rows = list(CodeKeyInvite.select().where(
+            (CodeKeyInvite.code_team_id == team_id) & (CodeKeyInvite.claimed_key_id.is_null(True))))
+
+    results = []
+    for inv in rows:
+        token = ci.regenerate_token(inv.id)
+        if token is None:  # claimed entre-temps — on l'ignore proprement
+            continue
+        url = ci.claim_url(token)
+        email_sent = bool(admin_settings.PANEL_PUBLIC_URL) and await send_mail(
+            inv.email, "Rappel — Invitation Code product",
+            _invite_email_body(url, admin_settings.CODE_GATEWAY_PUBLIC_URL or None, reminder=True))
+        item = {"invite_id": inv.id, "email": inv.email, "email_sent": email_sent}
+        if not email_sent:
+            item["claim_url"] = url
+        results.append(item)
+
+    audit_svc.record(request=request, actor_user_id=user.id, action=audit_svc.CODE_SEAT_INVITE,
+                     org_id=None, resource_type="code_team", resource_id=team_id,
+                     details={"resend_all": True, "count": len(results)})
+    return results
+
+
 @router.post("/code/keys/{key_id}/rotate", status_code=status.HTTP_201_CREATED)
 async def rotate_key(request: Request, key_id: str, user_id: str = Depends(get_current_user_id)):
     """Revoke the existing key and re-invite the same email (a fresh seat is

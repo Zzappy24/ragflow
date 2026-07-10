@@ -544,3 +544,49 @@ def test_resend_regenerates_token(panel_client, rbac_org, monkeypatch):  # noqa:
     # already claimed -> resend now refused
     r3 = client.post(f"/api/admin/code/invites/{invite_id}/resend", headers=_h(tokens["org_admin"]))
     assert r3.status_code == 409
+
+
+def test_resend_all_regenerates_pending_including_expired(panel_client, rbac_org, monkeypatch):  # noqa: F811
+    """resend-all : re-mint chaque invitation pendante (même expirée), les anciens liens meurent."""
+    import datetime
+
+    from api.db.db_models import DB, CodeKeyInvite
+    from management.server.config import settings as _adm
+
+    monkeypatch.setattr(_adm, "PANEL_PUBLIC_URL", "https://admin.test.example")
+
+    async def fake_send_mail(to, subject, body_text):
+        return True
+
+    import management.server.services.mailer as mailer_module
+    monkeypatch.setattr(mailer_module, "send_mail", fake_send_mail)
+    client, fake = panel_client
+    org_id, tokens = rbac_org
+
+    team = client.post(f"/api/admin/orgs/{org_id}/code/teams",
+                       json={"name": "s", "max_budget": 10.0, "model_access": []},
+                       headers=_h(tokens["org_admin"])).json()
+    res = client.post(f"/api/admin/code/teams/{team['id']}/keys/bulk",
+                      json={"emails": ["ra1@ex.fr", "ra2@ex.fr"]},
+                      headers=_h(tokens["org_admin"])).json()
+    assert len(res) == 2
+
+    # expire la première artificiellement
+    past = datetime.datetime.now(datetime.timezone.utc).replace(tzinfo=None) - datetime.timedelta(days=1)
+    with DB.connection_context():
+        CodeKeyInvite.update(expires_at=past).where(CodeKeyInvite.id == res[0]["invite_id"]).execute()
+
+    # membre simple → 403
+    assert client.post(f"/api/admin/code/teams/{team['id']}/invites/resend-all",
+                       headers=_h(tokens["plain_member"])).status_code == 403
+
+    out = client.post(f"/api/admin/code/teams/{team['id']}/invites/resend-all",
+                      headers=_h(tokens["org_admin"])).json()
+    assert len(out) == 2
+    assert all(o["email_sent"] for o in out)
+
+    # l'invitation expirée est revivifiée (expiry futur)
+    with DB.connection_context():
+        inv = CodeKeyInvite.get_by_id(res[0]["invite_id"])
+    now = datetime.datetime.now(datetime.timezone.utc).replace(tzinfo=None)
+    assert inv.expires_at > now

@@ -32,6 +32,43 @@ from management.server.services.mailer import send_mail
 router = APIRouter()
 
 
+async def _mint_invite_url(target_user_id: str) -> str:
+    """Mint (or re-mint) an invite code for a user via the RAGFlow internal API.
+
+    Used by both the initial provisioning and the resend route — re-minting
+    for an existing pending user simply issues a fresh code with a fresh TTL.
+    """
+    import httpx
+    try:
+        async with httpx.AsyncClient() as client:
+            resp = await client.post(
+                # Path migrated in upstream RESTful API refactor: old /v1/user/internal/invite/prepare
+                # → new /api/v1/internal/invite/prepare (registered in api/apps/restful_apis/user_api.py).
+                f"{settings.RAGFLOW_API_URL}/api/v1/internal/invite/prepare",
+                json={"user_id": target_user_id, "ttl": settings.INVITE_TOKEN_EXPIRE_SECONDS},
+                timeout=10,
+            )
+        resp.raise_for_status()
+        data = resp.json()
+        if data.get("code") != 0:
+            raise HTTPException(status_code=502, detail=data.get("message", "Invite prepare failed"))
+        invite_code = data["data"]["code"]
+    except HTTPException:
+        raise
+    except Exception as e:
+        raise HTTPException(status_code=502, detail=f"RAGFlow invite prepare failed: {e}")
+    return f"{settings.RAGFLOW_BASE_URL}/set-password?invite_code={invite_code}"
+
+
+def _invite_email_text(nickname: str, invite_url: str) -> str:
+    return (
+        f"Bonjour {nickname},\n\n"
+        f"Un compte vous a été créé. Définissez votre mot de passe ici :\n{invite_url}\n\n"
+        f"Ce lien expire dans {settings.INVITE_TOKEN_EXPIRE_SECONDS // 3600} heures.\n\n"
+        "— L'équipe Cyllene"
+    )
+
+
 @router.post(
     "/users",
     response_model=UserProvisionResponse,
@@ -71,37 +108,12 @@ async def provision_user_route(
     except ValueError as e:
         raise HTTPException(status_code=400, detail=str(e))
 
-    import httpx
-    try:
-        async with httpx.AsyncClient() as client:
-            resp = await client.post(
-                # Path migrated in upstream RESTful API refactor: old /v1/user/internal/invite/prepare
-                # → new /api/v1/internal/invite/prepare (registered in api/apps/restful_apis/user_api.py).
-                f"{settings.RAGFLOW_API_URL}/api/v1/internal/invite/prepare",
-                json={"user_id": new_user_id, "ttl": settings.INVITE_TOKEN_EXPIRE_SECONDS},
-                timeout=10,
-            )
-        resp.raise_for_status()
-        data = resp.json()
-        if data.get("code") != 0:
-            raise HTTPException(status_code=502, detail=data.get("message", "Invite prepare failed"))
-        invite_code = data["data"]["code"]
-    except HTTPException:
-        raise
-    except Exception as e:
-        raise HTTPException(status_code=502, detail=f"RAGFlow invite prepare failed: {e}")
-
-    invite_url = f"{settings.RAGFLOW_BASE_URL}/set-password?invite_code={invite_code}"
+    invite_url = await _mint_invite_url(new_user_id)
 
     email_sent = await send_mail(
         to=body.email,
         subject="Votre accès à la plateforme Cyllene",
-        body_text=(
-            f"Bonjour {body.nickname},\n\n"
-            f"Un compte vous a été créé. Définissez votre mot de passe ici :\n{invite_url}\n\n"
-            f"Ce lien expire dans {settings.INVITE_TOKEN_EXPIRE_SECONDS // 3600} heures.\n\n"
-            "— L'équipe Cyllene"
-        ),
+        body_text=_invite_email_text(body.nickname, invite_url),
     )
 
     audit_svc.record(
@@ -121,6 +133,59 @@ async def provision_user_route(
         expires_in=settings.INVITE_TOKEN_EXPIRE_SECONDS,
         email_sent=email_sent,
     )
+
+
+@router.post("/users/{uid}/resend-invite")
+async def resend_invite(request: Request, uid: str, user_id: str = Depends(get_current_user_id)):
+    """Re-mint + renvoie l'invitation d'un user encore inactif (lien expiré/perdu/spam).
+
+    Remplace l'ancien chemin « purge + re-création » : le code d'invitation est
+    simplement re-minté pour le user EXISTANT avec un TTL frais. Refusé (409)
+    si le compte est déjà actif — il n'y a rien à renvoyer.
+    RBAC : org admin d'une org du user (ou superuser).
+    """
+    from api.db.services.user_service import UserService
+    from api.db.services.org_service import OrgMemberService
+
+    ok, target = UserService.get_by_id(uid)
+    if not ok or not target or target.status != "1":
+        raise HTTPException(status_code=404, detail="User not found")
+    if str(getattr(target, "is_active", "0")) == "1":
+        raise HTTPException(status_code=409, detail="Ce compte est déjà actif — rien à renvoyer")
+
+    # Caller must be superuser or org_admin of at least one org the target belongs to.
+    ok_c, caller = UserService.get_by_id(user_id)
+    memberships = OrgMemberService.list_orgs_for_user(uid)
+    if not (ok_c and caller and caller.is_superuser):
+        caller = None
+        last_err = None
+        for m in memberships:
+            try:
+                caller = require_org_admin(m.org_id, user_id)
+                break
+            except HTTPException as e:
+                last_err = e
+        if caller is None:
+            raise last_err or HTTPException(status_code=403, detail="Org admin access required")
+
+    invite_url = await _mint_invite_url(uid)
+    email_sent = await send_mail(
+        to=target.email,
+        subject="Votre accès à la plateforme Cyllene (nouveau lien)",
+        body_text=_invite_email_text(target.nickname or target.email, invite_url),
+    )
+
+    audit_svc.record(
+        request=request,
+        actor_user_id=user_id,
+        action=audit_svc.USER_INVITE,
+        org_id=memberships[0].org_id if memberships else None,
+        resource_type="user",
+        resource_id=uid,
+        details={"target_display_name": target.email, "email": target.email, "resend": True},
+    )
+    return {"user_id": uid, "email": target.email, "invite_url": invite_url,
+            "expires_in": settings.INVITE_TOKEN_EXPIRE_SECONDS, "email_sent": email_sent}
 
 
 @router.delete("/users/{uid}", status_code=status.HTTP_204_NO_CONTENT)
