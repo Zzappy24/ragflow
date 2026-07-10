@@ -255,5 +255,5 @@ vllm:
 # CUSTOM B2B SaaS — produit Code (data plane LiteLLM, repo infra argo-helm/litellm-helm)
 ragflow-management-backend:
   code:
-    litellmBaseUrl: "http://litellm.rag-new2.svc.cluster.local:4000"
+    litellmBaseUrl: "http://litellm.litellm.svc.cluster.local:4000"
     gatewayPublicUrl: "http://litellm.cyllene.cloud/v1"  # TODO: passer en https dès le cert devops
