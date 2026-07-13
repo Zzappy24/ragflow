@@ -556,21 +556,26 @@ export default function OrgDetailPage() {
     });
   };
 
-  // Export CSV mensuel de la conso tokens RAG (miroir de l'export Code).
-  const onExportRagCsv = async (month?: string) => {
+  // Facturation : exports CSV mensuels des deux produits, un seul endroit.
+  const downloadCsv = async (path: string, filename: string, month?: string) => {
     try {
-      const res = await api.get(`/orgs/${orgId}/usage/export`,
-        { params: month ? { month } : {}, responseType: 'blob' });
+      const res = await api.get(path, { params: month ? { month } : {}, responseType: 'blob' });
       const url = URL.createObjectURL(res.data as Blob);
       const a = document.createElement('a');
       a.href = url;
-      a.download = `rag-usage-${month ?? 'mois-courant'}.csv`;
+      a.download = filename;
       a.click();
       URL.revokeObjectURL(url);
     } catch {
       message.error("Échec de l'export CSV");
     }
   };
+  const monthChoices = (fn: (m?: string) => void) => [
+    { key: 'cur', label: 'Mois courant', onClick: () => fn() },
+    { key: 'prev', label: 'Mois précédent',
+      onClick: () => { const d = new Date(); d.setMonth(d.getMonth() - 1);
+        fn(`${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, '0')}`); } },
+  ];
 
   const refreshQuota = useCallback(() => {
     if (!orgId) return;
@@ -737,24 +742,10 @@ export default function OrgDetailPage() {
                 {/* Token quota */}
                 <Card
                   title={<span>Token quota {quota?.overage_today_workspace_ids?.length ? <Tag color="red" icon={<WarningOutlined />}>Overage today</Tag> : null}</span>}
-                  extra={(
+                  extra={user?.is_superuser && (
                     <Space>
-                      <Tooltip title="Conso tokens du mois par workspace/modèle/jour (CSV)">
-                        <Dropdown menu={{ items: [
-                          { key: 'cur', label: 'Mois courant', onClick: () => onExportRagCsv() },
-                          { key: 'prev', label: 'Mois précédent',
-                            onClick: () => { const d = new Date(); d.setMonth(d.getMonth() - 1);
-                              onExportRagCsv(`${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, '0')}`); } },
-                        ] }}>
-                          <Button size="small" icon={<DownloadOutlined />}>Exporter</Button>
-                        </Dropdown>
-                      </Tooltip>
-                      {user?.is_superuser && (
-                        <>
-                          <Button size="small" onClick={handleResetPeriod}>Reset period</Button>
-                          <Button size="small" type="primary" loading={savingQuota} onClick={handleSaveQuota}>Save</Button>
-                        </>
-                      )}
+                      <Button size="small" onClick={handleResetPeriod}>Reset period</Button>
+                      <Button size="small" type="primary" loading={savingQuota} onClick={handleSaveQuota}>Save</Button>
                     </Space>
                   )}
                 >
@@ -859,6 +850,33 @@ export default function OrgDetailPage() {
                   }) : (
                     <Alert message="No workspaces in this organisation" type="info" showIcon />
                   )}
+                </Card>
+
+                {/* Facturation — LE point d'entrée compta : les exports
+                    mensuels des deux produits au même endroit. */}
+                <Card title="Facturation — exports mensuels" className="mt-4">
+                  <Space size="large" wrap>
+                    <Space direction="vertical" size={2}>
+                      <Typography.Text strong>RAG (tokens)</Typography.Text>
+                      <Typography.Text type="secondary" className="text-xs">
+                        date ; workspace ; BU ; modèle ; type ; tokens
+                      </Typography.Text>
+                      <Dropdown menu={{ items: monthChoices((m) =>
+                        downloadCsv(`/orgs/${orgId}/usage/export`, `rag-usage-${m ?? 'mois-courant'}.csv`, m)) }}>
+                        <Button icon={<DownloadOutlined />}>Exporter RAG</Button>
+                      </Dropdown>
+                    </Space>
+                    <Space direction="vertical" size={2}>
+                      <Typography.Text strong>Code (€)</Typography.Text>
+                      <Typography.Text type="secondary" className="text-xs">
+                        date ; team ; dépense cumulée du cycle ; budget ; tokens ; erreurs
+                      </Typography.Text>
+                      <Dropdown menu={{ items: monthChoices((m) =>
+                        downloadCsv(`/orgs/${orgId}/code/export`, `code-usage-${m ?? 'mois-courant'}.csv`, m)) }}>
+                        <Button icon={<DownloadOutlined />}>Exporter Code</Button>
+                      </Dropdown>
+                    </Space>
+                  </Space>
                 </Card>
               </div>
             ),
