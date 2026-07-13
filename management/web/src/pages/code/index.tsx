@@ -1,7 +1,7 @@
 import { useEffect, useState, useCallback } from 'react';
-import { useSearchParams } from 'react-router-dom';
-import { Table, Button, Card, Dropdown, Modal, Form, Input, InputNumber, App, Progress, Tag, Popconfirm, Space, Tooltip, Typography, Alert } from 'antd';
-import { PlusOutlined, StopOutlined, CopyOutlined, MailOutlined, ReloadOutlined, DeleteOutlined, EditOutlined, UserAddOutlined, DownloadOutlined } from '@ant-design/icons';
+import { useNavigate, useSearchParams } from 'react-router-dom';
+import { Table, Button, Card, Modal, Form, Input, InputNumber, App, Progress, Tag, Popconfirm, Space, Tooltip, Typography, Alert } from 'antd';
+import { PlusOutlined, StopOutlined, CopyOutlined, MailOutlined, ReloadOutlined, DeleteOutlined, EditOutlined, UserAddOutlined } from '@ant-design/icons';
 import api from '@/lib/api';
 import CodeDashboardSection, { fmtTokens } from './dashboard-section';
 
@@ -37,8 +37,15 @@ export default function CodePage({ orgId: orgIdProp }: { orgId?: string } = {}) 
   // ou embarqué comme onglet de la fiche organisation (orgId en prop —
   // pas de landing, pas de back-link, pas de dashboard global).
   const embedded = !!orgIdProp;
-  const [searchParams, setSearchParams] = useSearchParams();
+  const [searchParams] = useSearchParams();
+  const navigate = useNavigate();
   const orgId = orgIdProp || searchParams.get('org') || '';
+  // La vue org vit UNIQUEMENT dans la fiche organisation (onglet Code) :
+  // le menu Code est la vue produit/ops (dashboard + annuaire). Les anciens
+  // liens /admin/code?org=... redirigent vers la fiche.
+  useEffect(() => {
+    if (!embedded && orgId) navigate(`/organisations/${orgId}?tab=code`, { replace: true });
+  }, [embedded, orgId, navigate]);
   const [overview, setOverview] = useState<Overview | null>(null);
   const [loading, setLoading] = useState(true);
   const [loadError, setLoadError] = useState<'forbidden' | 'other' | null>(null);
@@ -82,10 +89,10 @@ export default function CodePage({ orgId: orgIdProp }: { orgId?: string } = {}) 
   }, [orgId]);
 
   useEffect(() => {
-    if (!orgId && summary && summary.length === 1) {
-      setSearchParams({ org: summary[0].org_id });
+    if (!embedded && !orgId && summary && summary.length === 1) {
+      navigate(`/organisations/${summary[0].org_id}?tab=code`, { replace: true });
     }
-  }, [orgId, summary, setSearchParams]);
+  }, [embedded, orgId, summary, navigate]);
 
   const fetchOverview = useCallback(() => {
     if (!orgId) { setLoading(false); return; }
@@ -271,21 +278,6 @@ export default function CodePage({ orgId: orgIdProp }: { orgId?: string } = {}) 
     }
   };
 
-  const onExportCsv = async (month?: string) => {
-    try {
-      const res = await api.get(`/orgs/${orgId}/code/export`,
-        { params: month ? { month } : {}, responseType: 'blob' });
-      const url = URL.createObjectURL(res.data as Blob);
-      const a = document.createElement('a');
-      a.href = url;
-      a.download = `code-usage-${month ?? 'mois-courant'}.csv`;
-      a.click();
-      URL.revokeObjectURL(url);
-    } catch {
-      message.error("Échec de l'export CSV");
-    }
-  };
-
   const onUpdateKeyLimits = async () => {
     if (!limitsModalKey) return;
     try {
@@ -367,7 +359,7 @@ export default function CodePage({ orgId: orgIdProp }: { orgId?: string } = {}) 
         <Card>
           <Table rowKey="org_id" size="middle" loading={summary === null}
             pagination={false} dataSource={filtered}
-            onRow={(r) => ({ onClick: () => setSearchParams({ org: r.org_id }), style: { cursor: 'pointer' } })}
+            onRow={(r) => ({ onClick: () => navigate(`/organisations/${r.org_id}?tab=code`), style: { cursor: 'pointer' } })}
             columns={[
               { title: 'Organisation', dataIndex: 'org_name' },
               { title: 'Statut', dataIndex: 'code_status', width: 130, render: statusTag },
@@ -386,11 +378,7 @@ export default function CodePage({ orgId: orgIdProp }: { orgId?: string } = {}) 
     );
   }
 
-  const backLink = embedded ? null : (
-    <Button type="link" className="px-0 mb-2" onClick={() => setSearchParams({})}>
-      ← Toutes les organisations
-    </Button>
-  );
+  const backLink = null;
   if (!loading && loadError)
     return (
       <div>
@@ -456,21 +444,9 @@ export default function CodePage({ orgId: orgIdProp }: { orgId?: string } = {}) 
           {ent?.status === 'active' && <Tag color="green" className="ml-2">actif</Tag>}
           {ent?.status === 'suspended' && <Tag color="orange" className="ml-2">suspendu</Tag>}
         </h2>
-        <Space>
-          <Tooltip title="Conso du mois par team et par jour (CSV, pour la facturation)">
-            <Dropdown menu={{ items: [
-              { key: 'cur', label: 'Mois courant', onClick: () => onExportCsv() },
-              { key: 'prev', label: 'Mois précédent',
-                onClick: () => { const d = new Date(); d.setMonth(d.getMonth() - 1);
-                  onExportCsv(`${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, '0')}`); } },
-            ] }}>
-              <Button icon={<DownloadOutlined />}>Exporter</Button>
-            </Dropdown>
-          </Tooltip>
-          <Button type="primary" icon={<PlusOutlined />} onClick={() => setTeamModal(true)}>
-            Nouvelle code-team
-          </Button>
-        </Space>
+        <Button type="primary" icon={<PlusOutlined />} onClick={() => setTeamModal(true)}>
+          Nouvelle code-team
+        </Button>
       </div>
 
       {overview?.gateway_url && (

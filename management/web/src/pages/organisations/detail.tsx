@@ -1,5 +1,5 @@
 import { useEffect, useState, useCallback } from 'react';
-import { useParams, Link, useNavigate } from 'react-router-dom';
+import { useParams, Link, useNavigate, useSearchParams } from 'react-router-dom';
 import { Card, Tabs, Spin, Progress, Row, Col, Statistic, Breadcrumb, Typography, Tag, Button, Modal, Input, App, Table, Space, Select, Switch, InputNumber, Tooltip, Alert, Form } from 'antd';
 import { DatePicker } from 'antd';
 import type { Dayjs } from 'dayjs';
@@ -482,6 +482,7 @@ interface BillingSummary {
 export default function OrgDetailPage() {
   const { orgId } = useParams<{ orgId: string }>();
   const navigate = useNavigate();
+  const [searchParams, setSearchParams] = useSearchParams();
   const { message, modal } = App.useApp();
   const { user } = useAuthStore();
   const [org, setOrg] = useState<OrgDetail | null>(null);
@@ -722,6 +723,8 @@ export default function OrgDetailPage() {
       <Tabs
         type="line"
         size="large"
+        activeKey={searchParams.get('tab') ?? 'workspaces'}
+        onChange={(k) => setSearchParams((prev) => { prev.set('tab', k); return prev; }, { replace: true })}
         items={[
           {
             key: 'workspaces',
