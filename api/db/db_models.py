@@ -1598,6 +1598,10 @@ class CodeKey(DataBaseModel):
     litellm_key_id = CharField(max_length=128, null=True, index=True)
     key_masked = CharField(max_length=32, null=True)
     owner_user_id = CharField(max_length=32, null=True, index=True)
+    # Limites par siège (enforcement temps réel par LiteLLM). NULL = seule la
+    # limite de la team s'applique. Cycle = entitlement.budget_period.
+    max_budget = FloatField(null=True)
+    rpm_limit = IntegerField(null=True)
     status = CharField(max_length=16, null=False, default="active", index=True)  # active | revoked | blocked
     sync_status = CharField(max_length=16, null=False, default="pending", index=True)  # pending | synced | error
     sync_error = TextField(null=True)
@@ -1655,6 +1659,9 @@ class CodeKeyInvite(DataBaseModel):
     token_hash = CharField(max_length=64, null=False, unique=True)
     expires_at = DateTimeField(null=False)
     claimed_key_id = CharField(max_length=32, null=True)
+    # Limites par siège reportées sur la CodeKey créée au claim.
+    max_budget = FloatField(null=True)
+    rpm_limit = IntegerField(null=True)
     created_by = CharField(max_length=32, null=False, index=True)
 
     class Meta:
@@ -2152,6 +2159,12 @@ def migrate_db():
     # spend-logs endpoint (NULL = gateway unreachable at snapshot time).
     alter_db_add_column(migrator, "code_spend_snapshot", "tokens", IntegerField(null=True))
     alter_db_add_column(migrator, "code_spend_snapshot", "errors", IntegerField(null=True))
+    # CUSTOM B2B SaaS — Code product: limites par siège (budget €/cycle + rpm),
+    # enforcement temps réel par LiteLLM. Sur l'invite: reportées au claim.
+    alter_db_add_column(migrator, "code_key", "max_budget", FloatField(null=True))
+    alter_db_add_column(migrator, "code_key", "rpm_limit", IntegerField(null=True))
+    alter_db_add_column(migrator, "code_key_invite", "max_budget", FloatField(null=True))
+    alter_db_add_column(migrator, "code_key_invite", "rpm_limit", IntegerField(null=True))
 
 
 def _add_rbac_unique_indexes(migrator):

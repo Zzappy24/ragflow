@@ -132,3 +132,47 @@ def test_key_list_returns_full_objects_with_spend(client):
     assert match, "generated key's hashed token must appear in list_keys"
     assert match[0].get("key_alias") == key_alias
     assert "spend" in match[0] and float(match[0]["spend"] or 0.0) >= 0.0
+
+
+def test_seat_budget_blocks_while_team_budget_remains(client):
+    """Budget par siège : la clé est bloquée par SA limite même si la team a
+    encore du budget — c'est l'enforcement temps réel qui protège la team
+    d'un agent qui boucle sur un seul siège."""
+    alias = f"org:it:team:{uuid.uuid4().hex[:8]}"
+    team_id = client.create_team(alias=alias, max_budget=50.0, budget_duration="1mo", models=[])
+    out = client.generate_key(team_id=team_id, alias=f"org:it:key:{uuid.uuid4().hex[:8]}",
+                              max_budget=0.01, budget_duration="1mo", rpm_limit=1000)
+
+    # la limite est bien posée côté LiteLLM (objet complet du /key/list)
+    keys = client.list_keys(team_id)
+    me = [k for k in keys if k.get("token") == out["token"]][0]
+    assert float(me["max_budget"]) == 0.01
+    assert int(me["rpm_limit"]) == 1000
+
+    def call():
+        return httpx.post(f"{BASE}/v1/chat/completions",
+                          headers={"Authorization": f"Bearer {out['plain_key']}"},
+                          json={"model": "code-mock",
+                                "messages": [{"role": "user", "content": "hi " * 50}]},
+                          timeout=30.0)
+
+    first = call()
+    assert first.status_code == 200  # crame > 0.01 EUR au tarif mock
+
+    deadline = time.monotonic() + 10.0
+    second = call()
+    while second.status_code == 200 and time.monotonic() < deadline:
+        time.sleep(0.5)
+        second = call()
+    assert second.status_code in (400, 429)
+    assert "budget" in second.text.lower()
+
+    # une AUTRE clé de la même team (sans limite siège) passe toujours :
+    # c'est bien le siège qui est bloqué, pas la team.
+    other = client.generate_key(team_id=team_id, alias=f"org:it:key:{uuid.uuid4().hex[:8]}")
+    resp = httpx.post(f"{BASE}/v1/chat/completions",
+                      headers={"Authorization": f"Bearer {other['plain_key']}"},
+                      json={"model": "code-mock",
+                            "messages": [{"role": "user", "content": "hi"}]},
+                      timeout=30.0)
+    assert resp.status_code == 200

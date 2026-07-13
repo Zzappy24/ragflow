@@ -56,10 +56,11 @@ class FakeLiteLLM:
         self.teams.pop(team_id, None)
         self.calls.append(("delete_team", team_id))
 
-    def generate_key(self, *, team_id, alias):
+    def generate_key(self, *, team_id, alias, max_budget=None, budget_duration=None, rpm_limit=None):
         self._maybe_down()
-        self.calls.append(("generate_key", alias))
-        self.keys[f"hash-{alias}"] = {"team_id": team_id, "key_alias": alias, "spend": 0.0}
+        self.calls.append(("generate_key", alias, max_budget, budget_duration, rpm_limit))
+        self.keys[f"hash-{alias}"] = {"team_id": team_id, "key_alias": alias, "spend": 0.0,
+                                      "max_budget": max_budget, "rpm_limit": rpm_limit}
         return {"plain_key": f"sk-{alias}-secret", "token": f"hash-{alias}", "masked": "sk-...cret"}
 
     def list_keys(self, team_id):
@@ -295,3 +296,40 @@ def test_delete_virgin_team_gateway_down_falls_back_to_soft(org_with_entitlement
         kept = CodeTeam.get_by_id(team.id)
     assert kept.status == "deleted" and kept.sync_error
     assert cp.allocated_budget(org_with_entitlement) == 0.0
+
+
+def test_create_key_with_seat_limits_passes_them_to_litellm(org_with_entitlement):
+    """Limites par siège : stockées sur la row ET transmises au /key/generate
+    avec budget_duration = entitlement.budget_period (cycle aligné)."""
+    from management.server.services import code_provisioning as cp
+    fake = FakeLiteLLM()
+    team = cp.create_code_team(org_id=org_with_entitlement, name="t", max_budget=50.0,
+                               model_access=[], created_by="tester", client=fake)
+    key, plain = cp.create_code_key(code_team_id=team.id, label="dev-bob",
+                                    owner_user_id=None, created_by="tester",
+                                    max_budget=10.0, rpm_limit=60, client=fake)
+    assert plain
+    assert key.max_budget == 10.0 and key.rpm_limit == 60
+    gen = [c for c in fake.calls if c[0] == "generate_key"][0]
+    assert gen[2] == 10.0          # max_budget transmis
+    assert gen[3] == "1mo"         # budget_duration = cycle de l'entitlement
+    assert gen[4] == 60            # rpm_limit transmis
+    # sans limites: rien n'est transmis (None), la clé hérite juste de la team
+    key2, _ = cp.create_code_key(code_team_id=team.id, label="dev-nolimit",
+                                 owner_user_id=None, created_by="tester", client=fake)
+    assert key2.max_budget is None and key2.rpm_limit is None
+    gen2 = [c for c in fake.calls if c[0] == "generate_key"][1]
+    assert gen2[2] is None and gen2[4] is None
+
+
+def test_create_key_rejects_invalid_seat_limits(org_with_entitlement):
+    from management.server.services import code_provisioning as cp
+    fake = FakeLiteLLM()
+    team = cp.create_code_team(org_id=org_with_entitlement, name="t", max_budget=50.0,
+                               model_access=[], created_by="tester", client=fake)
+    with pytest.raises(ValueError, match="max_budget"):
+        cp.create_code_key(code_team_id=team.id, label="d", owner_user_id=None,
+                           created_by="tester", max_budget=0, client=fake)
+    with pytest.raises(ValueError, match="rpm_limit"):
+        cp.create_code_key(code_team_id=team.id, label="d", owner_user_id=None,
+                           created_by="tester", rpm_limit=-5, client=fake)

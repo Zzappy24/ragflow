@@ -5,7 +5,7 @@ import { PlusOutlined, StopOutlined, CopyOutlined, MailOutlined, ReloadOutlined,
 import api from '@/lib/api';
 import CodeDashboardSection, { fmtTokens } from './dashboard-section';
 
-interface CodeKey { id: string; label: string; key_masked: string | null; status: string; sync_status: string; spend: number | null; }
+interface CodeKey { id: string; label: string; key_masked: string | null; status: string; sync_status: string; spend: number | null; max_budget: number | null; rpm_limit: number | null; }
 interface CodeTeam { id: string; name: string; max_budget: number; spend: number | null; status: string; sync_status: string; keys: CodeKey[]; tokens_today: number | null; }
 interface CodeInvite { id: string; email: string; expires_at: string; created_by?: string; }
 interface TeamAdmin { user_id: string; email: string; role: string; }
@@ -53,6 +53,8 @@ export default function CodePage() {
   // Bulk seat invites — one CodeKeyInvite per email, no key created until claim.
   const [bulkModalTeam, setBulkModalTeam] = useState<CodeTeam | null>(null);
   const [bulkText, setBulkText] = useState('');
+  const [bulkBudget, setBulkBudget] = useState<number | null>(null);
+  const [bulkRpm, setBulkRpm] = useState<number | null>(null);
   const [bulkResults, setBulkResults] = useState<BulkResult[] | null>(null);
   // Pending invites shown under each team's keys table.
   const [invitesByTeam, setInvitesByTeam] = useState<Record<string, CodeInvite[]>>({});
@@ -214,7 +216,8 @@ export default function CodePage() {
     const emails = bulkText.split('\n').map((s) => s.trim()).filter(Boolean);
     if (emails.length === 0) return;
     try {
-      const res = await api.post(`/code/teams/${bulkModalTeam.id}/keys/bulk`, { emails });
+      const res = await api.post(`/code/teams/${bulkModalTeam.id}/keys/bulk`,
+        { emails, max_budget: bulkBudget ?? undefined, rpm_limit: bulkRpm ?? undefined });
       setBulkResults(res.data);
       fetchInvites(bulkModalTeam.id);
     } catch (err: unknown) {
@@ -366,8 +369,11 @@ export default function CodePage() {
   const keyColumns = (_team: CodeTeam) => [
     { title: 'Label', dataIndex: 'label' },
     { title: 'Clé', dataIndex: 'key_masked', render: (v: string | null) => <code>{v || '—'}</code> },
-    { title: 'Dépensé', dataIndex: 'spend', width: 100,
-      render: (v: number | null) => (v == null ? '—' : `${Math.round(v * 100) / 100} €`) },
+    { title: 'Dépensé', dataIndex: 'spend', width: 130,
+      render: (v: number | null, k: CodeKey) => {
+        const spent = v == null ? '—' : `${Math.round(v * 100) / 100}`;
+        return k.max_budget != null ? `${spent} / ${euro(k.max_budget)}` : (v == null ? '—' : `${spent} €`);
+      } },
     { title: 'Statut', dataIndex: 'status', render: (s: string) => <Tag color={s === 'active' ? 'green' : 'red'}>{s}</Tag> },
     { title: 'Sync', dataIndex: 'sync_status', render: (s: string) => <Tag color={s === 'synced' ? 'blue' : 'orange'}>{s}</Tag> },
     {
@@ -572,17 +578,25 @@ export default function CodePage() {
             <Form.Item name="label" label="Label (dev / siège)" rules={[{ required: true }]}>
               <Input placeholder="ci-pipeline, integration-test… (ou un email)" />
             </Form.Item>
+            <Form.Item name="max_budget"
+                       label={`Budget du siège (€ / ${ent?.budget_period ?? '1mo'}) — optionnel`}
+                       extra="Vide = seule la limite de la team s'applique. Appliqué en temps réel par la gateway.">
+              <InputNumber min={0.01} className="w-full" placeholder="illimité (dans la limite team)" />
+            </Form.Item>
+            <Form.Item name="rpm_limit" label="Limite de requêtes/minute — optionnel">
+              <InputNumber min={1} className="w-full" placeholder="illimité" />
+            </Form.Item>
           </Form>
         )}
       </Modal>
 
       <Modal title={`Inviter par email — ${bulkModalTeam?.name ?? ''}`} open={!!bulkModalTeam}
              onOk={bulkResults
-               ? () => { setBulkModalTeam(null); setBulkResults(null); setBulkText(''); }
+               ? () => { setBulkModalTeam(null); setBulkResults(null); setBulkText(''); setBulkBudget(null); setBulkRpm(null); }
                : onBulkInvite}
              okText={bulkResults ? 'Fermer' : 'Envoyer'}
              cancelButtonProps={bulkResults ? { style: { display: 'none' } } : undefined}
-             onCancel={() => { setBulkModalTeam(null); setBulkResults(null); setBulkText(''); }}>
+             onCancel={() => { setBulkModalTeam(null); setBulkResults(null); setBulkText(''); setBulkBudget(null); setBulkRpm(null); }}>
         {bulkResults ? (
           <Table rowKey="invite_id" size="small" pagination={false} dataSource={bulkResults}
                  columns={[
@@ -607,6 +621,19 @@ export default function CodePage() {
               <Input.TextArea rows={6} placeholder="un email par ligne"
                               value={bulkText} onChange={(e) => setBulkText(e.target.value)} />
             </Form.Item>
+            <Space size="large">
+              <Form.Item label={`Budget par siège (€ / ${ent?.budget_period ?? '1mo'}) — optionnel`}
+                         extra="Appliqué à chaque invité, en temps réel par la gateway.">
+                <InputNumber min={0.01} value={bulkBudget}
+                             onChange={(v) => setBulkBudget(v ?? null)}
+                             placeholder="illimité" style={{ width: 180 }} />
+              </Form.Item>
+              <Form.Item label="Requêtes/minute — optionnel">
+                <InputNumber min={1} value={bulkRpm}
+                             onChange={(v) => setBulkRpm(v ?? null)}
+                             placeholder="illimité" style={{ width: 140 }} />
+              </Form.Item>
+            </Space>
           </Form>
         )}
       </Modal>

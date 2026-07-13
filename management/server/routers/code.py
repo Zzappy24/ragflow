@@ -84,7 +84,7 @@ def _team_to_dict(t) -> dict:
 def _key_to_dict(k) -> dict:
     return {"id": k.id, "code_team_id": k.code_team_id, "label": k.label,
             "key_masked": k.key_masked, "owner_user_id": k.owner_user_id,
-            "status": k.status, "sync_status": k.sync_status}
+            "status": k.status, "sync_status": k.sync_status, "max_budget": k.max_budget, "rpm_limit": k.rpm_limit}
 
 
 @router.get("/code/orgs-summary")
@@ -470,7 +470,8 @@ def create_key(request: Request, team_id: str, body: CodeKeyCreate,
     from management.server.services import code_provisioning as cp
     try:
         key, plain = cp.create_code_key(code_team_id=team_id, label=body.label,
-                                        owner_user_id=body.owner_user_id, created_by=user.id)
+                                        owner_user_id=body.owner_user_id, created_by=user.id,
+                                        max_budget=body.max_budget, rpm_limit=body.rpm_limit)
     except ValueError as e:
         raise HTTPException(status_code=422, detail=str(e))
     audit_svc.record(request=request, actor_user_id=user.id, action=audit_svc.CODE_KEY_CREATE,
@@ -491,7 +492,8 @@ async def bulk_invite_keys(request: Request, team_id: str, body: CodeKeyBulkCrea
     from management.server.services.mailer import send_mail
 
     try:
-        invites = ci.create_invites(code_team_id=team_id, emails=body.emails, created_by=user.id)
+        invites = ci.create_invites(code_team_id=team_id, emails=body.emails, created_by=user.id,
+                                    max_budget=body.max_budget, rpm_limit=body.rpm_limit)
     except ValueError as e:
         raise HTTPException(status_code=422, detail=str(e))
 
@@ -618,7 +620,8 @@ async def rotate_key(request: Request, key_id: str, user_id: str = Depends(get_c
 
     try:
         invites = ci.create_invites(code_team_id=key.code_team_id, emails=[key.label],
-                                    created_by=user.id)
+                                    created_by=user.id,
+                                    max_budget=key.max_budget, rpm_limit=key.rpm_limit)
     except ValueError as e:
         raise HTTPException(status_code=422, detail=str(e))
     inv = invites[0]

@@ -83,9 +83,21 @@ class LiteLLMClient:
         self._request("POST", "/team/delete", json={"team_ids": [team_id]})
 
     # ---- keys ----
-    def generate_key(self, *, team_id: str, alias: str) -> dict:
-        data = self._request("POST", "/key/generate",
-                             json={"team_id": team_id, "key_alias": alias})
+    def generate_key(self, *, team_id: str, alias: str,
+                     max_budget: float | None = None,
+                     budget_duration: str | None = None,
+                     rpm_limit: int | None = None) -> dict:
+        payload: dict = {"team_id": team_id, "key_alias": alias}
+        # Limites par siège — enforcement temps réel par LiteLLM, comme les
+        # budgets team. budget_duration DOIT suivre entitlement.budget_period
+        # pour que le reset du siège soit aligné sur le cycle de la team.
+        if max_budget is not None:
+            payload["max_budget"] = max_budget
+            if budget_duration:
+                payload["budget_duration"] = budget_duration
+        if rpm_limit is not None:
+            payload["rpm_limit"] = rpm_limit
+        data = self._request("POST", "/key/generate", json=payload)
         plain = data["key"]
         # hashed identifier usable with /key/block — integration test (Task 7)
         # validates this against the real container.
