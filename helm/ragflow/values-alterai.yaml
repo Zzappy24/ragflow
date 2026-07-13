@@ -9,10 +9,10 @@ global:
   imageRepository: "data/ragflow"
   imageTag: "v0.9.0"
   hostname: "ragflow.cyllene.cloud"
-  # TLS not yet enabled on the frontend in alterai prod — admin panel
-  # generates invite links with this scheme. Switch to "https" once
-  # cert-manager issues the cert on ragflow.cyllene.cloud.
-  scheme: "http"
+  # HTTPS actif depuis 2026-07-13 : listeners 443 sur le Gateway partagé
+  # (envoy-gateway-system), certs Let's Encrypt via cert-manager gateway-shim.
+  # Ce scheme pilote les liens d'invitation, le CORS et l'URL publique du panel.
+  scheme: "https"
   imagePullSecrets:
     - name: harbor-pull-secret
   env:
@@ -258,4 +258,4 @@ ragflow-management-backend:
     litellmBaseUrl: "http://litellm.litellm.svc.cluster.local:4000"
     housekeepingCronJob:
       enabled: true
-    gatewayPublicUrl: "http://litellm.cyllene.cloud/v1"  # TODO: passer en https dès le cert devops
+    gatewayPublicUrl: "https://litellm.cyllene.cloud/v1"
