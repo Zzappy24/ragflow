@@ -193,6 +193,7 @@ dependencies = [
     "line-bot-sdk>=3.0.0",
     "wechatpy>=1.8.18",
     "aiohttp>=3.14.1",
+    "python-magic>=0.4.27",
 ]
 
 [dependency-groups]
