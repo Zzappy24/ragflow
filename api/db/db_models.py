@@ -1647,6 +1647,25 @@ class CodeHousekeepingRun(DataBaseModel):
         db_table = "code_housekeeping_run"
 
 
+class CodeBudgetAlert(DataBaseModel):
+    """Anti-spam des alertes budget Code : une alerte par seuil et par cycle.
+
+    scope 'team'|'key', ref_id = CodeTeam.id | CodeKey.id. La row existe =
+    alerte déjà envoyée pour ce cycle ; elle est supprimée quand le spend
+    retombe sous le seuil (reset de cycle LiteLLM) — ce qui ré-arme l'alerte.
+    """
+    id = CharField(max_length=32, primary_key=True)
+    scope = CharField(max_length=8, null=False)
+    ref_id = CharField(max_length=32, null=False, index=True)
+    threshold = IntegerField(null=False)  # 80 | 100 (pourcentage du budget)
+    spend_at_alert = FloatField(null=False)
+    alerted_at = DateTimeField(null=False)
+
+    class Meta:
+        db_table = "code_budget_alert"
+        indexes = ((("scope", "ref_id", "threshold"), True),)
+
+
 class CodeKeyInvite(DataBaseModel):
     """Invitation de siège code : la clé n'existe qu'au claim (jamais de secret au repos).
 

@@ -93,6 +93,14 @@ def _housekeeping_impl(client=None) -> dict:
 
     rec = reconcile_all(client=client)
     snapped = snapshot_spend(client=client)
+    # Alertes budget (80/100%) — best-effort : un échec d'envoi ne doit
+    # jamais faire échouer le housekeeping lui-même.
+    try:
+        from management.server.services.code_budget_alerts import check_and_send_alerts
+        budget_alerts = check_and_send_alerts(client=client)
+    except Exception:
+        logger.exception("housekeeping: budget alerts pass failed")
+        budget_alerts = 0
     # snapped is None when the gateway is unreachable — that must be visible
     # in the run row as an error, not silently reported as teams_snapshotted=0
     # (which is indistinguishable from "no active teams").
@@ -107,6 +115,7 @@ def _housekeeping_impl(client=None) -> dict:
                                    keys_synced=rec["keys_synced"], errors=errors)
     return {"run_id": run_id, "teams_snapshotted": teams_snapshotted,
             "keys_synced": rec["keys_synced"], "teams_synced": rec["teams_synced"],
+            "budget_alerts": budget_alerts,
             "errors": errors, "ran_at": ran_at.isoformat()}
 
 
