@@ -265,6 +265,17 @@ export default function CodePage() {
     }
   };
 
+  const onCancelInvite = async (inviteId: string, teamId: string) => {
+    try {
+      await api.delete(`/code/invites/${inviteId}`);
+      message.success('Invitation annulée — le lien est invalidé');
+      fetchInvites(teamId);
+    } catch (err: unknown) {
+      const msg = (err as { response?: { data?: { detail?: string } } })?.response?.data?.detail;
+      message.error(msg ?? "Échec de l'annulation");
+    }
+  };
+
   const onRotate = async (keyId: string) => {
     try {
       const res = await api.post(`/code/keys/${keyId}/rotate`);
@@ -485,9 +496,16 @@ export default function CodePage() {
                        { title: 'Email', dataIndex: 'email' },
                        { title: 'Expire', dataIndex: 'expires_at',
                          render: (v: string) => `expire le ${new Date(v).toLocaleString()}` },
-                       { title: '', width: 100,
+                       { title: '', width: 150,
                          render: (_: unknown, inv: CodeInvite) => (
-                           <Button size="small" onClick={() => onResend(inv.id, team.id)}>Renvoyer</Button>
+                           <Space size="small">
+                             <Button size="small" onClick={() => onResend(inv.id, team.id)}>Renvoyer</Button>
+                             <Popconfirm title={`Annuler l'invitation de ${inv.email} ? Le lien sera invalidé.`}
+                                         okText="Annuler l'invitation" okButtonProps={{ danger: true }}
+                                         onConfirm={() => onCancelInvite(inv.id, team.id)}>
+                               <Button size="small" type="text" danger icon={<DeleteOutlined />} />
+                             </Popconfirm>
+                           </Space>
                          ) },
                      ]} />
             </div>

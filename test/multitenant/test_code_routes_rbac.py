@@ -421,3 +421,34 @@ def test_public_claim_returns_models_for_quickstart(panel_client, org_with_entit
     data = r.json()
     assert data["plain_key"].startswith("sk-")
     assert data["models"] == ["code-mock"]
+
+
+def test_cancel_invite_team_admin_only_and_conditional(panel_client, org_with_entitlement_and_users):
+    """DELETE /code/invites/{id} : membre simple 403 ; annulée -> claim 404 ;
+    déjà consommée -> 409 (jamais effacée, trace d'audit)."""
+    client, _ = panel_client
+    org_id, tokens = org_with_entitlement_and_users
+    team = client.post(f"/api/admin/orgs/{org_id}/code/teams",
+                       json={"name": "cancel", "max_budget": 10.0, "model_access": []},
+                       headers=_h(tokens["org_admin"])).json()
+    bulk = client.post(f"/api/admin/code/teams/{team['id']}/keys/bulk",
+                       json={"emails": ["a@c.io", "b@c.io"]},
+                       headers=_h(tokens["org_admin"])).json()
+    inv_a, inv_b = bulk[0], bulk[1]
+
+    assert client.delete(f"/api/admin/code/invites/{inv_a['invite_id']}",
+                         headers=_h(tokens["plain_member"])).status_code == 403
+
+    r = client.delete(f"/api/admin/code/invites/{inv_a['invite_id']}",
+                      headers=_h(tokens["org_admin"]))
+    assert r.status_code == 200 and r.json()["cancelled"] is True
+    token_a = inv_a["claim_url"].split("token=")[1]
+    assert client.post("/api/admin/public/code/claim",
+                       json={"token": token_a}).status_code == 404
+
+    # invite consommée -> 409, la row reste
+    token_b = inv_b["claim_url"].split("token=")[1]
+    assert client.post("/api/admin/public/code/claim",
+                       json={"token": token_b}).status_code == 200
+    assert client.delete(f"/api/admin/code/invites/{inv_b['invite_id']}",
+                         headers=_h(tokens["org_admin"])).status_code == 409

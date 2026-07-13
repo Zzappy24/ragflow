@@ -558,6 +558,30 @@ async def resend_invite(request: Request, invite_id: str, user_id: str = Depends
     return item
 
 
+@router.delete("/code/invites/{invite_id}")
+def cancel_invite(request: Request, invite_id: str, user_id: str = Depends(get_current_user_id)):
+    """Annule une invitation NON consommée : le lien tombe en 404 immédiatement.
+    Le DELETE est conditionné à claimed_key_id IS NULL — une invite consommée
+    (ou un claim qui gagne la course) n'est jamais effacée (trace d'audit)."""
+    from api.db.db_models import DB, CodeKeyInvite
+    with DB.connection_context():
+        inv = CodeKeyInvite.get_or_none(CodeKeyInvite.id == invite_id)
+    if inv is None:
+        raise HTTPException(status_code=404, detail="Invite not found")
+    user = require_code_team_admin(inv.code_team_id, user_id)
+    with DB.connection_context():
+        deleted = CodeKeyInvite.delete().where(
+            (CodeKeyInvite.id == invite_id)
+            & (CodeKeyInvite.claimed_key_id.is_null(True))).execute()
+    if not deleted:
+        raise HTTPException(status_code=409, detail="Invite already claimed — revoke the key instead")
+    audit_svc.record(request=request, actor_user_id=user.id,
+                     action=audit_svc.CODE_SEAT_INVITE_CANCELLED,
+                     org_id=None, resource_type="code_key_invite", resource_id=invite_id,
+                     details={"email": inv.email, "team_id": inv.code_team_id})
+    return {"invite_id": invite_id, "cancelled": True}
+
+
 @router.post("/code/teams/{team_id}/invites/resend-all")
 async def resend_all_invites(request: Request, team_id: str, user=Depends(require_code_team_admin)):
     """Re-mint + renvoie TOUTES les invitations pendantes de la team (y compris
