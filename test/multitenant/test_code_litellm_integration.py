@@ -114,3 +114,21 @@ def test_daily_usage_counts_real_traffic(client):
     assert team_id in usage, "spend-logs never surfaced our team's traffic"
     assert usage[team_id]["tokens"] > 0
     assert usage[team_id]["errors"] == 0
+
+
+def test_key_list_returns_full_objects_with_spend(client):
+    """list_keys() doit renvoyer des OBJETS (token/key_alias/spend), pas des
+    hashes nus : /key/list sans return_full_object=true renvoie des strings
+    (v1.91.1) et le per-key spend du panel devient silencieusement '—'."""
+    alias = f"org:it:team:{uuid.uuid4().hex[:8]}"
+    team_id = client.create_team(alias=alias, max_budget=50.0, budget_duration="1mo", models=[])
+    key_alias = f"org:it:key:{uuid.uuid4().hex[:8]}"
+    out = client.generate_key(team_id=team_id, alias=key_alias)
+
+    keys = client.list_keys(team_id)
+    assert keys and all(isinstance(k, dict) for k in keys), \
+        f"expected full objects, got: {keys[:2]}"
+    match = [k for k in keys if k.get("token") == out["token"]]
+    assert match, "generated key's hashed token must appear in list_keys"
+    assert match[0].get("key_alias") == key_alias
+    assert "spend" in match[0] and float(match[0]["spend"] or 0.0) >= 0.0

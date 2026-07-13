@@ -109,8 +109,27 @@ class LiteLLMClient:
         self._request("POST", "/key/unblock", json={"key": token})
 
     def list_keys(self, team_id: str) -> list[dict]:
-        data = self._request("GET", "/key/list", params={"team_id": team_id})
-        return data.get("keys", data) if isinstance(data, dict) else data
+        """Full key objects (token/key_alias/spend) for a team.
+
+        return_full_object=true est OBLIGATOIRE : sans lui /key/list renvoie
+        des hashes nus (strings) — observé sur v1.91.1 — et le per-key spend
+        de l'overview devient silencieusement indisponible. Le endpoint est
+        paginé (size max 100) ; on déroule toutes les pages.
+        """
+        out: list[dict] = []
+        page = 1
+        while True:
+            data = self._request("GET", "/key/list",
+                                 params={"team_id": team_id, "return_full_object": "true",
+                                         "page": page, "size": 100})
+            if not isinstance(data, dict):  # very old versions: flat list
+                out.extend(data)
+                break
+            out.extend(data.get("keys", []))
+            if page >= int(data.get("total_pages") or 1):
+                break
+            page += 1
+        return out
 
     # ---- usage ----
     def daily_usage(self, day: datetime.date) -> dict[str, dict]:
