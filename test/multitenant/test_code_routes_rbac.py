@@ -452,3 +452,25 @@ def test_cancel_invite_team_admin_only_and_conditional(panel_client, org_with_en
                        json={"token": token_b}).status_code == 200
     assert client.delete(f"/api/admin/code/invites/{inv_b['invite_id']}",
                          headers=_h(tokens["org_admin"])).status_code == 409
+
+
+def test_update_key_limits_rbac_and_validation(panel_client, org_with_entitlement_and_users):
+    client, fake = panel_client
+    org_id, tokens = org_with_entitlement_and_users
+    team = client.post(f"/api/admin/orgs/{org_id}/code/teams",
+                       json={"name": "lim", "max_budget": 10.0, "model_access": []},
+                       headers=_h(tokens["org_admin"])).json()
+    key = client.post(f"/api/admin/code/teams/{team['id']}/keys",
+                      json={"label": "dev"}, headers=_h(tokens["org_admin"])).json()["key"]
+
+    body = {"max_budget": 3.0, "rpm_limit": 30}
+    assert client.put(f"/api/admin/code/keys/{key['id']}", json=body,
+                      headers=_h(tokens["plain_member"])).status_code == 403
+    r = client.put(f"/api/admin/code/keys/{key['id']}", json=body,
+                   headers=_h(tokens["org_admin"]))
+    assert r.status_code == 200
+    assert r.json()["max_budget"] == 3.0 and r.json()["rpm_limit"] == 30
+
+    assert client.put(f"/api/admin/code/keys/{key['id']}",
+                      json={"max_budget": -1, "rpm_limit": None},
+                      headers=_h(tokens["org_admin"])).status_code == 422

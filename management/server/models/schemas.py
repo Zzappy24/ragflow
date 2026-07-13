@@ -313,5 +313,12 @@ class CodeKeyBulkCreate(BaseModel):
     rpm_limit: int | None = Field(default=None, gt=0)
 
 
+class CodeKeyLimitsUpdate(BaseModel):
+    # État désiré COMPLET des limites du siège : null = supprimer la limite
+    # (contrat /key/update LiteLLM validé — null réinitialise le champ).
+    max_budget: float | None
+    rpm_limit: int | None
+
+
 class CodeClaimRequest(BaseModel):
     token: str = Field(min_length=1)

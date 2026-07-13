@@ -48,6 +48,8 @@ export default function CodePage() {
   const [adminModalTeam, setAdminModalTeam] = useState<CodeTeam | null>(null);
   const [adminForm] = Form.useForm();
   const [teamAdmins, setTeamAdmins] = useState<TeamAdmin[] | null>(null);
+  const [limitsModalKey, setLimitsModalKey] = useState<CodeKey | null>(null);
+  const [limitsForm] = Form.useForm();
   const { message } = App.useApp();
 
   // Bulk seat invites — one CodeKeyInvite per email, no key created until claim.
@@ -265,6 +267,24 @@ export default function CodePage() {
     }
   };
 
+  const onUpdateKeyLimits = async () => {
+    if (!limitsModalKey) return;
+    try {
+      const values = await limitsForm.validateFields();
+      await api.put(`/code/keys/${limitsModalKey.id}`, {
+        max_budget: values.max_budget ?? null,
+        rpm_limit: values.rpm_limit ?? null,
+      });
+      message.success('Limites du siège mises à jour — effet immédiat, la clé ne change pas');
+      setLimitsModalKey(null);
+      limitsForm.resetFields();
+      fetchOverview();
+    } catch (err: unknown) {
+      const msg = (err as { response?: { data?: { detail?: string } } })?.response?.data?.detail;
+      if (msg) message.error(msg);
+    }
+  };
+
   const onCancelInvite = async (inviteId: string, teamId: string) => {
     try {
       await api.delete(`/code/invites/${inviteId}`);
@@ -391,6 +411,11 @@ export default function CodePage() {
       title: '', width: 100,
       render: (_: unknown, k: CodeKey) => k.status === 'active' && (
         <Space size="small">
+          <Tooltip title="Modifier le budget / la limite rpm du siège (la clé ne change pas)">
+            <Button type="text" icon={<EditOutlined />} size="small"
+                    onClick={() => { setLimitsModalKey(k);
+                                     limitsForm.setFieldsValue({ max_budget: k.max_budget, rpm_limit: k.rpm_limit }); }} />
+          </Tooltip>
           <Popconfirm title={`Révoque la clé et envoie un nouveau lien à ${k.label}`}
                      onConfirm={() => onRotate(k.id)}>
             <Button type="text" icon={<ReloadOutlined />} size="small" />
@@ -520,6 +545,20 @@ export default function CodePage() {
           <Form.Item name="max_budget" label={`Budget (€ / ${ent?.budget_period ?? '1mo'})`}
                      rules={[{ required: true }]}>
             <InputNumber min={1} max={Math.max(0, total - allocated)} className="w-full" />
+          </Form.Item>
+        </Form>
+      </Modal>
+
+      <Modal title={`Limites du siège — ${limitsModalKey?.label ?? ''}`} open={!!limitsModalKey}
+             onOk={onUpdateKeyLimits} okText="Appliquer"
+             onCancel={() => { setLimitsModalKey(null); limitsForm.resetFields(); }}>
+        <Form form={limitsForm} layout="vertical">
+          <Form.Item name="max_budget" label={`Budget (€ / ${ent?.budget_period ?? '1mo'})`}
+                     extra="Vider le champ = supprimer la limite (seule celle de la team s'applique). Appliqué en temps réel.">
+            <InputNumber min={0.01} className="w-full" placeholder="illimité (dans la limite team)" />
+          </Form.Item>
+          <Form.Item name="rpm_limit" label="Requêtes/minute">
+            <InputNumber min={1} className="w-full" placeholder="illimité" />
           </Form.Item>
         </Form>
       </Modal>

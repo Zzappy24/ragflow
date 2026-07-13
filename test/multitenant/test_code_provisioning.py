@@ -69,6 +69,12 @@ class FakeLiteLLM:
                  "blocked": tok in self.blocked}
                 for tok, k in self.keys.items() if k["team_id"] == team_id]
 
+    def update_key(self, token, *, max_budget, rpm_limit, budget_duration=None):
+        self._maybe_down()
+        self.keys[token]["max_budget"] = max_budget
+        self.keys[token]["rpm_limit"] = rpm_limit
+        self.calls.append(("update_key", token, max_budget, rpm_limit, budget_duration))
+
     def block_key(self, token):
         self._maybe_down()
         self.blocked.add(token)
@@ -338,3 +344,50 @@ def test_create_key_rejects_invalid_seat_limits(org_with_entitlement):
     with pytest.raises(ValueError, match="rpm_limit"):
         cp.create_code_key(code_team_id=team.id, label="d", owner_user_id=None,
                            created_by="tester", rpm_limit=-5, client=fake)
+
+
+def test_update_key_limits_pushes_desired_state(org_with_entitlement):
+    """Update des limites d'une clé vivante : row = état désiré, poussé à la
+    gateway avec le cycle de l'entitlement ; None efface la limite."""
+    from management.server.services import code_provisioning as cp
+    fake = FakeLiteLLM()
+    team = cp.create_code_team(org_id=org_with_entitlement, name="t", max_budget=50.0,
+                               model_access=[], created_by="tester", client=fake)
+    key, _ = cp.create_code_key(code_team_id=team.id, label="dev", owner_user_id=None,
+                                created_by="tester", max_budget=5.0, rpm_limit=10, client=fake)
+
+    updated = cp.update_code_key_limits(code_key_id=key.id, max_budget=12.0,
+                                        rpm_limit=99, client=fake)
+    assert updated.max_budget == 12.0 and updated.rpm_limit == 99
+    assert updated.sync_status == "synced"
+    upd = [c for c in fake.calls if c[0] == "update_key"][-1]
+    assert upd[2] == 12.0 and upd[3] == 99 and upd[4] == "1mo"
+
+    # None = suppression de limite, transmise telle quelle
+    cleared = cp.update_code_key_limits(code_key_id=key.id, max_budget=None,
+                                        rpm_limit=None, client=fake)
+    assert cleared.max_budget is None and cleared.rpm_limit is None
+    assert fake.keys[key.litellm_key_id]["max_budget"] is None
+
+
+def test_update_key_limits_gateway_down_converged_by_reconciler(org_with_entitlement):
+    from management.server.services import code_provisioning as cp
+    from management.server.services.code_reconcile import reconcile_all
+    fake = FakeLiteLLM()
+    team = cp.create_code_team(org_id=org_with_entitlement, name="t", max_budget=50.0,
+                               model_access=[], created_by="tester", client=fake)
+    key, _ = cp.create_code_key(code_team_id=team.id, label="dev", owner_user_id=None,
+                                created_by="tester", client=fake)
+
+    fake.down = True
+    row = cp.update_code_key_limits(code_key_id=key.id, max_budget=7.0,
+                                    rpm_limit=None, client=fake)
+    assert row.sync_status == "pending" and row.max_budget == 7.0
+
+    fake.down = False
+    report = reconcile_all(client=fake)
+    assert report["keys_synced"] >= 1
+    assert fake.keys[key.litellm_key_id]["max_budget"] == 7.0
+    from api.db.db_models import DB, CodeKey
+    with DB.connection_context():
+        assert CodeKey.get_by_id(key.id).sync_status == "synced"

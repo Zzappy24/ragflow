@@ -9,7 +9,7 @@ from management.server.auth.dependencies import (
 )
 from management.server.models.schemas import (
     CodeEntitlementUpsert, CodeTeamCreate, CodeTeamUpdate, CodeTeamAdminAdd, CodeKeyCreate,
-    CodeKeyBulkCreate, CodeClaimRequest,
+    CodeKeyBulkCreate, CodeKeyLimitsUpdate, CodeClaimRequest,
 )
 from management.server.services import audit as audit_svc
 from management.server.config import settings as admin_settings
@@ -613,6 +613,30 @@ async def resend_all_invites(request: Request, team_id: str, user=Depends(requir
                      org_id=None, resource_type="code_team", resource_id=team_id,
                      details={"resend_all": True, "count": len(results)})
     return results
+
+
+@router.put("/code/keys/{key_id}")
+def update_key_limits(request: Request, key_id: str, body: CodeKeyLimitsUpdate,
+                      user_id: str = Depends(get_current_user_id)):
+    """Modifie les limites d'une clé VIVANTE (le secret ne change pas —
+    pour changer le secret, c'est la rotation). null = supprime la limite."""
+    from api.db.db_models import DB, CodeKey
+    with DB.connection_context():
+        key = CodeKey.get_or_none(CodeKey.id == key_id)
+    if key is None:
+        raise HTTPException(status_code=404, detail="Key not found")
+    user = require_code_team_admin(key.code_team_id, user_id)
+    from management.server.services import code_provisioning as cp
+    try:
+        key = cp.update_code_key_limits(code_key_id=key_id, max_budget=body.max_budget,
+                                        rpm_limit=body.rpm_limit)
+    except ValueError as e:
+        raise HTTPException(status_code=422, detail=str(e))
+    audit_svc.record(request=request, actor_user_id=user.id, action=audit_svc.CODE_KEY_UPDATE,
+                     org_id=None, resource_type="code_key", resource_id=key_id,
+                     details={"label": key.label, "max_budget": body.max_budget,
+                              "rpm_limit": body.rpm_limit})
+    return _key_to_dict(key)
 
 
 @router.post("/code/keys/{key_id}/rotate", status_code=status.HTTP_201_CREATED)

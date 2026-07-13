@@ -114,6 +114,16 @@ class LiteLLMClient:
             "masked": f"{plain[:6]}...{plain[-4:]}",
         }
 
+    def update_key(self, token: str, *, max_budget: float | None,
+                   rpm_limit: int | None, budget_duration: str | None = None) -> None:
+        """Met à jour les limites d'une clé vivante. None EFFACE la limite
+        (contrat validé sur v1.91.1 : /key/update avec null réinitialise le
+        champ). budget_duration n'est envoyé qu'avec un budget numérique."""
+        payload: dict = {"key": token, "max_budget": max_budget, "rpm_limit": rpm_limit}
+        if max_budget is not None and budget_duration:
+            payload["budget_duration"] = budget_duration
+        self._request("POST", "/key/update", json=payload)
+
     def block_key(self, token: str) -> None:
         self._request("POST", "/key/block", json={"key": token})
 

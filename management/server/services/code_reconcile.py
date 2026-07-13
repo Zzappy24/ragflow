@@ -48,6 +48,18 @@ def reconcile_all(client=None) -> dict:
                 cl.block_key(key.litellm_key_id)
             else:
                 cl.unblock_key(key.litellm_key_id)
+                # Une clé active pending peut aussi porter un update de
+                # limites raté (update_code_key_limits pendant une panne
+                # gateway) — la row EST l'état désiré, on le pousse
+                # intégralement (None = effacer la limite).
+                duration = None
+                if key.max_budget is not None:
+                    with DB.connection_context():
+                        team = CodeTeam.get_or_none(CodeTeam.id == key.code_team_id)
+                    ent = get_entitlement(team.org_id) if team else None
+                    duration = ent.budget_period if ent else None
+                cl.update_key(key.litellm_key_id, max_budget=key.max_budget,
+                              rpm_limit=key.rpm_limit, budget_duration=duration)
             _mark(CodeKey, key.id, sync_status="synced", sync_error=None)
             report["keys_synced"] += 1
         except LiteLLMError as e:
