@@ -399,3 +399,26 @@ def test_mgmt_image_copies_all_boot_chain_source_files():
             if len(files) > 3:
                 lines.append(f"      ... +{len(files) - 3} more files")
         raise AssertionError("\n".join(lines))
+
+
+def test_main_image_has_python_magic_for_upload_validation():
+    """python-magic + libmagic1 doivent être dans l'image PRINCIPALE.
+
+    check_blob_matches_extension (api/utils/file_utils.py) dégrade
+    silencieusement en no-op quand python-magic manque (`except
+    ImportError: return None`) : la validation profonde du contenu des
+    uploads disparaît sans aucun symptôme. C'est arrivé — le check a
+    tourné en no-op d'avril à juillet 2026 (python-magic jamais déclaré).
+    Ce test rend l'absence bruyante.
+    """
+    pyproject = (REPO_ROOT / "pyproject.toml").read_text()
+    assert re.search(r'"python-magic[>=<~\d.]*"', pyproject), (
+        "python-magic absent de pyproject.toml : la validation MIME des "
+        "uploads (check_blob_matches_extension) devient un no-op silencieux. "
+        "Fix : uv add python-magic")
+
+    dockerfile = (REPO_ROOT / "Dockerfile").read_text()
+    assert "libmagic1" in dockerfile, (
+        "libmagic1 absent du Dockerfile principal : python-magic ne peut pas "
+        "charger la lib C -> ImportError -> validation MIME no-op. "
+        "Fix : ajouter libmagic1 à la liste apt install")
