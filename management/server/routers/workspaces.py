@@ -17,8 +17,9 @@ def _ws_to_response(ws) -> dict:
         "org_id": ws.org_id,
         "tenant_id": ws.tenant_id,
         "name": ws.name,
-        "description": getattr(ws, "description", ""),
+        "description": getattr(ws, "description", "") or "",
         "status": ws.status,
+        "bu": (getattr(ws, "settings_json", None) or {}).get("bu", "") or "",
         "created_by": ws.created_by,
         "create_time": getattr(ws, "create_time", None),
     }
@@ -87,6 +88,19 @@ def update_workspace(org_id: str, ws_id: str, body: WsUpdate, user_id: str = Dep
         raise HTTPException(status_code=404, detail="Workspace not found")
 
     update_data = body.model_dump(exclude_none=True)
+    # `bu` est un tag DANS settings_json : on merge au lieu d'écraser le dict
+    # (et on ne laisse pas un settings_json explicite le clobber en silence).
+    if "bu" in update_data:
+        bu = update_data.pop("bu").strip()
+        merged = dict(ws.settings_json or {})
+        if bu:
+            merged["bu"] = bu
+        else:
+            merged.pop("bu", None)  # "" = retirer le tag
+        if "settings_json" in update_data:
+            update_data["settings_json"] = {**merged, **update_data["settings_json"]}
+        else:
+            update_data["settings_json"] = merged
     if update_data:
         WorkspaceService.update_by_id(ws_id, update_data)
 

@@ -1,9 +1,9 @@
 import { useEffect, useState, useCallback } from 'react';
 import { useParams, Link, useNavigate } from 'react-router-dom';
-import { Card, Tabs, Spin, Progress, Row, Col, Statistic, Breadcrumb, Typography, Tag, Button, Modal, Input, App, Table, Space, Select, Switch, InputNumber, Tooltip, Alert, Form } from 'antd';
+import { Card, Tabs, Spin, Progress, Row, Col, Statistic, Breadcrumb, Typography, Tag, Button, Dropdown, Modal, Input, App, Table, Space, Select, Switch, InputNumber, Tooltip, Alert, Form } from 'antd';
 import { DatePicker } from 'antd';
 import type { Dayjs } from 'dayjs';
-import { AppstoreOutlined, TeamOutlined, AuditOutlined, HomeOutlined, DatabaseOutlined, FileOutlined, InboxOutlined, UndoOutlined, FireOutlined, ThunderboltOutlined, BarChartOutlined, WarningOutlined } from '@ant-design/icons';
+import { AppstoreOutlined, TeamOutlined, AuditOutlined, HomeOutlined, DatabaseOutlined, FileOutlined, InboxOutlined, UndoOutlined, FireOutlined, ThunderboltOutlined, BarChartOutlined, WarningOutlined, DownloadOutlined } from '@ant-design/icons';
 import {
   AreaChart, Area, BarChart, Bar, PieChart, Pie,
   XAxis, YAxis, CartesianGrid, Tooltip as RechartsTooltip,
@@ -556,6 +556,22 @@ export default function OrgDetailPage() {
     });
   };
 
+  // Export CSV mensuel de la conso tokens RAG (miroir de l'export Code).
+  const onExportRagCsv = async (month?: string) => {
+    try {
+      const res = await api.get(`/orgs/${orgId}/usage/export`,
+        { params: month ? { month } : {}, responseType: 'blob' });
+      const url = URL.createObjectURL(res.data as Blob);
+      const a = document.createElement('a');
+      a.href = url;
+      a.download = `rag-usage-${month ?? 'mois-courant'}.csv`;
+      a.click();
+      URL.revokeObjectURL(url);
+    } catch {
+      message.error("Échec de l'export CSV");
+    }
+  };
+
   const refreshQuota = useCallback(() => {
     if (!orgId) return;
     api.get(`/orgs/${orgId}/quota`).then((r) => {
@@ -721,10 +737,24 @@ export default function OrgDetailPage() {
                 {/* Token quota */}
                 <Card
                   title={<span>Token quota {quota?.overage_today_workspace_ids?.length ? <Tag color="red" icon={<WarningOutlined />}>Overage today</Tag> : null}</span>}
-                  extra={user?.is_superuser && (
+                  extra={(
                     <Space>
-                      <Button size="small" onClick={handleResetPeriod}>Reset period</Button>
-                      <Button size="small" type="primary" loading={savingQuota} onClick={handleSaveQuota}>Save</Button>
+                      <Tooltip title="Conso tokens du mois par workspace/modèle/jour (CSV)">
+                        <Dropdown menu={{ items: [
+                          { key: 'cur', label: 'Mois courant', onClick: () => onExportRagCsv() },
+                          { key: 'prev', label: 'Mois précédent',
+                            onClick: () => { const d = new Date(); d.setMonth(d.getMonth() - 1);
+                              onExportRagCsv(`${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, '0')}`); } },
+                        ] }}>
+                          <Button size="small" icon={<DownloadOutlined />}>Exporter</Button>
+                        </Dropdown>
+                      </Tooltip>
+                      {user?.is_superuser && (
+                        <>
+                          <Button size="small" onClick={handleResetPeriod}>Reset period</Button>
+                          <Button size="small" type="primary" loading={savingQuota} onClick={handleSaveQuota}>Save</Button>
+                        </>
+                      )}
                     </Space>
                   )}
                 >

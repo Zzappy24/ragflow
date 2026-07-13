@@ -85,6 +85,8 @@ class WsUpdate(BaseModel):
     description: str | None = Field(default=None, max_length=1024)
     status: str | None = Field(default=None, pattern=r"^[01]$")
     settings_json: dict | None = None
+    # Tag d'organisation libre (ex. BU) — mergé dans settings_json, "" = retirer.
+    bu: str | None = Field(default=None, max_length=64)
 
 
 class WsResponse(BaseModel):
@@ -94,6 +96,7 @@ class WsResponse(BaseModel):
     name: str
     description: str = ""
     status: str = "1"
+    bu: str = ""
     created_by: str | None = None
     create_time: datetime | None = None
 

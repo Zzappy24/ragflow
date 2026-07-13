@@ -10,7 +10,7 @@ from collections import defaultdict
 
 from fastapi import APIRouter, Depends, HTTPException, status
 
-from management.server.auth.dependencies import get_current_user_id, require_superuser
+from management.server.auth.dependencies import get_current_user_id, require_org_admin, require_superuser
 
 router = APIRouter()
 
@@ -457,6 +457,51 @@ def global_quota_overview(_user=Depends(require_superuser)):
 
 
 # ─── token quota status ────────────────────────────────────────────────────────
+
+@router.get("/orgs/{org_id}/usage/export")
+def export_rag_usage(org_id: str, month: str | None = None,
+                     user_id: str = Depends(get_current_user_id)):
+    """Export CSV mensuel de la conso tokens RAG (facturation) — une ligne
+    par workspace, modèle et jour depuis TokenUsageDaily. Miroir de l'export
+    Code : séparateur ';' + BOM UTF-8 (Excel FR), month=YYYY-MM (défaut mois
+    courant). Colonne bu = tag du workspace (settings_json)."""
+    import csv
+    import io
+    import re as _re
+    from fastapi.responses import Response
+
+    require_org_admin(org_id, user_id)
+    if month is None:
+        month = date.today().strftime("%Y-%m")
+    if not _re.fullmatch(r"\d{4}-(0[1-9]|1[0-2])", month):
+        raise HTTPException(status_code=422, detail="month must be YYYY-MM")
+
+    from api.db.db_models import DB, Workspace as WsModel, TokenUsageDaily
+    with DB.connection_context():
+        # tous statuts : la conso passée d'un workspace archivé se facture aussi
+        workspaces = list(WsModel.select().where(WsModel.org_id == org_id))
+        ws_by_tenant = {w.tenant_id: w for w in workspaces}
+        first = date(int(month[:4]), int(month[5:7]), 1)
+        nxt = (first + timedelta(days=32)).replace(day=1)
+        rows = list(TokenUsageDaily.select().where(
+            (TokenUsageDaily.tenant_id.in_(list(ws_by_tenant.keys()) or [""]))
+            & (TokenUsageDaily.date >= str(first))
+            & (TokenUsageDaily.date < str(nxt))
+        ).order_by(TokenUsageDaily.tenant_id, TokenUsageDaily.date))
+
+    buf = io.StringIO()
+    w = csv.writer(buf, delimiter=";")
+    w.writerow(["date", "workspace", "bu", "modele", "type", "tokens"])
+    for r in rows:
+        ws = ws_by_tenant.get(r.tenant_id)
+        w.writerow([r.date, ws.name if ws else r.tenant_id,
+                    ((ws.settings_json or {}).get("bu", "") if ws else ""),
+                    r.llm_name, r.model_type, r.tokens])
+    csv_bytes = "\ufeff" + buf.getvalue()
+    return Response(content=csv_bytes, media_type="text/csv; charset=utf-8",
+                    headers={"Content-Disposition":
+                             f'attachment; filename="rag-usage-{org_id[:8]}-{month}.csv"'})
+
 
 @router.get("/orgs/{org_id}/quota")
 def org_quota_status(org_id: str, user_id: str = Depends(get_current_user_id)):

@@ -351,7 +351,7 @@ def export_code_usage(org_id: str, month: str | None = None,
     require_org_admin(org_id, user_id)
     if month is None:
         month = datetime.date.today().strftime("%Y-%m")
-    if not _re.fullmatch(r"\d{4}-\d{2}", month):
+    if not _re.fullmatch(r"\d{4}-(0[1-9]|1[0-2])", month):
         raise HTTPException(status_code=422, detail="month must be YYYY-MM")
 
     from api.db.db_models import DB, CodeTeam, CodeSpendSnapshot
