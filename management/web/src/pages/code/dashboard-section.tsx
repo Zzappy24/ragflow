@@ -1,8 +1,9 @@
 import { useCallback, useEffect, useRef, useState } from 'react';
-import { Alert, Card, Col, Row, Statistic, Table, Tag, Progress } from 'antd';
-import { EuroOutlined, BankOutlined, TeamOutlined, KeyOutlined, WarningOutlined } from '@ant-design/icons';
+import { Alert, App, Button, Card, Col, Row, Statistic, Table, Tag, Progress } from 'antd';
+import { EuroOutlined, BankOutlined, TeamOutlined, KeyOutlined, WarningOutlined, SyncOutlined } from '@ant-design/icons';
 import { AreaChart, Area, XAxis, YAxis, CartesianGrid, Tooltip, ResponsiveContainer } from 'recharts';
 import api from '@/lib/api';
+import { useAuthStore } from '@/stores/auth';
 
 interface DashboardData {
   kpis: {
@@ -26,7 +27,10 @@ export const fmtTokens = (n: number): string => {
 export default function CodeDashboardSection() {
   const [data, setData] = useState<DashboardData | null>(null);
   const [loadFailed, setLoadFailed] = useState(false);
+  const [reconciling, setReconciling] = useState(false);
   const timer = useRef<ReturnType<typeof setInterval> | null>(null);
+  const { user } = useAuthStore();
+  const { message } = App.useApp();
 
   const fetchData = useCallback(() => {
     api.get('/code/dashboard')
@@ -46,6 +50,26 @@ export default function CodeDashboardSection() {
     document.addEventListener('visibilitychange', onVisibility);
     return () => { stop(); document.removeEventListener('visibilitychange', onVisibility); };
   }, [fetchData]);
+
+  // Superuser only (la route est require_superuser) : force un passage
+  // reconcile LiteLLM + snapshot tokens sans attendre le tick 15 min du
+  // scheduler — utile après un incident gateway (teams/clés en pending).
+  const onReconcile = async () => {
+    setReconciling(true);
+    try {
+      const res = await api.post('/code/reconcile');
+      const r = res.data;
+      message.success(
+        `Resynchronisé : ${r.teams_synced ?? 0} team(s), ${r.keys_synced ?? 0} clé(s), ` +
+        `${r.teams_snapshotted ?? 0} relevé(s) tokens, ${r.errors ?? 0} erreur(s)`);
+      fetchData();
+    } catch (err: unknown) {
+      const msg = (err as { response?: { data?: { detail?: string } } })?.response?.data?.detail;
+      message.error(msg ?? 'Échec de la resynchronisation');
+    } finally {
+      setReconciling(false);
+    }
+  };
 
   if (loadFailed && !data) {
     return <Alert className="mb-4" type="error" message="Dashboard indisponible"
@@ -109,12 +133,20 @@ export default function CodeDashboardSection() {
           </Card>
         </Col>
       </Row>
-      {data.last_housekeeping_at && (
-        <div className="text-gray-400 text-xs mt-2">
-          Tokens et erreurs relevés toutes les 15 min · dernier relevé
-          : {new Date(data.last_housekeeping_at).toLocaleString()} · dépenses € en temps réel
-        </div>
-      )}
+      <div className="flex items-center gap-3 mt-2">
+        {data.last_housekeeping_at && (
+          <div className="text-gray-400 text-xs">
+            Tokens et erreurs relevés toutes les 15 min · dernier relevé
+            : {new Date(data.last_housekeeping_at).toLocaleString()} · dépenses € en temps réel
+          </div>
+        )}
+        {user?.is_superuser && (
+          <Button size="small" icon={<SyncOutlined spin={reconciling} />} loading={reconciling}
+                  onClick={onReconcile}>
+            Resynchroniser
+          </Button>
+        )}
+      </div>
     </div>
   );
 }

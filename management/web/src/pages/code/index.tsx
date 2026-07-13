@@ -1,7 +1,7 @@
 import { useEffect, useState, useCallback } from 'react';
 import { useSearchParams } from 'react-router-dom';
 import { Table, Button, Card, Modal, Form, Input, InputNumber, App, Progress, Tag, Popconfirm, Space, Tooltip, Typography, Alert } from 'antd';
-import { PlusOutlined, StopOutlined, CopyOutlined, MailOutlined, ReloadOutlined, DeleteOutlined } from '@ant-design/icons';
+import { PlusOutlined, StopOutlined, CopyOutlined, MailOutlined, ReloadOutlined, DeleteOutlined, EditOutlined, UserAddOutlined } from '@ant-design/icons';
 import api from '@/lib/api';
 import CodeDashboardSection, { fmtTokens } from './dashboard-section';
 
@@ -42,6 +42,10 @@ export default function CodePage() {
   const [freshKey, setFreshKey] = useState<string | null>(null);
   const [teamForm] = Form.useForm();
   const [keyForm] = Form.useForm();
+  const [budgetModalTeam, setBudgetModalTeam] = useState<CodeTeam | null>(null);
+  const [budgetForm] = Form.useForm();
+  const [adminModalTeam, setAdminModalTeam] = useState<CodeTeam | null>(null);
+  const [adminForm] = Form.useForm();
   const { message } = App.useApp();
 
   // Bulk seat invites — one CodeKeyInvite per email, no key created until claim.
@@ -153,6 +157,35 @@ export default function CodePage() {
     } catch (err: unknown) {
       const msg = (err as { response?: { data?: { detail?: string } } })?.response?.data?.detail;
       message.error(msg ?? 'Échec de la suppression de la team');
+    }
+  };
+
+  const onUpdateBudget = async () => {
+    if (!budgetModalTeam) return;
+    try {
+      const values = await budgetForm.validateFields();
+      await api.put(`/code/teams/${budgetModalTeam.id}`, values);
+      message.success('Budget mis à jour');
+      setBudgetModalTeam(null);
+      budgetForm.resetFields();
+      fetchOverview();
+    } catch (err: unknown) {
+      const msg = (err as { response?: { data?: { detail?: string } } })?.response?.data?.detail;
+      if (msg) message.error(msg);
+    }
+  };
+
+  const onAddAdmin = async () => {
+    if (!adminModalTeam) return;
+    try {
+      const values = await adminForm.validateFields();
+      await api.post(`/code/teams/${adminModalTeam.id}/admins`, values);
+      message.success(`${values.email} peut maintenant gérer les clés de « ${adminModalTeam.name} »`);
+      setAdminModalTeam(null);
+      adminForm.resetFields();
+    } catch (err: unknown) {
+      const msg = (err as { response?: { data?: { detail?: string } } })?.response?.data?.detail;
+      if (msg) message.error(msg);
     }
   };
 
@@ -388,6 +421,14 @@ export default function CodePage() {
                          <Button size="small" icon={<PlusOutlined />}
                                  onClick={() => setKeyModalTeam(team)}>Clé directe</Button>
                        </Tooltip>
+                       <Tooltip title="Modifier le budget de la team">
+                         <Button size="small" icon={<EditOutlined />}
+                                 onClick={() => { setBudgetModalTeam(team); budgetForm.setFieldsValue({ max_budget: team.max_budget }); }} />
+                       </Tooltip>
+                       <Tooltip title="Déléguer la gestion des clés de cette team à un membre de l'organisation (invitations, rotation, révocation — sans accès aux autres teams).">
+                         <Button size="small" icon={<UserAddOutlined />}
+                                 onClick={() => setAdminModalTeam(team)} />
+                       </Tooltip>
                        <Popconfirm
                          title="Supprimer cette team ?"
                          description={(team.keys?.length ?? 0) > 0
@@ -435,6 +476,36 @@ export default function CodePage() {
           <Form.Item name="max_budget" label={`Budget (€ / ${ent?.budget_period ?? '1mo'})`}
                      rules={[{ required: true }]}>
             <InputNumber min={1} max={Math.max(0, total - allocated)} className="w-full" />
+          </Form.Item>
+        </Form>
+      </Modal>
+
+      <Modal title={`Budget — ${budgetModalTeam?.name ?? ''}`} open={!!budgetModalTeam}
+             onOk={onUpdateBudget}
+             onCancel={() => { setBudgetModalTeam(null); budgetForm.resetFields(); }}>
+        <Form form={budgetForm} layout="vertical">
+          <Form.Item name="max_budget" label={`Budget (€ / ${ent?.budget_period ?? '1mo'})`}
+                     rules={[{ required: true }]}
+                     extra={`Disponible dans l'organisation : ${euro(Math.max(0, total - allocated + (budgetModalTeam?.max_budget ?? 0)))} max`}>
+            <InputNumber min={1}
+                         max={Math.max(0, total - allocated + (budgetModalTeam?.max_budget ?? 0))}
+                         className="w-full" />
+          </Form.Item>
+        </Form>
+      </Modal>
+
+      <Modal title={`Déléguer la gestion — ${adminModalTeam?.name ?? ''}`} open={!!adminModalTeam}
+             onOk={onAddAdmin} okText="Déléguer"
+             onCancel={() => { setAdminModalTeam(null); adminForm.resetFields(); }}>
+        <Typography.Paragraph type="secondary">
+          La personne pourra inviter des sièges, créer, faire tourner et révoquer les clés de
+          cette team uniquement. Elle doit avoir un compte actif du panel, membre de cette
+          organisation.
+        </Typography.Paragraph>
+        <Form form={adminForm} layout="vertical">
+          <Form.Item name="email" label="Email du membre"
+                     rules={[{ required: true, type: 'email' }]}>
+            <Input placeholder="prenom.nom@client.com" />
           </Form.Item>
         </Form>
       </Modal>
