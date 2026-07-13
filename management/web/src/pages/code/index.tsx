@@ -27,6 +27,27 @@ interface OrgSummary {
 
 const euro = (v: number) => `${Math.round(v * 100) / 100} €`;
 
+// L'API renvoie des détails techniques en anglais ; on traduit les cas
+// connus, et on garde le message brut en dernier recours (debug).
+const frMsg = (msg?: string): string | undefined => {
+  if (!msg) return undefined;
+  if (msg.includes('allocation exceeded')) return "Budget de l'organisation dépassé — réduisez ce budget ou augmentez celui de l'organisation.";
+  if (msg.includes('below current allocation')) return 'Budget organisation inférieur au total déjà alloué aux teams — réduisez d\'abord les budgets des teams.';
+  if (msg.includes('not yet synced')) return 'Synchronisation avec la gateway en cours — réessayez dans quelques secondes.';
+  if (msg.includes('entitlement is not active')) return "Le produit Code n'est pas activé pour cette organisation.";
+  if (msg.includes('Gateway unavailable')) return 'Gateway injoignable — réessayez dans quelques instants.';
+  if (msg.includes('already claimed')) return 'Invitation déjà utilisée — révoquez la clé à la place.';
+  if (msg.includes('max_budget must be')) return 'Le budget doit être strictement positif.';
+  if (msg.includes('rpm_limit must be')) return 'La limite de requêtes/minute doit être strictement positive.';
+  return msg;
+};
+
+// Statuts de synchro : notre jargon interne, traduit pour l'admin client.
+const syncTag = (sync: string) => sync === 'synced' ? null
+  : <Tag color={sync === 'error' ? 'red' : 'orange'}>
+      {sync === 'error' ? 'erreur de synchro' : 'synchronisation…'}
+    </Tag>;
+
 // Le backend préfixe les liens de claim avec ADMIN_PANEL_PUBLIC_URL — vide en
 // dev, le lien arrive relatif. Le front connaît toujours sa vraie origine :
 // on absolutise à l'affichage pour que le copier-coller marche partout.
@@ -130,7 +151,7 @@ export default function CodePage({ orgId: orgIdProp }: { orgId?: string } = {}) 
       fetchOverview();
     } catch (err: unknown) {
       const msg = (err as { response?: { data?: { detail?: string } } })?.response?.data?.detail;
-      if (msg) message.error(msg);
+      if (msg) message.error(frMsg(msg));
     }
   };
 
@@ -149,7 +170,7 @@ export default function CodePage({ orgId: orgIdProp }: { orgId?: string } = {}) 
       fetchOverview();
     } catch (err: unknown) {
       const msg = (err as { response?: { data?: { detail?: string } } })?.response?.data?.detail;
-      if (msg) message.error(msg);
+      if (msg) message.error(frMsg(msg));
     }
   };
 
@@ -160,7 +181,7 @@ export default function CodePage({ orgId: orgIdProp }: { orgId?: string } = {}) 
       fetchOverview();
     } catch (err: unknown) {
       const msg = (err as { response?: { data?: { detail?: string } } })?.response?.data?.detail;
-      message.error(msg ?? 'Échec de la révocation de la clé');
+      message.error(frMsg(msg) ?? 'Échec de la révocation de la clé');
     }
   };
 
@@ -173,7 +194,7 @@ export default function CodePage({ orgId: orgIdProp }: { orgId?: string } = {}) 
       fetchOverview();
     } catch (err: unknown) {
       const msg = (err as { response?: { data?: { detail?: string } } })?.response?.data?.detail;
-      message.error(msg ?? 'Échec de la suppression de la team');
+      message.error(frMsg(msg) ?? 'Échec de la suppression de la team');
     }
   };
 
@@ -188,7 +209,7 @@ export default function CodePage({ orgId: orgIdProp }: { orgId?: string } = {}) 
       fetchOverview();
     } catch (err: unknown) {
       const msg = (err as { response?: { data?: { detail?: string } } })?.response?.data?.detail;
-      if (msg) message.error(msg);
+      if (msg) message.error(frMsg(msg));
     }
   };
 
@@ -208,7 +229,7 @@ export default function CodePage({ orgId: orgIdProp }: { orgId?: string } = {}) 
       fetchTeamAdmins(adminModalTeam.id);
     } catch (err: unknown) {
       const msg = (err as { response?: { data?: { detail?: string } } })?.response?.data?.detail;
-      if (msg) message.error(msg);
+      if (msg) message.error(frMsg(msg));
     }
   };
 
@@ -220,7 +241,7 @@ export default function CodePage({ orgId: orgIdProp }: { orgId?: string } = {}) 
       fetchTeamAdmins(adminModalTeam.id);
     } catch (err: unknown) {
       const msg = (err as { response?: { data?: { detail?: string } } })?.response?.data?.detail;
-      message.error(msg ?? 'Échec de la révocation de la délégation');
+      message.error(frMsg(msg) ?? 'Échec de la révocation de la délégation');
     }
   };
 
@@ -235,7 +256,7 @@ export default function CodePage({ orgId: orgIdProp }: { orgId?: string } = {}) 
       fetchInvites(bulkModalTeam.id);
     } catch (err: unknown) {
       const msg = (err as { response?: { data?: { detail?: string } } })?.response?.data?.detail;
-      message.error(msg ?? "Échec de l'invitation en masse");
+      message.error(frMsg(msg) ?? "Échec de l'invitation en masse");
     }
   };
 
@@ -252,7 +273,7 @@ export default function CodePage({ orgId: orgIdProp }: { orgId?: string } = {}) 
       fetchInvites(team.id);
     } catch (err: unknown) {
       const msg = (err as { response?: { data?: { detail?: string } } })?.response?.data?.detail;
-      message.error(msg ?? 'Échec du renvoi groupé');
+      message.error(frMsg(msg) ?? 'Échec du renvoi groupé');
     }
   };
 
@@ -274,7 +295,7 @@ export default function CodePage({ orgId: orgIdProp }: { orgId?: string } = {}) 
       fetchInvites(teamId);
     } catch (err: unknown) {
       const msg = (err as { response?: { data?: { detail?: string } } })?.response?.data?.detail;
-      message.error(msg ?? 'Échec du renvoi');
+      message.error(frMsg(msg) ?? 'Échec du renvoi');
     }
   };
 
@@ -292,7 +313,7 @@ export default function CodePage({ orgId: orgIdProp }: { orgId?: string } = {}) 
       fetchOverview();
     } catch (err: unknown) {
       const msg = (err as { response?: { data?: { detail?: string } } })?.response?.data?.detail;
-      if (msg) message.error(msg);
+      if (msg) message.error(frMsg(msg));
     }
   };
 
@@ -303,7 +324,7 @@ export default function CodePage({ orgId: orgIdProp }: { orgId?: string } = {}) 
       fetchInvites(teamId);
     } catch (err: unknown) {
       const msg = (err as { response?: { data?: { detail?: string } } })?.response?.data?.detail;
-      message.error(msg ?? "Échec de l'annulation");
+      message.error(frMsg(msg) ?? "Échec de l'annulation");
     }
   };
 
@@ -325,7 +346,7 @@ export default function CodePage({ orgId: orgIdProp }: { orgId?: string } = {}) 
       fetchOverview();
     } catch (err: unknown) {
       const msg = (err as { response?: { data?: { detail?: string } } })?.response?.data?.detail;
-      message.error(msg ?? 'Échec de la rotation de la clé');
+      message.error(frMsg(msg) ?? 'Échec de la rotation de la clé');
     }
   };
 
@@ -413,7 +434,7 @@ export default function CodePage({ orgId: orgIdProp }: { orgId?: string } = {}) 
         return k.max_budget != null ? `${spent} / ${euro(k.max_budget)}` : (v == null ? '—' : `${spent} €`);
       } },
     { title: 'Statut', dataIndex: 'status', render: (s: string) => <Tag color={s === 'active' ? 'green' : 'red'}>{s}</Tag> },
-    { title: 'Sync', dataIndex: 'sync_status', render: (s: string) => <Tag color={s === 'synced' ? 'blue' : 'orange'}>{s}</Tag> },
+    { title: '', dataIndex: 'sync_status', width: 130, render: (s: string) => syncTag(s) },
     {
       title: '', width: 100,
       render: (_: unknown, k: CodeKey) => k.status === 'active' && (
@@ -480,7 +501,7 @@ export default function CodePage({ orgId: orgIdProp }: { orgId?: string } = {}) 
                        {team.spend != null ? `${euro(team.spend)} / ${euro(team.max_budget)}` : `— / ${euro(team.max_budget)}`}
                      </Tag>
                      <Tag color="geekblue">{team.tokens_today == null ? '— tokens' : `${fmtTokens(team.tokens_today)} tokens auj.`}</Tag>
-                     {team.sync_status !== 'synced' && <Tag color="orange">{team.sync_status}</Tag>}</Space>}
+                     {syncTag(team.sync_status)}</Space>}
               extra={<Space>
                        <Tooltip title="Le flux nominal pour des développeurs : chaque email reçoit un lien one-time et récupère sa clé lui-même — vous ne voyez jamais la clé.">
                          <Button size="small" type="primary" ghost icon={<MailOutlined />}
