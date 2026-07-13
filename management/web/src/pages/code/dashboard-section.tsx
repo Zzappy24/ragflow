@@ -77,9 +77,24 @@ export default function CodeDashboardSection() {
   }
   if (!data) return <Card loading className="mb-4" />;
   const { kpis } = data;
+  // Relevés interrompus : scheduler mort (lifespan pas parti — la leçon
+  // asgi.py), pod mgmt down, ou DB.lock bloqué. Le spend € reste temps réel
+  // mais tokens/erreurs/alertes budget ne bougent plus.
+  const staleMs = data.last_housekeeping_at
+    ? Date.now() - new Date(data.last_housekeeping_at).getTime() : null;
+  const staleMin = staleMs != null ? Math.round(staleMs / 60000) : null;
+  const housekeepingStale = staleMin != null && staleMin > 60;
 
   return (
     <div className="mb-4">
+      {housekeepingStale && (
+        <Alert className="mb-3" type="warning" showIcon
+          message={`Relevés tokens interrompus depuis ${staleMin} min`}
+          description="Le housekeeping (15 min) ne tourne plus : vérifier le pod mgmt-backend (ligne « code housekeeping scheduler started » dans ses logs). Dépenses € toujours en temps réel ; tokens, erreurs et alertes budget figés."
+          action={user?.is_superuser
+            ? <Button size="small" onClick={onReconcile} loading={reconciling}>Relancer</Button>
+            : undefined} />
+      )}
       <Row gutter={[12, 12]} className="mb-3">
         <Col span={4}><Card size="small"><Statistic title="Dépensé (cycle)" prefix={<EuroOutlined />}
           value={kpis.cycle_spend ?? '—'} suffix={kpis.cycle_spend != null ? '€' : ''} /></Card></Col>

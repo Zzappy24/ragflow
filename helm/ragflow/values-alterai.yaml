@@ -256,4 +256,6 @@ vllm:
 ragflow-management-backend:
   code:
     litellmBaseUrl: "http://litellm.litellm.svc.cluster.local:4000"
+    housekeepingCronJob:
+      enabled: true
     gatewayPublicUrl: "http://litellm.cyllene.cloud/v1"  # TODO: passer en https dès le cert devops
