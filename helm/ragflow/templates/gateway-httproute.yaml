@@ -18,7 +18,10 @@ spec:
   parentRefs:
     - name: {{ .Values.global.gatewayName }}
       namespace: {{ .Values.global.gatewayNamespace }}
-      sectionName: web        # named listener on the Gateway (TLS terminated)
+      # Attache au listener HTTPS quand il existe (global.httpsListenerName,
+      # ex. "https-ragflow"), sinon au listener 80 historique. Quand HTTPS est
+      # actif, une route de redirect 301 est rendue plus bas pour le port 80.
+      sectionName: {{ .Values.global.httpsListenerName | default "web" }}
   hostnames:
     - {{ .Values.global.hostname | quote }}
 
@@ -80,4 +83,30 @@ spec:
       kind: Service
       # Allow the Gateway in another namespace to route to BOTH our
       # Services (api + frontend) without naming them individually.
+{{- if .Values.global.httpsListenerName }}
+---
+# Redirect 80 -> 443 : attaché UNIQUEMENT au listener web. La route de
+# contenu vit sur le listener HTTPS (sectionName ci-dessus) — sans cette
+# séparation, la route de contenu (plus ancienne) gagnerait le conflit sur
+# le port 80 et le redirect ne s'appliquerait jamais.
+apiVersion: gateway.networking.k8s.io/v1
+kind: HTTPRoute
+metadata:
+  name: {{ .Release.Name }}-https-redirect
+  labels:
+    {{- include "ragflow.labels" . | nindent 4 }}
+spec:
+  parentRefs:
+    - name: {{ .Values.global.gatewayName }}
+      namespace: {{ .Values.global.gatewayNamespace }}
+      sectionName: web
+  hostnames:
+    - {{ .Values.global.hostname | quote }}
+  rules:
+    - filters:
+        - type: RequestRedirect
+          requestRedirect:
+            scheme: https
+            statusCode: 301
+{{- end }}
 {{- end }}

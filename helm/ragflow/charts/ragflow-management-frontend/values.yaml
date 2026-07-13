@@ -40,3 +40,7 @@ probes:
     enabled: true
     initialDelaySeconds: 2
     periodSeconds: 5
+# Nom du listener HTTPS du Gateway partagé pour ce hostname (ex. "https-mgmt").
+# Vide = comportement historique (route attachée à tous les listeners, pas de
+# redirect 80->443).
+httpsListenerName: ""
