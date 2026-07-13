@@ -1,7 +1,7 @@
 import { useEffect, useState, useCallback } from 'react';
 import { useSearchParams } from 'react-router-dom';
-import { Table, Button, Card, Modal, Form, Input, InputNumber, App, Progress, Tag, Popconfirm, Space, Tooltip, Typography, Alert } from 'antd';
-import { PlusOutlined, StopOutlined, CopyOutlined, MailOutlined, ReloadOutlined, DeleteOutlined, EditOutlined, UserAddOutlined } from '@ant-design/icons';
+import { Table, Button, Card, Dropdown, Modal, Form, Input, InputNumber, App, Progress, Tag, Popconfirm, Space, Tooltip, Typography, Alert } from 'antd';
+import { PlusOutlined, StopOutlined, CopyOutlined, MailOutlined, ReloadOutlined, DeleteOutlined, EditOutlined, UserAddOutlined, DownloadOutlined } from '@ant-design/icons';
 import api from '@/lib/api';
 import CodeDashboardSection, { fmtTokens } from './dashboard-section';
 
@@ -267,6 +267,21 @@ export default function CodePage() {
     }
   };
 
+  const onExportCsv = async (month?: string) => {
+    try {
+      const res = await api.get(`/orgs/${orgId}/code/export`,
+        { params: month ? { month } : {}, responseType: 'blob' });
+      const url = URL.createObjectURL(res.data as Blob);
+      const a = document.createElement('a');
+      a.href = url;
+      a.download = `code-usage-${month ?? 'mois-courant'}.csv`;
+      a.click();
+      URL.revokeObjectURL(url);
+    } catch {
+      message.error("Échec de l'export CSV");
+    }
+  };
+
   const onUpdateKeyLimits = async () => {
     if (!limitsModalKey) return;
     try {
@@ -437,9 +452,21 @@ export default function CodePage() {
           {ent?.status === 'active' && <Tag color="green" className="ml-2">actif</Tag>}
           {ent?.status === 'suspended' && <Tag color="orange" className="ml-2">suspendu</Tag>}
         </h2>
-        <Button type="primary" icon={<PlusOutlined />} onClick={() => setTeamModal(true)}>
-          Nouvelle code-team
-        </Button>
+        <Space>
+          <Tooltip title="Conso du mois par team et par jour (CSV, pour la facturation)">
+            <Dropdown menu={{ items: [
+              { key: 'cur', label: 'Mois courant', onClick: () => onExportCsv() },
+              { key: 'prev', label: 'Mois précédent',
+                onClick: () => { const d = new Date(); d.setMonth(d.getMonth() - 1);
+                  onExportCsv(`${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, '0')}`); } },
+            ] }}>
+              <Button icon={<DownloadOutlined />}>Exporter</Button>
+            </Dropdown>
+          </Tooltip>
+          <Button type="primary" icon={<PlusOutlined />} onClick={() => setTeamModal(true)}>
+            Nouvelle code-team
+          </Button>
+        </Space>
       </div>
 
       {overview?.gateway_url && (

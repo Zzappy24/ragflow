@@ -474,3 +474,37 @@ def test_update_key_limits_rbac_and_validation(panel_client, org_with_entitlemen
     assert client.put(f"/api/admin/code/keys/{key['id']}",
                       json={"max_budget": -1, "rpm_limit": None},
                       headers=_h(tokens["org_admin"])).status_code == 422
+
+
+def test_export_csv_org_admin_only_with_snapshot_rows(panel_client, org_with_entitlement_and_users):
+    import datetime
+    from api.db.db_models import DB, CodeSpendSnapshot
+    from common.misc_utils import get_uuid
+    client, _ = panel_client
+    org_id, tokens = org_with_entitlement_and_users
+    team = client.post(f"/api/admin/orgs/{org_id}/code/teams",
+                       json={"name": "export-t", "max_budget": 10.0, "model_access": []},
+                       headers=_h(tokens["org_admin"])).json()
+    today = datetime.date.today()
+    with DB.connection_context():
+        CodeSpendSnapshot.create(id=get_uuid(), snap_date=today, org_id=org_id,
+                                 code_team_id=team["id"], spend=4.2, max_budget=10.0,
+                                 tokens=1234, errors=0)
+
+    month = today.strftime("%Y-%m")
+    assert client.get(f"/api/admin/orgs/{org_id}/code/export?month={month}",
+                      headers=_h(tokens["plain_member"])).status_code == 403
+    r = client.get(f"/api/admin/orgs/{org_id}/code/export?month={month}",
+                   headers=_h(tokens["org_admin"]))
+    assert r.status_code == 200
+    assert "text/csv" in r.headers["content-type"]
+    assert "attachment" in r.headers["content-disposition"]
+    body = r.text
+    assert "date;team;depense_cumulee_cycle_eur" in body
+    assert f"{today};export-t;4.2;10.0;1234;0" in body
+
+    assert client.get(f"/api/admin/orgs/{org_id}/code/export?month=13-2026",
+                      headers=_h(tokens["org_admin"])).status_code == 422
+
+    with DB.connection_context():
+        CodeSpendSnapshot.delete().where(CodeSpendSnapshot.code_team_id == team["id"]).execute()

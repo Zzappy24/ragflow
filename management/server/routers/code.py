@@ -1,4 +1,5 @@
 """Code product routes — entitlements (superuser), teams (org admin), keys (delegated)."""
+import datetime
 import time
 
 from fastapi import APIRouter, Depends, HTTPException, Request, status
@@ -333,6 +334,50 @@ def code_overview(org_id: str, user_id: str = Depends(get_current_user_id)):
         "org_spend": sum(known) if spend_map is not None else None,
         "teams": team_dicts,
     }
+
+
+@router.get("/orgs/{org_id}/code/export")
+def export_code_usage(org_id: str, month: str | None = None,
+                      user_id: str = Depends(get_current_user_id)):
+    """Export CSV mensuel de la conso Code (facturation) — une ligne par
+    team et par jour depuis les snapshots. spend = cumul du cycle au moment
+    du relevé ; tokens/erreurs = valeurs du jour. Séparateur ';' + BOM UTF-8
+    (Excel FR). month=YYYY-MM, défaut = mois courant."""
+    import csv
+    import io
+    import re as _re
+    from fastapi.responses import Response
+
+    require_org_admin(org_id, user_id)
+    if month is None:
+        month = datetime.date.today().strftime("%Y-%m")
+    if not _re.fullmatch(r"\d{4}-\d{2}", month):
+        raise HTTPException(status_code=422, detail="month must be YYYY-MM")
+
+    from api.db.db_models import DB, CodeTeam, CodeSpendSnapshot
+    with DB.connection_context():
+        team_names = {t.id: t.name for t in CodeTeam.select().where(CodeTeam.org_id == org_id)}
+        first = datetime.date(int(month[:4]), int(month[5:7]), 1)
+        nxt = (first + datetime.timedelta(days=32)).replace(day=1)
+        rows = list(CodeSpendSnapshot.select().where(
+            (CodeSpendSnapshot.org_id == org_id)
+            & (CodeSpendSnapshot.snap_date >= first)
+            & (CodeSpendSnapshot.snap_date < nxt)
+        ).order_by(CodeSpendSnapshot.code_team_id, CodeSpendSnapshot.snap_date))
+
+    buf = io.StringIO()
+    w = csv.writer(buf, delimiter=";")
+    w.writerow(["date", "team", "depense_cumulee_cycle_eur", "budget_team_eur",
+                "tokens_jour", "erreurs_jour"])
+    for r in rows:
+        w.writerow([str(r.snap_date), team_names.get(r.code_team_id, r.code_team_id),
+                    r.spend, r.max_budget,
+                    "" if r.tokens is None else r.tokens,
+                    "" if r.errors is None else r.errors])
+    csv_bytes = "\ufeff" + buf.getvalue()  # BOM: Excel ouvre l'UTF-8 proprement
+    return Response(content=csv_bytes, media_type="text/csv; charset=utf-8",
+                    headers={"Content-Disposition":
+                             f'attachment; filename="code-usage-{org_id[:8]}-{month}.csv"'})
 
 
 @router.post("/orgs/{org_id}/code/teams", status_code=status.HTTP_201_CREATED)
