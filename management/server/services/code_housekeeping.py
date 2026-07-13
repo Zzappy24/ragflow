@@ -116,6 +116,8 @@ def _housekeeping_impl(client=None) -> dict:
     return {"run_id": run_id, "teams_snapshotted": teams_snapshotted,
             "keys_synced": rec["keys_synced"], "teams_synced": rec["teams_synced"],
             "budget_alerts": budget_alerts,
+            "orphan_teams": rec.get("orphan_teams", 0),
+            "orphan_keys_blocked": rec.get("orphan_keys_blocked", 0),
             "errors": errors, "ran_at": ran_at.isoformat()}
 
 

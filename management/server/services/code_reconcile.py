@@ -88,4 +88,93 @@ def reconcile_all(client=None) -> dict:
         report["errors"] += 1
         logger.warning("code_key %s flagged for manual recreate", key.id)
 
+    # --- 4. alias-diff sweep: gateway -> panel (l'inverse des phases 1-3) ---
+    try:
+        sweep = sweep_gateway_orphans(client=cl)
+        report.update(sweep)
+    except LiteLLMError as e:
+        logger.warning("alias-diff sweep skipped (gateway): %s", e)
+        report["errors"] += 1
+
+    return report
+
+
+def _parse_alias(alias: str, kind: str) -> str | None:
+    """Extrait l'id local d'un alias déterministe 'org:<org>:team|key:<id>'.
+    None si l'alias ne suit pas notre convention (objet étranger — jamais touché)."""
+    parts = (alias or "").split(":")
+    if len(parts) == 4 and parts[0] == "org" and parts[2] == kind and parts[3]:
+        return parts[3]
+    return None
+
+
+def sweep_gateway_orphans(client=None) -> dict:
+    """Balayage d'intégrité gateway -> panel, sur NOS objets uniquement
+    (identifiés par la convention d'alias). Couvre les angles morts du
+    desired-state (create réussi côté LiteLLM mais réponse perdue avant
+    l'écriture locale, double-création par race du reconciler, claim
+    re-tenté après sentinel stale) :
+
+    - clé avec notre alias mais SANS row locale -> /key/block (une clé sans
+      gouvernance panel est un accès fantôme ; le plaintext est peut-être
+      distribué). Comptée dans orphan_keys_blocked.
+    - clé dont la row locale dit revoked/blocked mais que la gateway liste
+      débloquée -> /key/block (re-convergence sécurité).
+    - team avec notre alias mais sans row locale -> comptée (orphan_teams)
+      et loggée, JAMAIS supprimée automatiquement (le spend upstream est de
+      l'historique de facturation ; décision humaine).
+
+    Les objets sans notre convention d'alias ne sont jamais touchés.
+    """
+    from api.db.db_models import DB, CodeTeam, CodeKey
+    cl = _client(client)
+    report = {"orphan_teams": 0, "orphan_keys_blocked": 0}
+
+    gateway_teams = cl.list_teams()
+
+    with DB.connection_context():
+        known_team_ids = {t.id for t in CodeTeam.select(CodeTeam.id)}
+        active_llm_ids = {t.litellm_team_id for t in CodeTeam.select(CodeTeam.litellm_team_id)
+                          .where((CodeTeam.status == "active")
+                                 & (CodeTeam.litellm_team_id.is_null(False)))}
+
+    for gt in gateway_teams:
+        local_id = _parse_alias(gt.get("team_alias"), "team")
+        if local_id is None:
+            continue  # objet étranger (autre produit / manuel) — pas à nous
+        if local_id not in known_team_ids:
+            report["orphan_teams"] += 1
+            logger.warning("alias-diff: team LiteLLM %s (alias %s) sans row panel — "
+                           "spend upstream conservé, traiter manuellement",
+                           gt.get("team_id"), gt.get("team_alias"))
+
+    # Clés : un /key/list par team ACTIVE connue (les teams archivées ont
+    # déjà toutes leurs clés révoquées par delete_code_team).
+    for llm_team_id in active_llm_ids:
+        try:
+            gateway_keys = cl.list_keys(llm_team_id)
+        except LiteLLMError as e:
+            logger.warning("alias-diff: key list indisponible pour %s: %s", llm_team_id, e)
+            continue
+        for gk in gateway_keys:
+            local_id = _parse_alias(gk.get("key_alias"), "key")
+            if local_id is None:
+                continue
+            with DB.connection_context():
+                row = CodeKey.get_or_none(CodeKey.id == local_id)
+            should_block = (row is None
+                            or (row.status in ("revoked", "blocked")
+                                and gk.get("blocked") is not True))
+            if not should_block:
+                continue
+            try:
+                cl.block_key(gk.get("token"))
+                report["orphan_keys_blocked"] += 1
+                logger.warning("alias-diff: clé %s (%s) bloquée — %s",
+                               gk.get("key_alias"), gk.get("token"),
+                               "aucune row panel" if row is None
+                               else "révoquée localement mais active gateway")
+            except LiteLLMError as e:
+                logger.warning("alias-diff: block failed for %s: %s", gk.get("token"), e)
+
     return report

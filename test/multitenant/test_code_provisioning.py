@@ -65,7 +65,8 @@ class FakeLiteLLM:
 
     def list_keys(self, team_id):
         self._maybe_down()
-        return [{"token": tok, "key_alias": k["key_alias"], "spend": k.get("spend", 0.0)}
+        return [{"token": tok, "key_alias": k["key_alias"], "spend": k.get("spend", 0.0),
+                 "blocked": tok in self.blocked}
                 for tok, k in self.keys.items() if k["team_id"] == team_id]
 
     def block_key(self, token):
