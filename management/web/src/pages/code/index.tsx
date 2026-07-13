@@ -8,6 +8,7 @@ import CodeDashboardSection, { fmtTokens } from './dashboard-section';
 interface CodeKey { id: string; label: string; key_masked: string | null; status: string; sync_status: string; spend: number | null; }
 interface CodeTeam { id: string; name: string; max_budget: number; spend: number | null; status: string; sync_status: string; keys: CodeKey[]; tokens_today: number | null; }
 interface CodeInvite { id: string; email: string; expires_at: string; created_by?: string; }
+interface TeamAdmin { user_id: string; email: string; role: string; }
 interface BulkResult { email: string; invite_id: string; email_sent: boolean; claim_url?: string; }
 interface Overview {
   gateway_url: string | null; // URL publique /v1 à configurer dans Kilo/OpenCode (null = non configurée)
@@ -46,6 +47,7 @@ export default function CodePage() {
   const [budgetForm] = Form.useForm();
   const [adminModalTeam, setAdminModalTeam] = useState<CodeTeam | null>(null);
   const [adminForm] = Form.useForm();
+  const [teamAdmins, setTeamAdmins] = useState<TeamAdmin[] | null>(null);
   const { message } = App.useApp();
 
   // Bulk seat invites — one CodeKeyInvite per email, no key created until claim.
@@ -175,17 +177,35 @@ export default function CodePage() {
     }
   };
 
+  const fetchTeamAdmins = useCallback((teamId: string) => {
+    api.get(`/code/teams/${teamId}/admins`)
+      .then((res) => setTeamAdmins(res.data))
+      .catch(() => setTeamAdmins([]));
+  }, []);
+
   const onAddAdmin = async () => {
     if (!adminModalTeam) return;
     try {
       const values = await adminForm.validateFields();
       await api.post(`/code/teams/${adminModalTeam.id}/admins`, values);
       message.success(`${values.email} peut maintenant gérer les clés de « ${adminModalTeam.name} »`);
-      setAdminModalTeam(null);
       adminForm.resetFields();
+      fetchTeamAdmins(adminModalTeam.id);
     } catch (err: unknown) {
       const msg = (err as { response?: { data?: { detail?: string } } })?.response?.data?.detail;
       if (msg) message.error(msg);
+    }
+  };
+
+  const onRemoveAdmin = async (targetUserId: string) => {
+    if (!adminModalTeam) return;
+    try {
+      await api.delete(`/code/teams/${adminModalTeam.id}/admins/${targetUserId}`);
+      message.success('Délégation révoquée');
+      fetchTeamAdmins(adminModalTeam.id);
+    } catch (err: unknown) {
+      const msg = (err as { response?: { data?: { detail?: string } } })?.response?.data?.detail;
+      message.error(msg ?? 'Échec de la révocation de la délégation');
     }
   };
 
@@ -427,7 +447,7 @@ export default function CodePage() {
                        </Tooltip>
                        <Tooltip title="Déléguer la gestion des clés de cette team à un membre de l'organisation (invitations, rotation, révocation — sans accès aux autres teams).">
                          <Button size="small" icon={<UserAddOutlined />}
-                                 onClick={() => setAdminModalTeam(team)} />
+                                 onClick={() => { setAdminModalTeam(team); setTeamAdmins(null); fetchTeamAdmins(team.id); }} />
                        </Tooltip>
                        <Popconfirm
                          title="Supprimer cette team ?"
@@ -496,12 +516,29 @@ export default function CodePage() {
 
       <Modal title={`Déléguer la gestion — ${adminModalTeam?.name ?? ''}`} open={!!adminModalTeam}
              onOk={onAddAdmin} okText="Déléguer"
-             onCancel={() => { setAdminModalTeam(null); adminForm.resetFields(); }}>
+             onCancel={() => { setAdminModalTeam(null); adminForm.resetFields(); setTeamAdmins(null); }}>
         <Typography.Paragraph type="secondary">
           La personne pourra inviter des sièges, créer, faire tourner et révoquer les clés de
           cette team uniquement. Elle doit avoir un compte actif du panel, membre de cette
           organisation.
         </Typography.Paragraph>
+        {(teamAdmins ?? []).length > 0 && (
+          <div className="mb-3">
+            <Typography.Text type="secondary">Délégations actives</Typography.Text>
+            <Table rowKey="user_id" size="small" pagination={false} showHeader={false}
+                   className="mt-1" dataSource={teamAdmins ?? []}
+                   columns={[
+                     { title: 'Email', dataIndex: 'email' },
+                     { title: '', width: 60,
+                       render: (_: unknown, a: TeamAdmin) => (
+                         <Popconfirm title={`Révoquer la délégation de ${a.email} ?`}
+                                     onConfirm={() => onRemoveAdmin(a.user_id)}>
+                           <Button type="text" danger size="small" icon={<StopOutlined />} />
+                         </Popconfirm>
+                       ) },
+                   ]} />
+          </div>
+        )}
         <Form form={adminForm} layout="vertical">
           <Form.Item name="email" label="Email du membre"
                      rules={[{ required: true, type: 'email' }]}>

@@ -362,3 +362,41 @@ def test_delete_team_org_admin_only_and_archives(panel_client, org_with_entitlem
     ov = client.get(f"/api/admin/orgs/{org_id}/code/overview",
                     headers=_h(tokens["org_admin"])).json()
     assert team2["id"] not in [t["id"] for t in ov["teams"]]
+
+
+def test_delegation_lifecycle_list_and_revoke(panel_client, org_with_entitlement_and_users):
+    """Délégation révocable : add -> list -> revoke -> 403 immédiat pour l'ex-admin.
+    La liste et la révocation sont réservées à l'org admin (403 pour le délégué)."""
+    client, _ = panel_client
+    org_id, tokens = org_with_entitlement_and_users
+    team = client.post(f"/api/admin/orgs/{org_id}/code/teams",
+                       json={"name": "deleg", "max_budget": 10.0, "model_access": []},
+                       headers=_h(tokens["org_admin"])).json()
+
+    added = client.post(f"/api/admin/code/teams/{team['id']}/admins",
+                        json={"email": tokens["plain_member_email"]},
+                        headers=_h(tokens["org_admin"])).json()
+
+    # list: org admin voit la délégation avec l'email joint ; le délégué prend 403
+    admins = client.get(f"/api/admin/code/teams/{team['id']}/admins",
+                        headers=_h(tokens["org_admin"])).json()
+    assert [a["user_id"] for a in admins] == [added["user_id"]]
+    assert admins[0]["email"] == tokens["plain_member_email"]
+    assert client.get(f"/api/admin/code/teams/{team['id']}/admins",
+                      headers=_h(tokens["plain_member"])).status_code == 403
+
+    # le délégué ne peut pas se... dé-déléguer lui-même ni révoquer autrui
+    assert client.delete(f"/api/admin/code/teams/{team['id']}/admins/{added['user_id']}",
+                         headers=_h(tokens["plain_member"])).status_code == 403
+
+    # revoke par l'org admin -> accès retiré immédiatement (aucun cache RBAC)
+    r = client.delete(f"/api/admin/code/teams/{team['id']}/admins/{added['user_id']}",
+                      headers=_h(tokens["org_admin"]))
+    assert r.status_code == 200 and r.json()["removed"] is True
+    assert client.post(f"/api/admin/code/teams/{team['id']}/keys",
+                       json={"label": "dev"}, headers=_h(tokens["plain_member"])).status_code == 403
+    # liste vide + re-revoke -> 404
+    assert client.get(f"/api/admin/code/teams/{team['id']}/admins",
+                      headers=_h(tokens["org_admin"])).json() == []
+    assert client.delete(f"/api/admin/code/teams/{team['id']}/admins/{added['user_id']}",
+                         headers=_h(tokens["org_admin"])).status_code == 404

@@ -424,6 +424,46 @@ def add_team_admin(request: Request, team_id: str, body: CodeTeamAdminAdd,
     return {"code_team_id": team_id, "user_id": target.id, "role": "admin"}
 
 
+@router.get("/code/teams/{team_id}/admins")
+def list_team_admins(team_id: str, user_id: str = Depends(get_current_user_id)):
+    """Délégations actives de la team — email joint pour l'affichage."""
+    from api.db.db_models import DB, CodeTeam, CodeTeamMember, User
+    with DB.connection_context():
+        team = CodeTeam.get_or_none(CodeTeam.id == team_id)
+    if team is None:
+        raise HTTPException(status_code=404, detail="Code team not found")
+    require_org_admin(team.org_id, user_id)
+    with DB.connection_context():
+        rows = list(CodeTeamMember.select(CodeTeamMember, User.email)
+                    .join(User, on=(CodeTeamMember.user_id == User.id))
+                    .where(CodeTeamMember.code_team_id == team_id))
+    return [{"user_id": r.user_id, "email": r.user.email, "role": r.role} for r in rows]
+
+
+@router.delete("/code/teams/{team_id}/admins/{target_user_id}")
+def remove_team_admin(request: Request, team_id: str, target_user_id: str,
+                      user_id: str = Depends(get_current_user_id)):
+    """Révoque une délégation. La cible reperd immédiatement l'accès de
+    gestion (les dépendances RBAC relisent code_team_member à chaque requête,
+    aucun cache) ; ses clés/sièges éventuels ne sont PAS touchés."""
+    from api.db.db_models import DB, CodeTeam, CodeTeamMember
+    with DB.connection_context():
+        team = CodeTeam.get_or_none(CodeTeam.id == team_id)
+    if team is None:
+        raise HTTPException(status_code=404, detail="Code team not found")
+    user = require_org_admin(team.org_id, user_id)
+    with DB.connection_context():
+        deleted = CodeTeamMember.delete().where(
+            (CodeTeamMember.code_team_id == team_id)
+            & (CodeTeamMember.user_id == target_user_id)).execute()
+    if not deleted:
+        raise HTTPException(status_code=404, detail="No delegation for this user on this team")
+    audit_svc.record(request=request, actor_user_id=user.id, action=audit_svc.CODE_TEAM_ADMIN_REMOVE,
+                     org_id=team.org_id, resource_type="code_team", resource_id=team_id,
+                     details={"user_id": target_user_id, "team": team.name})
+    return {"code_team_id": team_id, "user_id": target_user_id, "removed": True}
+
+
 @router.post("/code/teams/{team_id}/keys", status_code=status.HTTP_201_CREATED)
 def create_key(request: Request, team_id: str, body: CodeKeyCreate,
                user=Depends(require_code_team_admin)):
