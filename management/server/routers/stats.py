@@ -10,7 +10,7 @@ from collections import defaultdict
 
 from fastapi import APIRouter, Depends, HTTPException, status
 
-from management.server.auth.dependencies import get_current_user_id, require_superuser
+from management.server.auth.dependencies import get_current_user_id, require_org_admin, require_superuser
 
 router = APIRouter()
 
@@ -458,6 +458,91 @@ def global_quota_overview(_user=Depends(require_superuser)):
 
 # ─── token quota status ────────────────────────────────────────────────────────
 
+_MONTH_RE = r"\d{4}-(0[1-9]|1[0-2])"
+
+
+def _validated_month(month: str | None) -> str:
+    import re as _re
+    if month is None:
+        return date.today().strftime("%Y-%m")
+    if not _re.fullmatch(_MONTH_RE, month):
+        raise HTTPException(status_code=422, detail="month must be YYYY-MM")
+    return month
+
+
+@router.get("/orgs/{org_id}/billing/summary")
+def billing_summary_route(org_id: str, month: str | None = None,
+                          user_id: str = Depends(get_current_user_id)):
+    """Récap consolidé du mois (les 2 produits) — alimente la carte Facturation."""
+    require_org_admin(org_id, user_id)
+    from management.server.services.billing import billing_summary
+    return billing_summary(org_id, _validated_month(month))
+
+
+@router.get("/orgs/{org_id}/billing/statement")
+def billing_statement_route(org_id: str, month: str | None = None,
+                            user_id: str = Depends(get_current_user_id)):
+    """LE relevé compta : CSV consolidé Code (€ consommés dans le mois,
+    delta des snapshots avec gestion des resets de cycle) + RAG (tokens par
+    workspace/BU), lignes TOTAL par produit."""
+    from fastapi.responses import Response
+    from api.db.services.org_service import OrgService
+    require_org_admin(org_id, user_id)
+    month = _validated_month(month)
+    ok, org = OrgService.get_by_id(org_id)
+    org_name = org.name if ok and org else org_id
+    from management.server.services.billing import billing_statement_csv
+    csv_text = billing_statement_csv(org_id, org_name, month)
+    return Response(content=csv_text, media_type="text/csv; charset=utf-8",
+                    headers={"Content-Disposition":
+                             f'attachment; filename="releve-{org_name.replace(" ", "_")[:24]}-{month}.csv"'})
+
+
+@router.get("/orgs/{org_id}/usage/export")
+def export_rag_usage(org_id: str, month: str | None = None,
+                     user_id: str = Depends(get_current_user_id)):
+    """Export CSV mensuel de la conso tokens RAG (facturation) — une ligne
+    par workspace, modèle et jour depuis TokenUsageDaily. Miroir de l'export
+    Code : séparateur ';' + BOM UTF-8 (Excel FR), month=YYYY-MM (défaut mois
+    courant). Colonne bu = tag du workspace (settings_json)."""
+    import csv
+    import io
+    import re as _re
+    from fastapi.responses import Response
+
+    require_org_admin(org_id, user_id)
+    if month is None:
+        month = date.today().strftime("%Y-%m")
+    if not _re.fullmatch(r"\d{4}-(0[1-9]|1[0-2])", month):
+        raise HTTPException(status_code=422, detail="month must be YYYY-MM")
+
+    from api.db.db_models import DB, Workspace as WsModel, TokenUsageDaily
+    with DB.connection_context():
+        # tous statuts : la conso passée d'un workspace archivé se facture aussi
+        workspaces = list(WsModel.select().where(WsModel.org_id == org_id))
+        ws_by_tenant = {w.tenant_id: w for w in workspaces}
+        first = date(int(month[:4]), int(month[5:7]), 1)
+        nxt = (first + timedelta(days=32)).replace(day=1)
+        rows = list(TokenUsageDaily.select().where(
+            (TokenUsageDaily.tenant_id.in_(list(ws_by_tenant.keys()) or [""]))
+            & (TokenUsageDaily.date >= str(first))
+            & (TokenUsageDaily.date < str(nxt))
+        ).order_by(TokenUsageDaily.tenant_id, TokenUsageDaily.date))
+
+    buf = io.StringIO()
+    w = csv.writer(buf, delimiter=";")
+    w.writerow(["date", "workspace", "bu", "modele", "type", "tokens"])
+    for r in rows:
+        ws = ws_by_tenant.get(r.tenant_id)
+        w.writerow([r.date, ws.name if ws else r.tenant_id,
+                    ((ws.settings_json or {}).get("bu", "") if ws else ""),
+                    r.llm_name, r.model_type, r.tokens])
+    csv_bytes = "\ufeff" + buf.getvalue()
+    return Response(content=csv_bytes, media_type="text/csv; charset=utf-8",
+                    headers={"Content-Disposition":
+                             f'attachment; filename="rag-usage-{org_id[:8]}-{month}.csv"'})
+
+
 @router.get("/orgs/{org_id}/quota")
 def org_quota_status(org_id: str, user_id: str = Depends(get_current_user_id)):
     """Return token quota status for an org (all workspaces). Org admin or superuser."""
@@ -512,6 +597,7 @@ def org_quota_status(org_id: str, user_id: str = Depends(get_current_user_id)):
         "org_name": org.name,
         "max_tokens_monthly": org.max_tokens_monthly or 0,
         "allow_overage": bool(org.allow_overage),
+        "rag_monthly_fee_eur": org.rag_monthly_fee_eur,
         "current_period_start": str(org.current_period_start) if org.current_period_start else None,
         "current_period_end": str(org.current_period_end) if org.current_period_end else None,
         "workspaces": workspace_quotas,
@@ -539,6 +625,14 @@ def update_org_quota(org_id: str, body: dict, _user=Depends(require_superuser)):
 
         if "allow_overage" in body:
             updates["allow_overage"] = bool(body["allow_overage"])
+
+        if "rag_monthly_fee_eur" in body:
+            v = body["rag_monthly_fee_eur"]
+            if v is not None:
+                v = float(v)
+                if v < 0:
+                    raise HTTPException(status_code=400, detail="rag_monthly_fee_eur must be >= 0")
+            updates["rag_monthly_fee_eur"] = v  # None = non contractualisé
 
         if "reset_period" in body and body["reset_period"]:
             # Reset period to current calendar month

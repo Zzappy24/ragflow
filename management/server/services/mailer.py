@@ -8,6 +8,7 @@ restent affichés au front en fallback). Le mailer upstream
 import logging
 from email.header import Header
 from email.mime.text import MIMEText
+from email.utils import formataddr, parseaddr
 
 import aiosmtplib
 
@@ -20,13 +21,23 @@ def is_configured() -> bool:
     return bool(settings.SMTP_HOST)
 
 
+def _rfc_from(raw: str) -> str:
+    """Encode le display name du From au format RFC 2047. Un nom non-ASCII
+    brut ('AlterAI — Cyllene <…>') est un header invalide : certains MTA le
+    laissent passer mais les filtres antispam le pénalisent."""
+    name, addr = parseaddr(raw)
+    if not name:
+        return addr or raw
+    return formataddr((str(Header(name, "utf-8")), addr))
+
+
 async def send_mail(to: str, subject: str, body_text: str) -> bool:
     if not is_configured():
         logger.warning("SMTP non configuré (ADMIN_SMTP_HOST vide) — email non envoyé à %s", to)
         return False
     msg = MIMEText(body_text, "plain", "utf-8")
     msg["Subject"] = Header(subject, "utf-8")
-    msg["From"] = settings.SMTP_FROM
+    msg["From"] = _rfc_from(settings.SMTP_FROM)
     msg["To"] = to
     try:
         # TLS modes: port 465 = implicit TLS (TLS handshake immediately),

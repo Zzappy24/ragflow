@@ -14,6 +14,7 @@ interface Workspace {
   name: string;
   description: string;
   status: string;
+  bu: string;
 }
 
 export default function WorkspacesPage({
@@ -132,6 +133,23 @@ export default function WorkspacesPage({
     }
   };
 
+  // Tag BU (groupement libre, ex. « Digital ») — stocké dans settings_json,
+  // modifiable par org admin. "" = retirer le tag.
+  const [buModalWs, setBuModalWs] = useState<Workspace | null>(null);
+  const [buValue, setBuValue] = useState('');
+  const onSaveBu = async () => {
+    if (!buModalWs) return;
+    try {
+      await api.put(`/orgs/${buModalWs.org_id}/workspaces/${buModalWs.id}`, { bu: buValue });
+      message.success(buValue ? `Workspace taggé « ${buValue} »` : 'Tag retiré');
+      setBuModalWs(null);
+      fetchWorkspaces();
+    } catch (err: unknown) {
+      const msg = (err as { response?: { data?: { detail?: string } } })?.response?.data?.detail;
+      message.error(msg ?? 'Échec de la mise à jour du tag');
+    }
+  };
+
   const columns: ColumnsType<Workspace> = [
     {
       title: 'Name',
@@ -144,6 +162,19 @@ export default function WorkspacesPage({
         ),
     },
     { title: 'Description', dataIndex: 'description', ellipsis: true },
+    {
+      title: 'BU',
+      dataIndex: 'bu',
+      width: 140,
+      render: (bu: string, record: Workspace) => (
+        <Tooltip title="Groupement libre (ex. BU) — cliquer pour modifier">
+          <Tag color={bu ? 'geekblue' : undefined} style={{ cursor: 'pointer' }}
+               onClick={() => { setBuModalWs(record); setBuValue(bu || ''); }}>
+            {bu || '—'}
+          </Tag>
+        </Tooltip>
+      ),
+    },
     {
       title: 'Status',
       dataIndex: 'status',
@@ -232,6 +263,18 @@ export default function WorkspacesPage({
           }}
         />
       </Card>
+
+      <Modal title={`Tag BU — ${buModalWs?.name ?? ''}`} open={!!buModalWs}
+             onOk={onSaveBu} okText="Enregistrer"
+             onCancel={() => setBuModalWs(null)}>
+        <Form layout="vertical">
+          <Form.Item label="BU / groupe"
+                     extra="Champ libre pour regrouper les workspaces (listes, exports). Vider = retirer le tag.">
+            <Input value={buValue} onChange={(e) => setBuValue(e.target.value)}
+                   placeholder="ex. Digital" maxLength={64} />
+          </Form.Item>
+        </Form>
+      </Modal>
 
       <Modal
         title="New Workspace"

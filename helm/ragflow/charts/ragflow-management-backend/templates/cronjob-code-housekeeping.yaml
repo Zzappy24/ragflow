@@ -22,8 +22,13 @@ spec:
       backoffLimit: 1
       template:
         metadata:
+          # PAS les selectorLabels du deployment : le Service routerait du
+          # trafic vers le pod du job (502 intermittents) et le PDB tenterait
+          # de scaler un Job ("does not implement the scale subresource" ->
+          # PDB Degraded -> app ArgoCD Degraded). Labels dédiés.
           labels:
-            {{- include "ragflow-management-backend.selectorLabels" . | nindent 12 }}
+            app.kubernetes.io/name: ragflow-mgmt-code-housekeeping
+            app.kubernetes.io/instance: {{ .Release.Name }}
             app.kubernetes.io/component: code-housekeeping
         spec:
           restartPolicy: Never

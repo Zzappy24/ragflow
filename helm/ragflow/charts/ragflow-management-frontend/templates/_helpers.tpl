@@ -103,6 +103,12 @@ server {
     proxy_read_timeout 60s;
   }
 
+  # La SPA vit sous /admin (basename du router React) : la racine ne
+  # matche aucune route et rendait une page blanche.
+  location = / {
+    return 302 /admin/;
+  }
+
   location / {
     try_files $uri $uri/ /index.html;
     add_header Cache-Control "no-cache, no-store, must-revalidate";

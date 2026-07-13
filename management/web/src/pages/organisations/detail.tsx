@@ -3,7 +3,7 @@ import { useParams, Link, useNavigate } from 'react-router-dom';
 import { Card, Tabs, Spin, Progress, Row, Col, Statistic, Breadcrumb, Typography, Tag, Button, Modal, Input, App, Table, Space, Select, Switch, InputNumber, Tooltip, Alert, Form } from 'antd';
 import { DatePicker } from 'antd';
 import type { Dayjs } from 'dayjs';
-import { AppstoreOutlined, TeamOutlined, AuditOutlined, HomeOutlined, DatabaseOutlined, FileOutlined, InboxOutlined, UndoOutlined, FireOutlined, ThunderboltOutlined, BarChartOutlined, WarningOutlined } from '@ant-design/icons';
+import { AppstoreOutlined, TeamOutlined, AuditOutlined, HomeOutlined, DatabaseOutlined, FileOutlined, InboxOutlined, UndoOutlined, FireOutlined, ThunderboltOutlined, BarChartOutlined, WarningOutlined, DownloadOutlined } from '@ant-design/icons';
 import {
   AreaChart, Area, BarChart, Bar, PieChart, Pie,
   XAxis, YAxis, CartesianGrid, Tooltip as RechartsTooltip,
@@ -13,6 +13,7 @@ import dayjs from 'dayjs';
 import api from '@/lib/api';
 import { useAuthStore } from '@/stores/auth';
 import WorkspacesPage from '@/pages/workspaces';
+import CodePage from '@/pages/code';
 import MembersPage from '@/pages/members';
 import AuditPage from '@/pages/audit';
 
@@ -469,6 +470,15 @@ interface OrgQuota {
   overage_today_workspace_ids: string[];
 }
 
+interface BillingSummary {
+  month: string;
+  code: { teams: { team_id: string; name: string; spend_eur: number; tokens: number | null }[];
+          total_eur: number; total_tokens: number | null };
+  rag: { workspaces: { workspace_id: string; name: string; bu: string; tokens: number }[];
+         total_tokens: number; monthly_fee_eur: number | null };
+  total_eur: number;
+}
+
 export default function OrgDetailPage() {
   const { orgId } = useParams<{ orgId: string }>();
   const navigate = useNavigate();
@@ -483,7 +493,7 @@ export default function OrgDetailPage() {
   const [purgeModalOpen, setPurgeModalOpen] = useState(false);
   const [purgeConfirmText, setPurgeConfirmText] = useState('');
   const [purging, setPurging] = useState(false);
-  const [quotaForm, setQuotaForm] = useState<{ max_tokens_monthly: number; allow_overage: boolean }>({ max_tokens_monthly: 0, allow_overage: true });
+  const [quotaForm, setQuotaForm] = useState<{ max_tokens_monthly: number; allow_overage: boolean; rag_monthly_fee_eur: number | null }>({ max_tokens_monthly: 0, allow_overage: true, rag_monthly_fee_eur: null });
   const [savingQuota, setSavingQuota] = useState(false);
   const [codeForm] = Form.useForm();
   const [codeLoading, setCodeLoading] = useState(true);
@@ -556,11 +566,38 @@ export default function OrgDetailPage() {
     });
   };
 
+  // Facturation : exports CSV mensuels des deux produits, un seul endroit.
+  const downloadCsv = async (path: string, filename: string, month?: string) => {
+    try {
+      const res = await api.get(path, { params: month ? { month } : {}, responseType: 'blob' });
+      const url = URL.createObjectURL(res.data as Blob);
+      const a = document.createElement('a');
+      a.href = url;
+      a.download = filename;
+      a.click();
+      URL.revokeObjectURL(url);
+    } catch {
+      message.error("Échec de l'export CSV");
+    }
+  };
+  const prevMonthStr = () => {
+    const d = new Date(); d.setMonth(d.getMonth() - 1);
+    return `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, '0')}`;
+  };
+  const [billingMonth, setBillingMonth] = useState<string | undefined>(undefined); // undefined = mois courant
+  const [billing, setBilling] = useState<BillingSummary | null>(null);
+  useEffect(() => {
+    if (!orgId) return;
+    api.get(`/orgs/${orgId}/billing/summary`, { params: billingMonth ? { month: billingMonth } : {} })
+      .then((res) => setBilling(res.data))
+      .catch(() => setBilling(null));
+  }, [orgId, billingMonth]);
+
   const refreshQuota = useCallback(() => {
     if (!orgId) return;
     api.get(`/orgs/${orgId}/quota`).then((r) => {
       setQuota(r.data);
-      setQuotaForm({ max_tokens_monthly: r.data.max_tokens_monthly ?? 0, allow_overage: r.data.allow_overage ?? true });
+      setQuotaForm({ max_tokens_monthly: r.data.max_tokens_monthly ?? 0, allow_overage: r.data.allow_overage ?? true, rag_monthly_fee_eur: r.data.rag_monthly_fee_eur ?? null });
     }).catch(() => {});
   }, [orgId]);
 
@@ -592,7 +629,7 @@ export default function OrgDetailPage() {
         setOrg(orgRes.data);
         setStats(statsRes.data);
         setQuota(quotaRes.data);
-        setQuotaForm({ max_tokens_monthly: quotaRes.data.max_tokens_monthly ?? 0, allow_overage: quotaRes.data.allow_overage ?? true });
+        setQuotaForm({ max_tokens_monthly: quotaRes.data.max_tokens_monthly ?? 0, allow_overage: quotaRes.data.allow_overage ?? true, rag_monthly_fee_eur: quotaRes.data.rag_monthly_fee_eur ?? null });
       })
       .finally(() => setLoading(false));
   }, [orgId]);
@@ -759,6 +796,14 @@ export default function OrgDetailPage() {
                           checkedChildren="Soft" unCheckedChildren="Hard"
                         />
                       </div>
+                      <div className="flex items-center gap-2">
+                        <span className="text-sm text-gray-600">Forfait RAG (€/mois)</span>
+                        <Tooltip title="Ligne forfait du relevé de facturation. Vide = non contractualisé. Les tokens restent du fair-use, jamais valorisés.">
+                          <InputNumber min={0} value={quotaForm.rag_monthly_fee_eur}
+                            onChange={(v) => setQuotaForm(f => ({ ...f, rag_monthly_fee_eur: v ?? null }))}
+                            placeholder="—" style={{ width: 120 }} />
+                        </Tooltip>
+                      </div>
                     </div>
                   )}
 
@@ -830,8 +875,91 @@ export default function OrgDetailPage() {
                     <Alert message="No workspaces in this organisation" type="info" showIcon />
                   )}
                 </Card>
+
+                {/* Facturation — LE point d'entrée compta : récap consolidé
+                    du mois + relevé exportable + détails jour par jour. */}
+                <Card title="Facturation" className="mt-4"
+                  extra={
+                    <Select size="small" style={{ width: 150 }}
+                      value={billingMonth ?? 'cur'}
+                      onChange={(v) => setBillingMonth(v === 'cur' ? undefined : v)}
+                      options={[
+                        { value: 'cur', label: 'Mois courant' },
+                        { value: prevMonthStr(), label: 'Mois précédent' },
+                      ]} />
+                  }>
+                  {billing ? (
+                    <Row gutter={24}>
+                      <Col span={12}>
+                        <Statistic title={`Code — consommé en ${billing.month}`}
+                          value={billing.code.total_eur} suffix="€" precision={2} />
+                        <Table size="small" pagination={false} showHeader={false} className="mt-2"
+                          rowKey="team_id" dataSource={billing.code.teams}
+                          locale={{ emptyText: 'Aucune consommation Code ce mois' }}
+                          columns={[
+                            { dataIndex: 'name' },
+                            { dataIndex: 'spend_eur', align: 'right' as const,
+                              render: (v: number) => `${v} €` },
+                          ]} />
+                      </Col>
+                      <Col span={12}>
+                        <Statistic title={`RAG — forfait ${billing.month}`}
+                          value={billing.rag.monthly_fee_eur ?? '—'}
+                          suffix={billing.rag.monthly_fee_eur != null ? '€' : ''}
+                          precision={billing.rag.monthly_fee_eur != null ? 2 : undefined} />
+                        <div className="text-gray-400 text-xs mb-1">
+                          {billing.rag.total_tokens.toLocaleString()} tokens consommés (fair-use, inclus)
+                        </div>
+                        <Table size="small" pagination={false} showHeader={false} className="mt-2"
+                          rowKey="workspace_id" dataSource={billing.rag.workspaces}
+                          locale={{ emptyText: 'Aucune consommation RAG ce mois' }}
+                          columns={[
+                            { dataIndex: 'name',
+                              render: (v: string, r: { bu: string }) => (
+                                <span>{v} {r.bu && <Tag>{r.bu}</Tag>}</span>) },
+                            { dataIndex: 'tokens', align: 'right' as const,
+                              render: (v: number) => v.toLocaleString() },
+                          ]} />
+                      </Col>
+                    </Row>
+                  ) : <Card loading bordered={false} />}
+                  {billing && (
+                    <div className="mt-3 text-right">
+                      <Typography.Text strong>
+                        Total général : {billing.total_eur.toFixed(2)} €
+                      </Typography.Text>
+                      <Typography.Text type="secondary" className="ml-2 text-xs">
+                        (forfait RAG + conso Code)
+                      </Typography.Text>
+                    </div>
+                  )}
+                  <Space className="mt-4" wrap>
+                    <Tooltip title="LE document compta : totaux et lignes par team/workspace, les deux produits">
+                      <Button type="primary" icon={<DownloadOutlined />}
+                        onClick={() => downloadCsv(`/orgs/${orgId}/billing/statement`,
+                          `releve-${billingMonth ?? 'mois-courant'}.csv`, billingMonth)}>
+                        Relevé mensuel (CSV)
+                      </Button>
+                    </Tooltip>
+                    <Button icon={<DownloadOutlined />}
+                      onClick={() => downloadCsv(`/orgs/${orgId}/usage/export`,
+                        `rag-usage-${billingMonth ?? 'mois-courant'}.csv`, billingMonth)}>
+                      Détail RAG (jour/jour)
+                    </Button>
+                    <Button icon={<DownloadOutlined />}
+                      onClick={() => downloadCsv(`/orgs/${orgId}/code/export`,
+                        `code-usage-${billingMonth ?? 'mois-courant'}.csv`, billingMonth)}>
+                      Détail Code (jour/jour)
+                    </Button>
+                  </Space>
+                </Card>
               </div>
             ),
+          },
+          {
+            key: 'code',
+            label: <span><ThunderboltOutlined /> Code</span>,
+            children: <CodePage orgId={orgId} />,
           },
           {
             key: 'usage',

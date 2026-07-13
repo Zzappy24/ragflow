@@ -46,6 +46,8 @@ export default function App() {
         <Route path="/audit" element={<SuperuserRoute><GlobalAuditPage /></SuperuserRoute>} />
         <Route path="/archives" element={<SuperuserRoute><ArchivesPage /></SuperuserRoute>} />
         <Route path="/code" element={<CodePage />} />
+        {/* URL inconnue sous /admin -> dashboard plutôt que page blanche */}
+        <Route path="*" element={<Navigate to="/" replace />} />
       </Route>
     </Routes>
   );

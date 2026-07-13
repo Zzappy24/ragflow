@@ -33,8 +33,20 @@ function QuickStart({ result }: { result: ClaimResult }) {
   const model = result.models?.[0] ?? '<model>';
   const key = result.plain_key;
 
-  const vscodeSteps = [
-    'Dans VS Code, ouvrez les réglages de l\'extension (Kilo Code ou Cline).',
+  const kiloJson = JSON.stringify({
+    $schema: 'https://app.kilo.ai/config.json',
+    provider: {
+      cyllene: {
+        name: 'cyllene',
+        npm: '@ai-sdk/openai-compatible',
+        options: { baseURL: gw, apiKey: key },
+        models: { [model]: { name: model } },
+      },
+    },
+  }, null, 2);
+
+  const clineSteps = [
+    'Dans VS Code, ouvrez les réglages de l\'extension Cline.',
     'API Provider : « OpenAI Compatible ».',
     `Base URL : ${gw}`,
     'API Key : votre clé ci-dessus.',
@@ -64,7 +76,18 @@ function QuickStart({ result }: { result: ClaimResult }) {
       <Tabs
         size="small"
         items={[
-          { key: 'kilo', label: 'Kilo Code / Cline', children: <Snippet text={vscodeSteps} /> },
+          {
+            key: 'kilo', label: 'Kilo Code',
+            children: (
+              <>
+                <div className="text-gray-500 text-xs mb-2">
+                  À fusionner dans votre config Kilo (<code>~/.config/kilo/config.json</code>) :
+                </div>
+                <Snippet text={kiloJson} />
+              </>
+            ),
+          },
+          { key: 'cline', label: 'Cline', children: <Snippet text={clineSteps} /> },
           {
             key: 'opencode', label: 'OpenCode',
             children: (
