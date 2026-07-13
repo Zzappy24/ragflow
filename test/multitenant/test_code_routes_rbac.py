@@ -400,3 +400,24 @@ def test_delegation_lifecycle_list_and_revoke(panel_client, org_with_entitlement
                       headers=_h(tokens["org_admin"])).json() == []
     assert client.delete(f"/api/admin/code/teams/{team['id']}/admins/{added['user_id']}",
                          headers=_h(tokens["org_admin"])).status_code == 404
+
+
+def test_public_claim_returns_models_for_quickstart(panel_client, org_with_entitlement_and_users):
+    """La page de claim affiche la config copy-paste (Kilo/OpenCode) : la
+    réponse doit porter les noms publics des modèles de la gateway."""
+    client, _ = panel_client
+    org_id, tokens = org_with_entitlement_and_users
+    team = client.post(f"/api/admin/orgs/{org_id}/code/teams",
+                       json={"name": "qs", "max_budget": 10.0, "model_access": []},
+                       headers=_h(tokens["org_admin"])).json()
+    bulk = client.post(f"/api/admin/code/teams/{team['id']}/keys/bulk",
+                       json={"emails": ["quickstart@x.com"]},
+                       headers=_h(tokens["org_admin"])).json()
+    claim_url = bulk[0]["claim_url"]  # pas de SMTP en test -> lien fallback
+    token = claim_url.split("token=")[1]
+
+    r = client.post("/api/admin/public/code/claim", json={"token": token})
+    assert r.status_code == 200
+    data = r.json()
+    assert data["plain_key"].startswith("sk-")
+    assert data["models"] == ["code-mock"]

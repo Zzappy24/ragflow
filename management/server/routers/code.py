@@ -690,7 +690,17 @@ async def public_claim(request: Request, body: CodeClaimRequest):
     audit_svc.record(request=request, actor_user_id="", action=audit_svc.CODE_SEAT_CLAIMED,
                      org_id=None, resource_type="code_key_invite", resource_id=result["invite_id"],
                      details={"email": result["email"]})
-    return {"plain_key": result["plain_key"], "label": result["label"],
+    # Best-effort : les noms publics des modèles alimentent la section
+    # « bien démarrer » (config Kilo/OpenCode/Cline) de la page de claim.
+    # Un échec ici ne doit jamais faire échouer un claim réussi.
+    models: list[str] = []
+    try:
+        from management.server.services.code_provisioning import _client
+        models = _client().list_models()
+    except Exception:
+        pass
+    return {"models": models,
+            "plain_key": result["plain_key"], "label": result["label"],
             "gateway_url": admin_settings.CODE_GATEWAY_PUBLIC_URL or None}
 
 

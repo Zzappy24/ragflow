@@ -143,6 +143,13 @@ class LiteLLMClient:
             page += 1
         return out
 
+    # ---- models ----
+    def list_models(self) -> list[str]:
+        """Noms publics des modèles exposés par le proxy (model_name du
+        model_list) — ce que les clients mettent dans leur config."""
+        data = self._request("GET", "/v1/models")
+        return [m.get("id") for m in data.get("data", []) if m.get("id")]
+
     # ---- usage ----
     def daily_usage(self, day: datetime.date) -> dict[str, dict]:
         """Tokens + errors per team for the UTC day `day`.

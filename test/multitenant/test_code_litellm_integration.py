@@ -176,3 +176,9 @@ def test_seat_budget_blocks_while_team_budget_remains(client):
                             "messages": [{"role": "user", "content": "hi"}]},
                       timeout=30.0)
     assert resp.status_code == 200
+
+
+def test_list_models_returns_public_names(client):
+    """Contrat /v1/models : la section « bien démarrer » du claim en dépend."""
+    models = client.list_models()
+    assert "code-mock" in models

@@ -82,6 +82,10 @@ class FakeLiteLLM:
         self._maybe_down()
         return self.usage
 
+    def list_models(self):
+        self._maybe_down()
+        return ["code-mock"]
+
 
 @pytest.fixture()
 def org_with_entitlement():
