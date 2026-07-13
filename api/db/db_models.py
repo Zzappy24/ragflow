@@ -1598,6 +1598,10 @@ class CodeKey(DataBaseModel):
     litellm_key_id = CharField(max_length=128, null=True, index=True)
     key_masked = CharField(max_length=32, null=True)
     owner_user_id = CharField(max_length=32, null=True, index=True)
+    # Limites par siège (enforcement temps réel par LiteLLM). NULL = seule la
+    # limite de la team s'applique. Cycle = entitlement.budget_period.
+    max_budget = FloatField(null=True)
+    rpm_limit = IntegerField(null=True)
     status = CharField(max_length=16, null=False, default="active", index=True)  # active | revoked | blocked
     sync_status = CharField(max_length=16, null=False, default="pending", index=True)  # pending | synced | error
     sync_error = TextField(null=True)
@@ -1643,6 +1647,25 @@ class CodeHousekeepingRun(DataBaseModel):
         db_table = "code_housekeeping_run"
 
 
+class CodeBudgetAlert(DataBaseModel):
+    """Anti-spam des alertes budget Code : une alerte par seuil et par cycle.
+
+    scope 'team'|'key', ref_id = CodeTeam.id | CodeKey.id. La row existe =
+    alerte déjà envoyée pour ce cycle ; elle est supprimée quand le spend
+    retombe sous le seuil (reset de cycle LiteLLM) — ce qui ré-arme l'alerte.
+    """
+    id = CharField(max_length=32, primary_key=True)
+    scope = CharField(max_length=8, null=False)
+    ref_id = CharField(max_length=32, null=False, index=True)
+    threshold = IntegerField(null=False)  # 80 | 100 (pourcentage du budget)
+    spend_at_alert = FloatField(null=False)
+    alerted_at = DateTimeField(null=False)
+
+    class Meta:
+        db_table = "code_budget_alert"
+        indexes = ((("scope", "ref_id", "threshold"), True),)
+
+
 class CodeKeyInvite(DataBaseModel):
     """Invitation de siège code : la clé n'existe qu'au claim (jamais de secret au repos).
 
@@ -1655,6 +1678,9 @@ class CodeKeyInvite(DataBaseModel):
     token_hash = CharField(max_length=64, null=False, unique=True)
     expires_at = DateTimeField(null=False)
     claimed_key_id = CharField(max_length=32, null=True)
+    # Limites par siège reportées sur la CodeKey créée au claim.
+    max_budget = FloatField(null=True)
+    rpm_limit = IntegerField(null=True)
     created_by = CharField(max_length=32, null=False, index=True)
 
     class Meta:
@@ -2152,6 +2178,12 @@ def migrate_db():
     # spend-logs endpoint (NULL = gateway unreachable at snapshot time).
     alter_db_add_column(migrator, "code_spend_snapshot", "tokens", IntegerField(null=True))
     alter_db_add_column(migrator, "code_spend_snapshot", "errors", IntegerField(null=True))
+    # CUSTOM B2B SaaS — Code product: limites par siège (budget €/cycle + rpm),
+    # enforcement temps réel par LiteLLM. Sur l'invite: reportées au claim.
+    alter_db_add_column(migrator, "code_key", "max_budget", FloatField(null=True))
+    alter_db_add_column(migrator, "code_key", "rpm_limit", IntegerField(null=True))
+    alter_db_add_column(migrator, "code_key_invite", "max_budget", FloatField(null=True))
+    alter_db_add_column(migrator, "code_key_invite", "rpm_limit", IntegerField(null=True))
 
 
 def _add_rbac_unique_indexes(migrator):

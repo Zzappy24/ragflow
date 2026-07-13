@@ -89,10 +89,20 @@ def _is_reclaimable_pending(claimed_key_id: str | None, now_epoch: float) -> boo
     return (now_epoch - ts) > STALE_PENDING_SECONDS
 
 
-def create_invites(*, code_team_id: str, emails: list[str], created_by: str) -> list[dict]:
+def create_invites(*, code_team_id: str, emails: list[str], created_by: str,
+                   max_budget: float | None = None,
+                   rpm_limit: int | None = None) -> list[dict]:
     """Dedup + validate emails, cap at MAX_BULK_EMAILS, one CodeKeyInvite row
     per email. Returns [{"invite_id", "email", "claim_token"}] — claim_token
-    is the ONLY place the plaintext token is ever surfaced."""
+    is the ONLY place the plaintext token is ever surfaced.
+
+    max_budget/rpm_limit : limites par siège appliquées à CHAQUE invitation,
+    reportées sur la CodeKey créée au claim (regenerate_token les préserve,
+    la row est conservée)."""
+    if max_budget is not None and max_budget <= 0:
+        raise ValueError("max_budget must be > 0")
+    if rpm_limit is not None and rpm_limit <= 0:
+        raise ValueError("rpm_limit must be > 0")
     from api.db.db_models import DB, CodeKeyInvite
 
     seen: set[str] = set()
@@ -115,6 +125,7 @@ def create_invites(*, code_team_id: str, emails: list[str], created_by: str) -> 
             invite_id = get_uuid()
             CodeKeyInvite.create(id=invite_id, code_team_id=code_team_id, email=email,
                                  token_hash=_hash_token(token), expires_at=expires,
+                                 max_budget=max_budget, rpm_limit=rpm_limit,
                                  created_by=created_by)
             out.append({"invite_id": invite_id, "email": email, "claim_token": token})
     return out
@@ -187,7 +198,9 @@ def claim(token: str, client=None) -> dict:
         owner_id = users[0].id if users else None
 
         key, plain = create_code_key(code_team_id=inv.code_team_id, label=inv.email,
-                                     owner_user_id=owner_id, created_by=inv.created_by, client=client)
+                                     owner_user_id=owner_id, created_by=inv.created_by,
+                                     max_budget=inv.max_budget, rpm_limit=inv.rpm_limit,
+                                     client=client)
         if plain is None:
             logger.warning("invite %s claim: LiteLLM down, rolling back reservation", inv.id)
             # I3: the CodeKey row was already created (desired-state-first)

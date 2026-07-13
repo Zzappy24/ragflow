@@ -83,9 +83,21 @@ class LiteLLMClient:
         self._request("POST", "/team/delete", json={"team_ids": [team_id]})
 
     # ---- keys ----
-    def generate_key(self, *, team_id: str, alias: str) -> dict:
-        data = self._request("POST", "/key/generate",
-                             json={"team_id": team_id, "key_alias": alias})
+    def generate_key(self, *, team_id: str, alias: str,
+                     max_budget: float | None = None,
+                     budget_duration: str | None = None,
+                     rpm_limit: int | None = None) -> dict:
+        payload: dict = {"team_id": team_id, "key_alias": alias}
+        # Limites par siège — enforcement temps réel par LiteLLM, comme les
+        # budgets team. budget_duration DOIT suivre entitlement.budget_period
+        # pour que le reset du siège soit aligné sur le cycle de la team.
+        if max_budget is not None:
+            payload["max_budget"] = max_budget
+            if budget_duration:
+                payload["budget_duration"] = budget_duration
+        if rpm_limit is not None:
+            payload["rpm_limit"] = rpm_limit
+        data = self._request("POST", "/key/generate", json=payload)
         plain = data["key"]
         # hashed identifier usable with /key/block — integration test (Task 7)
         # validates this against the real container.
@@ -102,6 +114,16 @@ class LiteLLMClient:
             "masked": f"{plain[:6]}...{plain[-4:]}",
         }
 
+    def update_key(self, token: str, *, max_budget: float | None,
+                   rpm_limit: int | None, budget_duration: str | None = None) -> None:
+        """Met à jour les limites d'une clé vivante. None EFFACE la limite
+        (contrat validé sur v1.91.1 : /key/update avec null réinitialise le
+        champ). budget_duration n'est envoyé qu'avec un budget numérique."""
+        payload: dict = {"key": token, "max_budget": max_budget, "rpm_limit": rpm_limit}
+        if max_budget is not None and budget_duration:
+            payload["budget_duration"] = budget_duration
+        self._request("POST", "/key/update", json=payload)
+
     def block_key(self, token: str) -> None:
         self._request("POST", "/key/block", json={"key": token})
 
@@ -109,8 +131,34 @@ class LiteLLMClient:
         self._request("POST", "/key/unblock", json={"key": token})
 
     def list_keys(self, team_id: str) -> list[dict]:
-        data = self._request("GET", "/key/list", params={"team_id": team_id})
-        return data.get("keys", data) if isinstance(data, dict) else data
+        """Full key objects (token/key_alias/spend) for a team.
+
+        return_full_object=true est OBLIGATOIRE : sans lui /key/list renvoie
+        des hashes nus (strings) — observé sur v1.91.1 — et le per-key spend
+        de l'overview devient silencieusement indisponible. Le endpoint est
+        paginé (size max 100) ; on déroule toutes les pages.
+        """
+        out: list[dict] = []
+        page = 1
+        while True:
+            data = self._request("GET", "/key/list",
+                                 params={"team_id": team_id, "return_full_object": "true",
+                                         "page": page, "size": 100})
+            if not isinstance(data, dict):  # very old versions: flat list
+                out.extend(data)
+                break
+            out.extend(data.get("keys", []))
+            if page >= int(data.get("total_pages") or 1):
+                break
+            page += 1
+        return out
+
+    # ---- models ----
+    def list_models(self) -> list[str]:
+        """Noms publics des modèles exposés par le proxy (model_name du
+        model_list) — ce que les clients mettent dans leur config."""
+        data = self._request("GET", "/v1/models")
+        return [m.get("id") for m in data.get("data", []) if m.get("id")]
 
     # ---- usage ----
     def daily_usage(self, day: datetime.date) -> dict[str, dict]:

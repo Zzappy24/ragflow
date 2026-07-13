@@ -362,3 +362,149 @@ def test_delete_team_org_admin_only_and_archives(panel_client, org_with_entitlem
     ov = client.get(f"/api/admin/orgs/{org_id}/code/overview",
                     headers=_h(tokens["org_admin"])).json()
     assert team2["id"] not in [t["id"] for t in ov["teams"]]
+
+
+def test_delegation_lifecycle_list_and_revoke(panel_client, org_with_entitlement_and_users):
+    """Délégation révocable : add -> list -> revoke -> 403 immédiat pour l'ex-admin.
+    La liste et la révocation sont réservées à l'org admin (403 pour le délégué)."""
+    client, _ = panel_client
+    org_id, tokens = org_with_entitlement_and_users
+    team = client.post(f"/api/admin/orgs/{org_id}/code/teams",
+                       json={"name": "deleg", "max_budget": 10.0, "model_access": []},
+                       headers=_h(tokens["org_admin"])).json()
+
+    added = client.post(f"/api/admin/code/teams/{team['id']}/admins",
+                        json={"email": tokens["plain_member_email"]},
+                        headers=_h(tokens["org_admin"])).json()
+
+    # list: org admin voit la délégation avec l'email joint ; le délégué prend 403
+    admins = client.get(f"/api/admin/code/teams/{team['id']}/admins",
+                        headers=_h(tokens["org_admin"])).json()
+    assert [a["user_id"] for a in admins] == [added["user_id"]]
+    assert admins[0]["email"] == tokens["plain_member_email"]
+    assert client.get(f"/api/admin/code/teams/{team['id']}/admins",
+                      headers=_h(tokens["plain_member"])).status_code == 403
+
+    # le délégué ne peut pas se... dé-déléguer lui-même ni révoquer autrui
+    assert client.delete(f"/api/admin/code/teams/{team['id']}/admins/{added['user_id']}",
+                         headers=_h(tokens["plain_member"])).status_code == 403
+
+    # revoke par l'org admin -> accès retiré immédiatement (aucun cache RBAC)
+    r = client.delete(f"/api/admin/code/teams/{team['id']}/admins/{added['user_id']}",
+                      headers=_h(tokens["org_admin"]))
+    assert r.status_code == 200 and r.json()["removed"] is True
+    assert client.post(f"/api/admin/code/teams/{team['id']}/keys",
+                       json={"label": "dev"}, headers=_h(tokens["plain_member"])).status_code == 403
+    # liste vide + re-revoke -> 404
+    assert client.get(f"/api/admin/code/teams/{team['id']}/admins",
+                      headers=_h(tokens["org_admin"])).json() == []
+    assert client.delete(f"/api/admin/code/teams/{team['id']}/admins/{added['user_id']}",
+                         headers=_h(tokens["org_admin"])).status_code == 404
+
+
+def test_public_claim_returns_models_for_quickstart(panel_client, org_with_entitlement_and_users):
+    """La page de claim affiche la config copy-paste (Kilo/OpenCode) : la
+    réponse doit porter les noms publics des modèles de la gateway."""
+    client, _ = panel_client
+    org_id, tokens = org_with_entitlement_and_users
+    team = client.post(f"/api/admin/orgs/{org_id}/code/teams",
+                       json={"name": "qs", "max_budget": 10.0, "model_access": []},
+                       headers=_h(tokens["org_admin"])).json()
+    bulk = client.post(f"/api/admin/code/teams/{team['id']}/keys/bulk",
+                       json={"emails": ["quickstart@x.com"]},
+                       headers=_h(tokens["org_admin"])).json()
+    claim_url = bulk[0]["claim_url"]  # pas de SMTP en test -> lien fallback
+    token = claim_url.split("token=")[1]
+
+    r = client.post("/api/admin/public/code/claim", json={"token": token})
+    assert r.status_code == 200
+    data = r.json()
+    assert data["plain_key"].startswith("sk-")
+    assert data["models"] == ["code-mock"]
+
+
+def test_cancel_invite_team_admin_only_and_conditional(panel_client, org_with_entitlement_and_users):
+    """DELETE /code/invites/{id} : membre simple 403 ; annulée -> claim 404 ;
+    déjà consommée -> 409 (jamais effacée, trace d'audit)."""
+    client, _ = panel_client
+    org_id, tokens = org_with_entitlement_and_users
+    team = client.post(f"/api/admin/orgs/{org_id}/code/teams",
+                       json={"name": "cancel", "max_budget": 10.0, "model_access": []},
+                       headers=_h(tokens["org_admin"])).json()
+    bulk = client.post(f"/api/admin/code/teams/{team['id']}/keys/bulk",
+                       json={"emails": ["a@c.io", "b@c.io"]},
+                       headers=_h(tokens["org_admin"])).json()
+    inv_a, inv_b = bulk[0], bulk[1]
+
+    assert client.delete(f"/api/admin/code/invites/{inv_a['invite_id']}",
+                         headers=_h(tokens["plain_member"])).status_code == 403
+
+    r = client.delete(f"/api/admin/code/invites/{inv_a['invite_id']}",
+                      headers=_h(tokens["org_admin"]))
+    assert r.status_code == 200 and r.json()["cancelled"] is True
+    token_a = inv_a["claim_url"].split("token=")[1]
+    assert client.post("/api/admin/public/code/claim",
+                       json={"token": token_a}).status_code == 404
+
+    # invite consommée -> 409, la row reste
+    token_b = inv_b["claim_url"].split("token=")[1]
+    assert client.post("/api/admin/public/code/claim",
+                       json={"token": token_b}).status_code == 200
+    assert client.delete(f"/api/admin/code/invites/{inv_b['invite_id']}",
+                         headers=_h(tokens["org_admin"])).status_code == 409
+
+
+def test_update_key_limits_rbac_and_validation(panel_client, org_with_entitlement_and_users):
+    client, fake = panel_client
+    org_id, tokens = org_with_entitlement_and_users
+    team = client.post(f"/api/admin/orgs/{org_id}/code/teams",
+                       json={"name": "lim", "max_budget": 10.0, "model_access": []},
+                       headers=_h(tokens["org_admin"])).json()
+    key = client.post(f"/api/admin/code/teams/{team['id']}/keys",
+                      json={"label": "dev"}, headers=_h(tokens["org_admin"])).json()["key"]
+
+    body = {"max_budget": 3.0, "rpm_limit": 30}
+    assert client.put(f"/api/admin/code/keys/{key['id']}", json=body,
+                      headers=_h(tokens["plain_member"])).status_code == 403
+    r = client.put(f"/api/admin/code/keys/{key['id']}", json=body,
+                   headers=_h(tokens["org_admin"]))
+    assert r.status_code == 200
+    assert r.json()["max_budget"] == 3.0 and r.json()["rpm_limit"] == 30
+
+    assert client.put(f"/api/admin/code/keys/{key['id']}",
+                      json={"max_budget": -1, "rpm_limit": None},
+                      headers=_h(tokens["org_admin"])).status_code == 422
+
+
+def test_export_csv_org_admin_only_with_snapshot_rows(panel_client, org_with_entitlement_and_users):
+    import datetime
+    from api.db.db_models import DB, CodeSpendSnapshot
+    from common.misc_utils import get_uuid
+    client, _ = panel_client
+    org_id, tokens = org_with_entitlement_and_users
+    team = client.post(f"/api/admin/orgs/{org_id}/code/teams",
+                       json={"name": "export-t", "max_budget": 10.0, "model_access": []},
+                       headers=_h(tokens["org_admin"])).json()
+    today = datetime.date.today()
+    with DB.connection_context():
+        CodeSpendSnapshot.create(id=get_uuid(), snap_date=today, org_id=org_id,
+                                 code_team_id=team["id"], spend=4.2, max_budget=10.0,
+                                 tokens=1234, errors=0)
+
+    month = today.strftime("%Y-%m")
+    assert client.get(f"/api/admin/orgs/{org_id}/code/export?month={month}",
+                      headers=_h(tokens["plain_member"])).status_code == 403
+    r = client.get(f"/api/admin/orgs/{org_id}/code/export?month={month}",
+                   headers=_h(tokens["org_admin"]))
+    assert r.status_code == 200
+    assert "text/csv" in r.headers["content-type"]
+    assert "attachment" in r.headers["content-disposition"]
+    body = r.text
+    assert "date;team;depense_cumulee_cycle_eur" in body
+    assert f"{today};export-t;4.2;10.0;1234;0" in body
+
+    assert client.get(f"/api/admin/orgs/{org_id}/code/export?month=13-2026",
+                      headers=_h(tokens["org_admin"])).status_code == 422
+
+    with DB.connection_context():
+        CodeSpendSnapshot.delete().where(CodeSpendSnapshot.code_team_id == team["id"]).execute()

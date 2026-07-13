@@ -118,3 +118,90 @@ def test_reconciler_skips_pending_team_of_suspended_entitlement(org_with_entitle
         team = CodeTeam.get_by_id(team.id)
     assert team.sync_status == "pending"
     assert team.litellm_team_id is None
+
+
+# ---------------------------------------------------------------------------
+# Phase 4 — alias-diff sweep (gateway -> panel)
+# ---------------------------------------------------------------------------
+
+def test_sweep_blocks_gateway_key_without_panel_row(org_with_entitlement):
+    """Une clé LiteLLM portant NOTRE alias mais sans row locale (réponse de
+    generate perdue avant l'écriture, double-claim post-sentinel…) est un
+    accès fantôme : le sweep la bloque."""
+    from management.server.services import code_provisioning as cp
+    from management.server.services.code_reconcile import sweep_gateway_orphans
+    from test.multitenant.test_code_provisioning import FakeLiteLLM
+    fake = FakeLiteLLM()
+    team = cp.create_code_team(org_id=org_with_entitlement, name="t", max_budget=10.0,
+                               model_access=[], created_by="tester", client=fake)
+    # clé fantôme : alias à notre convention, id inexistant en base
+    ghost_alias = f"org:{org_with_entitlement}:key:{'f' * 32}"
+    fake.generate_key(team_id=team.litellm_team_id, alias=ghost_alias)
+
+    report = sweep_gateway_orphans(client=fake)
+    assert report["orphan_keys_blocked"] == 1
+    assert f"hash-{ghost_alias}" in fake.blocked
+
+
+def test_sweep_reblocks_locally_revoked_but_gateway_active(org_with_entitlement):
+    from management.server.services import code_provisioning as cp
+    from management.server.services.code_reconcile import sweep_gateway_orphans
+    from test.multitenant.test_code_provisioning import FakeLiteLLM
+    fake = FakeLiteLLM()
+    team = cp.create_code_team(org_id=org_with_entitlement, name="t", max_budget=10.0,
+                               model_access=[], created_by="tester", client=fake)
+    key, _ = cp.create_code_key(code_team_id=team.id, label="dev", owner_user_id=None,
+                                created_by="tester", client=fake)
+    cp.revoke_code_key(code_key_id=key.id, client=fake)
+    # incident côté gateway : la clé se retrouve débloquée sans que le panel le sache
+    fake.blocked.discard(key.litellm_key_id)
+
+    report = sweep_gateway_orphans(client=fake)
+    assert report["orphan_keys_blocked"] == 1
+    assert key.litellm_key_id in fake.blocked
+
+    # run suivant : la gateway la liste bloquée -> plus rien à faire
+    assert sweep_gateway_orphans(client=fake)["orphan_keys_blocked"] == 0
+
+
+def test_sweep_counts_orphan_team_but_never_deletes(org_with_entitlement):
+    from management.server.services.code_reconcile import sweep_gateway_orphans
+    from test.multitenant.test_code_provisioning import FakeLiteLLM
+    fake = FakeLiteLLM()
+    ghost_alias = f"org:{org_with_entitlement}:team:{'e' * 32}"
+    fake.create_team(alias=ghost_alias, max_budget=5.0, budget_duration="1mo", models=[])
+
+    report = sweep_gateway_orphans(client=fake)
+    assert report["orphan_teams"] == 1
+    assert f"llm-{ghost_alias}" in fake.teams  # jamais supprimée automatiquement
+
+
+def test_sweep_never_touches_foreign_objects(org_with_entitlement):
+    """Objets hors convention d'alias (autre produit, créés à la main) :
+    intouchables, quoi qu'il arrive."""
+    from management.server.services import code_provisioning as cp
+    from management.server.services.code_reconcile import sweep_gateway_orphans
+    from test.multitenant.test_code_provisioning import FakeLiteLLM
+    fake = FakeLiteLLM()
+    team = cp.create_code_team(org_id=org_with_entitlement, name="t", max_budget=10.0,
+                               model_access=[], created_by="tester", client=fake)
+    fake.create_team(alias="damien-test-manuel", max_budget=1.0, budget_duration="1mo", models=[])
+    fake.generate_key(team_id=team.litellm_team_id, alias="cle-externe-sans-convention")
+
+    report = sweep_gateway_orphans(client=fake)
+    assert report == {"orphan_teams": 0, "orphan_keys_blocked": 0}
+    assert "hash-cle-externe-sans-convention" not in fake.blocked
+
+
+def test_sweep_leaves_healthy_keys_alone(org_with_entitlement):
+    from management.server.services import code_provisioning as cp
+    from management.server.services.code_reconcile import sweep_gateway_orphans
+    from test.multitenant.test_code_provisioning import FakeLiteLLM
+    fake = FakeLiteLLM()
+    team = cp.create_code_team(org_id=org_with_entitlement, name="t", max_budget=10.0,
+                               model_access=[], created_by="tester", client=fake)
+    key, _ = cp.create_code_key(code_team_id=team.id, label="dev", owner_user_id=None,
+                                created_by="tester", client=fake)
+    report = sweep_gateway_orphans(client=fake)
+    assert report == {"orphan_teams": 0, "orphan_keys_blocked": 0}
+    assert key.litellm_key_id not in fake.blocked

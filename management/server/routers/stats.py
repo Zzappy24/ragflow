@@ -422,27 +422,20 @@ def org_usage(org_id: str, user_id: str = Depends(get_current_user_id)):
 @router.get("/stats/quotas")
 def global_quota_overview(_user=Depends(require_superuser)):
     """Return token quota status for all orgs in a single call. Superuser only."""
-    from api.db.db_models import DB, Organisation, Workspace as WsModel
-    from api.db.services.quota_service import check_token_quota
+    from api.db.db_models import DB, Organisation
+    from api.db.services.quota_service import check_org_token_quota
 
     with DB.connection_context():
         orgs = list(Organisation.select().where(Organisation.status == "1"))
-        workspaces = list(WsModel.select().where(WsModel.status == "1"))
-
-    ws_by_org: dict[str, list] = defaultdict(list)
-    for ws in workspaces:
-        ws_by_org[ws.org_id].append(ws)
 
     result = []
     for org in orgs:
-        org_ws = ws_by_org.get(org.id, [])
-        total_used = 0
-        any_exceeded = False
-        for ws in org_ws:
-            qs = check_token_quota(ws.tenant_id)
-            total_used += qs.get("current_usage", 0)
-            if qs.get("quota_exceeded"):
-                any_exceeded = True
+        # Org-wide status in ONE call (usage summed over the org's workspaces
+        # by the service itself — summing per-ws checks here would now count
+        # the org total N times).
+        qs = check_org_token_quota(org.id)
+        total_used = qs.get("current_usage", 0)
+        any_exceeded = bool(qs.get("quota_exceeded"))
 
         limit = org.max_tokens_monthly or 0
         pct = min(round((total_used / limit) * 100), 100) if limit > 0 else 0
@@ -471,7 +464,7 @@ def org_quota_status(org_id: str, user_id: str = Depends(get_current_user_id)):
     from management.server.auth.dependencies import _load_user
     from api.db.services.org_service import OrgMemberService, OrgService
     from api.db.db_models import DB, Workspace as WsModel, Organisation
-    from api.db.services.quota_service import check_token_quota
+    from api.db.services.quota_service import check_org_token_quota, workspace_period_usage
 
     user = _load_user(user_id)
     if not user:
@@ -486,17 +479,21 @@ def org_quota_status(org_id: str, user_id: str = Depends(get_current_user_id)):
     if not ok or not org or org.status != "1":
         raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Organisation not found")
 
-    # Per-workspace quota status
+    # Org-wide status (enforcement truth) + per-workspace usage breakdown
+    # (display only — the limit applies to the ORG total, not per workspace).
+    org_qs = check_org_token_quota(org_id)
     workspace_quotas = []
     with DB.connection_context():
         workspaces = list(WsModel.select().where(WsModel.org_id == org_id, WsModel.status == "1"))
 
     for ws in workspaces:
-        qs = check_token_quota(ws.tenant_id)
+        ws_usage = (workspace_period_usage(ws.tenant_id, org_qs["period_start"], org_qs["period_end"])
+                    if org_qs["enabled"] else 0)
         workspace_quotas.append({
             "workspace_id": ws.id,
             "workspace_name": ws.name,
-            **qs,
+            **org_qs,
+            "current_usage": ws_usage,
         })
 
     # Overage flags from Redis
@@ -550,12 +547,10 @@ def update_org_quota(org_id: str, body: dict, _user=Depends(require_superuser)):
             updates["current_period_end"] = today.replace(
                 day=_calendar.monthrange(today.year, today.month)[1]
             )
-            # Invalidate quota caches for all workspaces
+            # Invalidate the org-scoped quota cache
             try:
-                from api.db.db_models import Workspace as WsModel
-                from api.db.services.quota_service import invalidate_quota_cache
-                for ws in WsModel.select().where(WsModel.org_id == org_id, WsModel.status == "1"):
-                    invalidate_quota_cache(ws.tenant_id, str(updates["current_period_start"]))
+                from api.db.services.quota_service import invalidate_org_quota_cache
+                invalidate_org_quota_cache(org_id, str(updates["current_period_start"]))
             except Exception:
                 pass
 

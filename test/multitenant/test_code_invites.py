@@ -590,3 +590,33 @@ def test_resend_all_regenerates_pending_including_expired(panel_client, rbac_org
         inv = CodeKeyInvite.get_by_id(res[0]["invite_id"])
     now = datetime.datetime.now(datetime.timezone.utc).replace(tzinfo=None)
     assert inv.expires_at > now
+
+
+def test_claim_carries_seat_limits_from_invite(inv_org):
+    """Les limites posées sur l'invitation (bulk) sont reportées sur la
+    CodeKey au claim et transmises au /key/generate avec le cycle aligné."""
+    from api.db.db_models import DB, CodeKey
+    from management.server.services import code_provisioning as cp
+    from management.server.services import code_invites as ci
+
+    fake = FakeLiteLLM()
+    team = cp.create_code_team(org_id=inv_org, name="t", max_budget=50.0,
+                               model_access=[], created_by="tester", client=fake)
+    invite = ci.create_invites(code_team_id=team.id, emails=["seat@x.com"],
+                               created_by="tester", max_budget=15.0, rpm_limit=30)[0]
+    result = ci.claim(invite["claim_token"], client=fake)
+    assert result["plain_key"].startswith("sk-")
+
+    with DB.connection_context():
+        key = CodeKey.get_or_none(CodeKey.code_team_id == team.id)
+    assert key.max_budget == 15.0 and key.rpm_limit == 30
+    gen = [c for c in fake.calls if c[0] == "generate_key"][0]
+    assert gen[2] == 15.0 and gen[3] == "1mo" and gen[4] == 30
+
+    # invitation sans limites -> clé sans limites (None de bout en bout)
+    invite2 = ci.create_invites(code_team_id=team.id, emails=["free@x.com"],
+                                created_by="tester")[0]
+    ci.claim(invite2["claim_token"], client=fake)
+    with DB.connection_context():
+        key2 = CodeKey.get_or_none((CodeKey.code_team_id == team.id) & (CodeKey.label == "free@x.com"))
+    assert key2.max_budget is None and key2.rpm_limit is None

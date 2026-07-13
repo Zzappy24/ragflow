@@ -299,10 +299,25 @@ class CodeTeamAdminAdd(BaseModel):
 class CodeKeyCreate(BaseModel):
     label: str = Field(min_length=1, max_length=255)
     owner_user_id: str | None = None
+    # Limites par siège, appliquées par LiteLLM en temps réel. None = seule
+    # la limite de la team s'applique. Le cycle du budget est TOUJOURS le
+    # budget_period de l'entitlement (aligné team/org).
+    max_budget: float | None = Field(default=None, gt=0)
+    rpm_limit: int | None = Field(default=None, gt=0)
 
 
 class CodeKeyBulkCreate(BaseModel):
     emails: list[str] = Field(min_length=1)
+    # Mêmes limites appliquées à CHAQUE siège invité (au claim).
+    max_budget: float | None = Field(default=None, gt=0)
+    rpm_limit: int | None = Field(default=None, gt=0)
+
+
+class CodeKeyLimitsUpdate(BaseModel):
+    # État désiré COMPLET des limites du siège : null = supprimer la limite
+    # (contrat /key/update LiteLLM validé — null réinitialise le champ).
+    max_budget: float | None
+    rpm_limit: int | None
 
 
 class CodeClaimRequest(BaseModel):

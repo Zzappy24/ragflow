@@ -1,4 +1,5 @@
 """Code product routes — entitlements (superuser), teams (org admin), keys (delegated)."""
+import datetime
 import time
 
 from fastapi import APIRouter, Depends, HTTPException, Request, status
@@ -9,7 +10,7 @@ from management.server.auth.dependencies import (
 )
 from management.server.models.schemas import (
     CodeEntitlementUpsert, CodeTeamCreate, CodeTeamUpdate, CodeTeamAdminAdd, CodeKeyCreate,
-    CodeKeyBulkCreate, CodeClaimRequest,
+    CodeKeyBulkCreate, CodeKeyLimitsUpdate, CodeClaimRequest,
 )
 from management.server.services import audit as audit_svc
 from management.server.config import settings as admin_settings
@@ -84,7 +85,7 @@ def _team_to_dict(t) -> dict:
 def _key_to_dict(k) -> dict:
     return {"id": k.id, "code_team_id": k.code_team_id, "label": k.label,
             "key_masked": k.key_masked, "owner_user_id": k.owner_user_id,
-            "status": k.status, "sync_status": k.sync_status}
+            "status": k.status, "sync_status": k.sync_status, "max_budget": k.max_budget, "rpm_limit": k.rpm_limit}
 
 
 @router.get("/code/orgs-summary")
@@ -335,6 +336,50 @@ def code_overview(org_id: str, user_id: str = Depends(get_current_user_id)):
     }
 
 
+@router.get("/orgs/{org_id}/code/export")
+def export_code_usage(org_id: str, month: str | None = None,
+                      user_id: str = Depends(get_current_user_id)):
+    """Export CSV mensuel de la conso Code (facturation) — une ligne par
+    team et par jour depuis les snapshots. spend = cumul du cycle au moment
+    du relevé ; tokens/erreurs = valeurs du jour. Séparateur ';' + BOM UTF-8
+    (Excel FR). month=YYYY-MM, défaut = mois courant."""
+    import csv
+    import io
+    import re as _re
+    from fastapi.responses import Response
+
+    require_org_admin(org_id, user_id)
+    if month is None:
+        month = datetime.date.today().strftime("%Y-%m")
+    if not _re.fullmatch(r"\d{4}-\d{2}", month):
+        raise HTTPException(status_code=422, detail="month must be YYYY-MM")
+
+    from api.db.db_models import DB, CodeTeam, CodeSpendSnapshot
+    with DB.connection_context():
+        team_names = {t.id: t.name for t in CodeTeam.select().where(CodeTeam.org_id == org_id)}
+        first = datetime.date(int(month[:4]), int(month[5:7]), 1)
+        nxt = (first + datetime.timedelta(days=32)).replace(day=1)
+        rows = list(CodeSpendSnapshot.select().where(
+            (CodeSpendSnapshot.org_id == org_id)
+            & (CodeSpendSnapshot.snap_date >= first)
+            & (CodeSpendSnapshot.snap_date < nxt)
+        ).order_by(CodeSpendSnapshot.code_team_id, CodeSpendSnapshot.snap_date))
+
+    buf = io.StringIO()
+    w = csv.writer(buf, delimiter=";")
+    w.writerow(["date", "team", "depense_cumulee_cycle_eur", "budget_team_eur",
+                "tokens_jour", "erreurs_jour"])
+    for r in rows:
+        w.writerow([str(r.snap_date), team_names.get(r.code_team_id, r.code_team_id),
+                    r.spend, r.max_budget,
+                    "" if r.tokens is None else r.tokens,
+                    "" if r.errors is None else r.errors])
+    csv_bytes = "\ufeff" + buf.getvalue()  # BOM: Excel ouvre l'UTF-8 proprement
+    return Response(content=csv_bytes, media_type="text/csv; charset=utf-8",
+                    headers={"Content-Disposition":
+                             f'attachment; filename="code-usage-{org_id[:8]}-{month}.csv"'})
+
+
 @router.post("/orgs/{org_id}/code/teams", status_code=status.HTTP_201_CREATED)
 def create_team(request: Request, org_id: str, body: CodeTeamCreate,
                 user_id: str = Depends(get_current_user_id)):
@@ -424,13 +469,54 @@ def add_team_admin(request: Request, team_id: str, body: CodeTeamAdminAdd,
     return {"code_team_id": team_id, "user_id": target.id, "role": "admin"}
 
 
+@router.get("/code/teams/{team_id}/admins")
+def list_team_admins(team_id: str, user_id: str = Depends(get_current_user_id)):
+    """Délégations actives de la team — email joint pour l'affichage."""
+    from api.db.db_models import DB, CodeTeam, CodeTeamMember, User
+    with DB.connection_context():
+        team = CodeTeam.get_or_none(CodeTeam.id == team_id)
+    if team is None:
+        raise HTTPException(status_code=404, detail="Code team not found")
+    require_org_admin(team.org_id, user_id)
+    with DB.connection_context():
+        rows = list(CodeTeamMember.select(CodeTeamMember, User.email)
+                    .join(User, on=(CodeTeamMember.user_id == User.id))
+                    .where(CodeTeamMember.code_team_id == team_id))
+    return [{"user_id": r.user_id, "email": r.user.email, "role": r.role} for r in rows]
+
+
+@router.delete("/code/teams/{team_id}/admins/{target_user_id}")
+def remove_team_admin(request: Request, team_id: str, target_user_id: str,
+                      user_id: str = Depends(get_current_user_id)):
+    """Révoque une délégation. La cible reperd immédiatement l'accès de
+    gestion (les dépendances RBAC relisent code_team_member à chaque requête,
+    aucun cache) ; ses clés/sièges éventuels ne sont PAS touchés."""
+    from api.db.db_models import DB, CodeTeam, CodeTeamMember
+    with DB.connection_context():
+        team = CodeTeam.get_or_none(CodeTeam.id == team_id)
+    if team is None:
+        raise HTTPException(status_code=404, detail="Code team not found")
+    user = require_org_admin(team.org_id, user_id)
+    with DB.connection_context():
+        deleted = CodeTeamMember.delete().where(
+            (CodeTeamMember.code_team_id == team_id)
+            & (CodeTeamMember.user_id == target_user_id)).execute()
+    if not deleted:
+        raise HTTPException(status_code=404, detail="No delegation for this user on this team")
+    audit_svc.record(request=request, actor_user_id=user.id, action=audit_svc.CODE_TEAM_ADMIN_REMOVE,
+                     org_id=team.org_id, resource_type="code_team", resource_id=team_id,
+                     details={"user_id": target_user_id, "team": team.name})
+    return {"code_team_id": team_id, "user_id": target_user_id, "removed": True}
+
+
 @router.post("/code/teams/{team_id}/keys", status_code=status.HTTP_201_CREATED)
 def create_key(request: Request, team_id: str, body: CodeKeyCreate,
                user=Depends(require_code_team_admin)):
     from management.server.services import code_provisioning as cp
     try:
         key, plain = cp.create_code_key(code_team_id=team_id, label=body.label,
-                                        owner_user_id=body.owner_user_id, created_by=user.id)
+                                        owner_user_id=body.owner_user_id, created_by=user.id,
+                                        max_budget=body.max_budget, rpm_limit=body.rpm_limit)
     except ValueError as e:
         raise HTTPException(status_code=422, detail=str(e))
     audit_svc.record(request=request, actor_user_id=user.id, action=audit_svc.CODE_KEY_CREATE,
@@ -451,7 +537,8 @@ async def bulk_invite_keys(request: Request, team_id: str, body: CodeKeyBulkCrea
     from management.server.services.mailer import send_mail
 
     try:
-        invites = ci.create_invites(code_team_id=team_id, emails=body.emails, created_by=user.id)
+        invites = ci.create_invites(code_team_id=team_id, emails=body.emails, created_by=user.id,
+                                    max_budget=body.max_budget, rpm_limit=body.rpm_limit)
     except ValueError as e:
         raise HTTPException(status_code=422, detail=str(e))
 
@@ -516,6 +603,30 @@ async def resend_invite(request: Request, invite_id: str, user_id: str = Depends
     return item
 
 
+@router.delete("/code/invites/{invite_id}")
+def cancel_invite(request: Request, invite_id: str, user_id: str = Depends(get_current_user_id)):
+    """Annule une invitation NON consommée : le lien tombe en 404 immédiatement.
+    Le DELETE est conditionné à claimed_key_id IS NULL — une invite consommée
+    (ou un claim qui gagne la course) n'est jamais effacée (trace d'audit)."""
+    from api.db.db_models import DB, CodeKeyInvite
+    with DB.connection_context():
+        inv = CodeKeyInvite.get_or_none(CodeKeyInvite.id == invite_id)
+    if inv is None:
+        raise HTTPException(status_code=404, detail="Invite not found")
+    user = require_code_team_admin(inv.code_team_id, user_id)
+    with DB.connection_context():
+        deleted = CodeKeyInvite.delete().where(
+            (CodeKeyInvite.id == invite_id)
+            & (CodeKeyInvite.claimed_key_id.is_null(True))).execute()
+    if not deleted:
+        raise HTTPException(status_code=409, detail="Invite already claimed — revoke the key instead")
+    audit_svc.record(request=request, actor_user_id=user.id,
+                     action=audit_svc.CODE_SEAT_INVITE_CANCELLED,
+                     org_id=None, resource_type="code_key_invite", resource_id=invite_id,
+                     details={"email": inv.email, "team_id": inv.code_team_id})
+    return {"invite_id": invite_id, "cancelled": True}
+
+
 @router.post("/code/teams/{team_id}/invites/resend-all")
 async def resend_all_invites(request: Request, team_id: str, user=Depends(require_code_team_admin)):
     """Re-mint + renvoie TOUTES les invitations pendantes de la team (y compris
@@ -549,6 +660,30 @@ async def resend_all_invites(request: Request, team_id: str, user=Depends(requir
     return results
 
 
+@router.put("/code/keys/{key_id}")
+def update_key_limits(request: Request, key_id: str, body: CodeKeyLimitsUpdate,
+                      user_id: str = Depends(get_current_user_id)):
+    """Modifie les limites d'une clé VIVANTE (le secret ne change pas —
+    pour changer le secret, c'est la rotation). null = supprime la limite."""
+    from api.db.db_models import DB, CodeKey
+    with DB.connection_context():
+        key = CodeKey.get_or_none(CodeKey.id == key_id)
+    if key is None:
+        raise HTTPException(status_code=404, detail="Key not found")
+    user = require_code_team_admin(key.code_team_id, user_id)
+    from management.server.services import code_provisioning as cp
+    try:
+        key = cp.update_code_key_limits(code_key_id=key_id, max_budget=body.max_budget,
+                                        rpm_limit=body.rpm_limit)
+    except ValueError as e:
+        raise HTTPException(status_code=422, detail=str(e))
+    audit_svc.record(request=request, actor_user_id=user.id, action=audit_svc.CODE_KEY_UPDATE,
+                     org_id=None, resource_type="code_key", resource_id=key_id,
+                     details={"label": key.label, "max_budget": body.max_budget,
+                              "rpm_limit": body.rpm_limit})
+    return _key_to_dict(key)
+
+
 @router.post("/code/keys/{key_id}/rotate", status_code=status.HTTP_201_CREATED)
 async def rotate_key(request: Request, key_id: str, user_id: str = Depends(get_current_user_id)):
     """Revoke the existing key and re-invite the same email (a fresh seat is
@@ -578,7 +713,8 @@ async def rotate_key(request: Request, key_id: str, user_id: str = Depends(get_c
 
     try:
         invites = ci.create_invites(code_team_id=key.code_team_id, emails=[key.label],
-                                    created_by=user.id)
+                                    created_by=user.id,
+                                    max_budget=key.max_budget, rpm_limit=key.rpm_limit)
     except ValueError as e:
         raise HTTPException(status_code=422, detail=str(e))
     inv = invites[0]
@@ -647,7 +783,17 @@ async def public_claim(request: Request, body: CodeClaimRequest):
     audit_svc.record(request=request, actor_user_id="", action=audit_svc.CODE_SEAT_CLAIMED,
                      org_id=None, resource_type="code_key_invite", resource_id=result["invite_id"],
                      details={"email": result["email"]})
-    return {"plain_key": result["plain_key"], "label": result["label"],
+    # Best-effort : les noms publics des modèles alimentent la section
+    # « bien démarrer » (config Kilo/OpenCode/Cline) de la page de claim.
+    # Un échec ici ne doit jamais faire échouer un claim réussi.
+    models: list[str] = []
+    try:
+        from management.server.services.code_provisioning import _client
+        models = _client().list_models()
+    except Exception:
+        pass
+    return {"models": models,
+            "plain_key": result["plain_key"], "label": result["label"],
             "gateway_url": admin_settings.CODE_GATEWAY_PUBLIC_URL or None}
 
 

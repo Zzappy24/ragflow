@@ -1,0 +1,117 @@
+{{- if .Values.code.housekeepingCronJob.enabled }}
+# CUSTOM B2B SaaS — produit Code : filet de secours du scheduler in-process.
+# Le housekeeping (reconcile LiteLLM + snapshots + alertes budget) tourne
+# normalement dans le pod mgmt-backend toutes les 15 min ; si le pod est
+# down ou que son lifespan n'est pas parti (leçon asgi.py), ce CronJob
+# converge quand même. Chevauchement sans risque : housekeeping() est
+# sérialisé par un DB.lock cross-processus.
+apiVersion: batch/v1
+kind: CronJob
+metadata:
+  name: {{ include "ragflow-management-backend.fullname" . }}-code-housekeeping
+  labels:
+    {{- include "ragflow-management-backend.labels" . | nindent 4 }}
+spec:
+  schedule: {{ .Values.code.housekeepingCronJob.schedule | quote }}
+  concurrencyPolicy: Forbid
+  successfulJobsHistoryLimit: 1
+  failedJobsHistoryLimit: 3
+  jobTemplate:
+    spec:
+      activeDeadlineSeconds: 600
+      backoffLimit: 1
+      template:
+        metadata:
+          labels:
+            {{- include "ragflow-management-backend.selectorLabels" . | nindent 12 }}
+            app.kubernetes.io/component: code-housekeeping
+        spec:
+          restartPolicy: Never
+          serviceAccountName: {{ include "ragflow-management-backend.fullname" . }}
+          {{- with .Values.global.imagePullSecrets }}
+          imagePullSecrets:
+            {{- toYaml . | nindent 12 }}
+          {{- end }}
+          securityContext:
+            {{- include "ragflow.podSecurityContext" . | nindent 12 }}
+          initContainers:
+            - name: render-service-conf
+              image: alpine:3.20
+              command:
+                - sh
+                - -c
+                - |
+                  apk add --no-cache gettext >/dev/null 2>&1 || true
+                  envsubst < /conf-template/service_conf.yaml.template > /conf-rendered/local.service_conf.yaml
+              envFrom:
+                - configMapRef:
+                    name: {{ .Release.Name }}-app-config
+                - secretRef:
+                    name: ragflow-app-secrets
+              volumeMounts:
+                - name: conf-template
+                  mountPath: /conf-template
+                  readOnly: true
+                - name: conf-rendered
+                  mountPath: /conf-rendered
+          containers:
+            - name: code-housekeeping
+              image: {{ include "ragflow-management-backend.image" . }}
+              imagePullPolicy: {{ .Values.global.imagePullPolicy | default .Values.image.pullPolicy }}
+              command: ["/opt/venv/bin/python", "-c"]
+              args:
+                - |
+                  from management.server.services.code_housekeeping import housekeeping
+                  print("code housekeeping (cronjob backstop):", housekeeping())
+              envFrom:
+                - configMapRef:
+                    name: {{ .Release.Name }}-app-config
+                - secretRef:
+                    name: ragflow-app-secrets
+                - secretRef:
+                    name: ragflow-mgmt-smtp
+                    optional: true
+              env:
+                - name: PYTHONPATH
+                  value: "/ragflow"
+                - name: LITELLM_BASE_URL
+                  value: {{ .Values.code.litellmBaseUrl | quote }}
+                - name: LITELLM_MASTER_KEY
+                  valueFrom:
+                    secretKeyRef:
+                      name: {{ .Values.code.masterKeySecretName }}
+                      key: {{ .Values.code.masterKeySecretKey }}
+                      optional: true
+                # Liens du panel dans les emails d'alerte budget.
+                - name: ADMIN_PANEL_PUBLIC_URL
+                  value: "{{ .Values.global.scheme | default "https" }}://ragflow-management.{{ trimPrefix "ragflow." .Values.global.hostname }}"
+              securityContext:
+                allowPrivilegeEscalation: false
+                capabilities:
+                  drop: ["ALL"]
+              volumeMounts:
+                - name: tmp
+                  mountPath: /tmp
+                - name: runtime
+                  mountPath: /ragflow/logs
+                - name: conf-rendered
+                  mountPath: /ragflow/conf/local.service_conf.yaml
+                  subPath: local.service_conf.yaml
+                  readOnly: true
+          volumes:
+            - name: tmp
+              emptyDir:
+                sizeLimit: 256Mi
+            - name: runtime
+              emptyDir:
+                sizeLimit: 256Mi
+            - name: conf-template
+              configMap:
+                name: {{ .Release.Name }}-app-config
+                items:
+                  - key: service_conf.yaml.template
+                    path: service_conf.yaml.template
+            - name: conf-rendered
+              emptyDir:
+                sizeLimit: 64Mi
+{{- end }}

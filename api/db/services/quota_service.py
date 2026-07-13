@@ -42,27 +42,33 @@ def check_quota(org_id: str, resource_type: str) -> tuple[bool, str]:
 _QUOTA_CACHE_TTL = 300  # 5 minutes
 
 
-def _redis_quota_cache_key(tenant_id: str, period_start: str) -> str:
-    return f"quota_period:{tenant_id}:{period_start}"
+def _redis_quota_cache_key(org_id: str, period_start: str) -> str:
+    # Org-scoped: the limit is org-wide, so the cached usage must be too.
+    # (Was tenant-scoped before 2026-07-13 — each workspace then compared its
+    # OWN usage to the org limit, letting an org consume N x its quota.)
+    return f"quota_period:org:{org_id}:{period_start}"
 
 
-def _get_period_tokens_from_mysql(tenant_id: str, period_start, period_end) -> int:
-    """Sum tokens from TokenUsageDaily between period_start and period_end (inclusive)."""
+def _get_period_tokens_from_mysql(tenant_ids: list[str], period_start, period_end) -> int:
+    """Sum tokens from TokenUsageDaily over the given tenants between
+    period_start and period_end (inclusive)."""
     from api.db.db_models import DB, TokenUsageDaily
     from peewee import fn
+    if not tenant_ids:
+        return 0
     try:
         with DB.connection_context():
             result = (TokenUsageDaily
                       .select(fn.COALESCE(fn.SUM(TokenUsageDaily.tokens), 0))
                       .where(
-                          (TokenUsageDaily.tenant_id == tenant_id) &
+                          (TokenUsageDaily.tenant_id.in_(tenant_ids)) &
                           (TokenUsageDaily.date >= str(period_start)) &
                           (TokenUsageDaily.date <= str(period_end))
                       )
                       .scalar())
             return int(result or 0)
     except Exception:
-        logging.exception("quota_service: failed to sum tokens from MySQL for tenant=%s", tenant_id)
+        logging.exception("quota_service: failed to sum tokens from MySQL for tenants=%s", tenant_ids)
         return 0
 
 
@@ -87,16 +93,28 @@ def _get_live_redis_tokens(tenant_id: str) -> int:
         return 0
 
 
-def check_token_quota(tenant_id: str) -> dict:
-    """
-    Check token quota for a workspace tenant.
+_DEFAULT_QUOTA = {
+    "enabled": False,
+    "quota_exceeded": False,
+    "allow_overage": True,
+    "current_usage": 0,
+    "limit": 0,
+    "period_start": None,
+    "period_end": None,
+}
 
-    Returns a dict:
+
+def check_org_token_quota(org_id: str) -> dict:
+    """Org-wide token quota status: usage summed over ALL the org's
+    workspaces (any status — archived workspaces' past consumption still
+    counts toward the billing period), compared to org.max_tokens_monthly.
+
+    Returns:
         {
             "enabled": bool,          # False if no quota configured
             "quota_exceeded": bool,
             "allow_overage": bool,
-            "current_usage": int,     # tokens used this period
+            "current_usage": int,     # tokens used this period, ORG-WIDE
             "limit": int,             # max_tokens_monthly (0 = unlimited)
             "period_start": str,
             "period_end": str,
@@ -104,42 +122,30 @@ def check_token_quota(tenant_id: str) -> dict:
     """
     from api.db.db_models import Workspace, Organisation, DB
 
-    # Default: permissive (no quota configured)
-    _default = {
-        "enabled": False,
-        "quota_exceeded": False,
-        "allow_overage": True,
-        "current_usage": 0,
-        "limit": 0,
-        "period_start": None,
-        "period_end": None,
-    }
-
     try:
         with DB.connection_context():
-            ws = Workspace.get_or_none(Workspace.tenant_id == tenant_id)
-            if not ws:
-                return _default
-            org = Organisation.get_or_none(Organisation.id == ws.org_id)
+            org = Organisation.get_or_none(Organisation.id == org_id)
             if not org:
-                return _default
+                return dict(_DEFAULT_QUOTA)
+            tenant_ids = [w.tenant_id for w in Workspace.select(Workspace.tenant_id)
+                          .where(Workspace.org_id == org_id)]
     except Exception:
-        logging.exception("check_token_quota: DB lookup failed for tenant=%s", tenant_id)
-        return _default
+        logging.exception("check_org_token_quota: DB lookup failed for org=%s", org_id)
+        return dict(_DEFAULT_QUOTA)
 
     # No quota configured
     if not org.max_tokens_monthly or org.max_tokens_monthly <= 0:
-        return _default
+        return dict(_DEFAULT_QUOTA)
 
     # No billing period — permissive fallback
     if not org.current_period_start or not org.current_period_end:
-        return _default
+        return dict(_DEFAULT_QUOTA)
 
     period_start = str(org.current_period_start)
     period_end = str(org.current_period_end)
 
-    # Try Redis cache first
-    cache_key = _redis_quota_cache_key(tenant_id, period_start)
+    # Try Redis cache first (org-scoped)
+    cache_key = _redis_quota_cache_key(org_id, period_start)
     cached_usage = None
     try:
         from rag.utils.redis_conn import REDIS_CONN
@@ -152,11 +158,10 @@ def check_token_quota(tenant_id: str) -> dict:
     if cached_usage is not None:
         period_tokens = cached_usage
     else:
-        # Sum from MySQL (flushed tokens) + live Redis (today's unflushed)
-        period_tokens = _get_period_tokens_from_mysql(tenant_id, period_start, period_end)
-        live = _get_live_redis_tokens(tenant_id)
-        period_tokens += live
-        # Cache the result
+        # Sum from MySQL (flushed tokens) + live Redis (today's unflushed),
+        # over every workspace tenant of the org.
+        period_tokens = _get_period_tokens_from_mysql(tenant_ids, period_start, period_end)
+        period_tokens += sum(_get_live_redis_tokens(t) for t in tenant_ids)
         try:
             from rag.utils.redis_conn import REDIS_CONN
             REDIS_CONN.REDIS.setex(cache_key, _QUOTA_CACHE_TTL, period_tokens)
@@ -176,10 +181,37 @@ def check_token_quota(tenant_id: str) -> dict:
     }
 
 
-def invalidate_quota_cache(tenant_id: str, period_start: str) -> None:
-    """Invalidate the quota cache after a new period starts (call from billing system)."""
+def check_token_quota(tenant_id: str) -> dict:
+    """Token quota status for the org owning this workspace tenant.
+
+    ENFORCEMENT entry point (LLMBundle). The usage compared to the limit is
+    the ORG-WIDE sum over all its workspaces — before 2026-07-13 it was the
+    single workspace's usage, which let an org with N workspaces consume
+    N x max_tokens_monthly."""
+    from api.db.db_models import Workspace, DB
+
+    try:
+        with DB.connection_context():
+            ws = Workspace.get_or_none(Workspace.tenant_id == tenant_id)
+        if not ws:
+            return dict(_DEFAULT_QUOTA)
+    except Exception:
+        logging.exception("check_token_quota: DB lookup failed for tenant=%s", tenant_id)
+        return dict(_DEFAULT_QUOTA)
+    return check_org_token_quota(ws.org_id)
+
+
+def workspace_period_usage(tenant_id: str, period_start, period_end) -> int:
+    """Per-workspace consumption for DISPLAY (panel breakdown). Enforcement
+    uses the org-wide sum — never compare this figure to the org limit."""
+    return (_get_period_tokens_from_mysql([tenant_id], period_start, period_end)
+            + _get_live_redis_tokens(tenant_id))
+
+
+def invalidate_org_quota_cache(org_id: str, period_start: str) -> None:
+    """Invalidate the org's quota cache after a new period starts."""
     try:
         from rag.utils.redis_conn import REDIS_CONN
-        REDIS_CONN.REDIS.delete(_redis_quota_cache_key(tenant_id, period_start))
+        REDIS_CONN.REDIS.delete(_redis_quota_cache_key(org_id, period_start))
     except Exception:
         pass

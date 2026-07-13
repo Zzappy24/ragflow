@@ -11,7 +11,7 @@ replicas: 2
 image:
   repository: harbor.cylndata.cyllene.pro/data/ragflow-mgmt
   repositorySuffix: "-mgmt"
-  tag: v0.8.1
+  tag: v0.8.2
   pullPolicy: IfNotPresent
   imagePullSecrets:
     - name: harbor-pull-secret
@@ -51,5 +51,11 @@ code:
   litellmBaseUrl: "http://litellm.litellm.svc.cluster.local:4000"
   masterKeySecretName: "litellm-master-key-secret"
   masterKeySecretKey: "master-key"
+  # Filet de secours du scheduler in-process (reconcile + snapshots +
+  # alertes budget) : job K8s toutes les 30 min, DB.lock rend le
+  # chevauchement inoffensif. Désactivé par défaut (clusters sans LiteLLM).
+  housekeepingCronJob:
+    enabled: false
+    schedule: "*/30 * * * *"
   # URL publique /v1 affichée aux clients (panel + emails). Vide = masquée.
   gatewayPublicUrl: ""

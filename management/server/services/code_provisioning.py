@@ -292,11 +292,16 @@ def delete_code_team(*, code_team_id: str, client=None):
 
 
 def create_code_key(*, code_team_id: str, label: str, owner_user_id: str | None,
-                    created_by: str, client=None):
+                    created_by: str, max_budget: float | None = None,
+                    rpm_limit: int | None = None, client=None):
     """Returns (row, plain_key). plain_key is None when LiteLLM is down —
     the UI must tell the admin to retry (a pending_create key can NOT be
     completed by the reconciler: the plaintext only exists in the generate
-    response, so the reconciler marks such rows sync_status='error' instead)."""
+    response, so the reconciler marks such rows sync_status='error' instead).
+
+    max_budget/rpm_limit : limites par siège, enforcement temps réel par
+    LiteLLM. Le cycle du budget siège est TOUJOURS entitlement.budget_period
+    (aligné team/org). None = seule la limite de la team s'applique."""
     from api.db.db_models import DB, CodeTeam, CodeKey
     with DB.connection_context():
         team = CodeTeam.get_or_none(CodeTeam.id == code_team_id)
@@ -307,17 +312,25 @@ def create_code_key(*, code_team_id: str, label: str, owner_user_id: str | None,
         raise ValueError("code entitlement is not active for this org")
     if team.litellm_team_id is None:
         raise ValueError("team not yet synced to LiteLLM — retry in a moment")
+    if max_budget is not None and max_budget <= 0:
+        raise ValueError("max_budget must be > 0")
+    if rpm_limit is not None and rpm_limit <= 0:
+        raise ValueError("rpm_limit must be > 0")
 
     key_id = get_uuid()
     with DB.connection_context():  # desired state FIRST
         CodeKey.create(id=key_id, code_team_id=code_team_id, label=label,
                        owner_user_id=owner_user_id, status="active",
+                       max_budget=max_budget, rpm_limit=rpm_limit,
                        sync_status="pending", created_by=created_by)
 
     cl = _client(client)
     try:
         out = cl.generate_key(team_id=team.litellm_team_id,
-                              alias=cl.key_alias(team.org_id, key_id))
+                              alias=cl.key_alias(team.org_id, key_id),
+                              max_budget=max_budget,
+                              budget_duration=ent.budget_period,
+                              rpm_limit=rpm_limit)
         _mark(CodeKey, key_id, litellm_key_id=out["token"], key_masked=out["masked"],
               sync_status="synced", sync_error=None)
         plain = out["plain_key"]
@@ -328,6 +341,42 @@ def create_code_key(*, code_team_id: str, label: str, owner_user_id: str | None,
 
     with DB.connection_context():
         return CodeKey.get_by_id(key_id), plain
+
+
+def update_code_key_limits(*, code_key_id: str, max_budget: float | None,
+                           rpm_limit: int | None, client=None):
+    """Met à jour les limites d'une clé VIVANTE (pas de rotation, le secret
+    ne change pas). Les deux champs sont l'état désiré complet : None =
+    supprimer la limite. Desired-state-first, le reconciler (phase 1)
+    converge aussi les limites si la gateway est down au moment de l'appel."""
+    from api.db.db_models import DB, CodeTeam, CodeKey
+    with DB.connection_context():
+        key = CodeKey.get_or_none(CodeKey.id == code_key_id)
+    if key is None or key.status != "active":
+        raise ValueError("key not found")
+    if key.litellm_key_id is None:
+        raise ValueError("key not yet synced to LiteLLM — retry in a moment")
+    if max_budget is not None and max_budget <= 0:
+        raise ValueError("max_budget must be > 0")
+    if rpm_limit is not None and rpm_limit <= 0:
+        raise ValueError("rpm_limit must be > 0")
+    with DB.connection_context():
+        team = CodeTeam.get_or_none(CodeTeam.id == key.code_team_id)
+    ent = get_entitlement(team.org_id) if team else None
+
+    _mark(CodeKey, code_key_id, max_budget=max_budget, rpm_limit=rpm_limit,
+          sync_status="pending")
+    cl = _client(client)
+    try:
+        cl.update_key(key.litellm_key_id, max_budget=max_budget, rpm_limit=rpm_limit,
+                      budget_duration=ent.budget_period if ent else None)
+        _mark(CodeKey, code_key_id, sync_status="synced", sync_error=None)
+    except LiteLLMError as e:
+        logger.warning("code_key %s limits update deferred to reconciler: %s", code_key_id, e)
+        _mark(CodeKey, code_key_id, sync_error=str(e)[:1000])
+
+    with DB.connection_context():
+        return CodeKey.get_by_id(code_key_id)
 
 
 def revoke_code_key(*, code_key_id: str, client=None):
