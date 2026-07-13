@@ -96,21 +96,21 @@ export default function CodeDashboardSection() {
             : undefined} />
       )}
       <Row gutter={[12, 12]} className="mb-3">
-        <Col span={4}><Card size="small"><Statistic title="Dépensé (cycle)" prefix={<EuroOutlined />}
+        <Col xs={12} md={8} lg={4}><Card size="small"><Statistic title="Dépensé (cycle)" prefix={<EuroOutlined />}
           value={kpis.cycle_spend ?? '—'} suffix={kpis.cycle_spend != null ? '€' : ''} /></Card></Col>
-        <Col span={3}><Card size="small"><Statistic title="Orgs actives" prefix={<BankOutlined />} value={kpis.active_orgs} /></Card></Col>
-        <Col span={3}><Card size="small"><Statistic title="Teams" prefix={<TeamOutlined />} value={kpis.teams} /></Card></Col>
-        <Col span={3}><Card size="small"><Statistic title="Clés actives" prefix={<KeyOutlined />} value={kpis.active_keys} /></Card></Col>
-        <Col span={3}><Card size="small"><Statistic title="Alertes budget (≥80%)" prefix={<WarningOutlined />}
+        <Col xs={12} md={8} lg={3}><Card size="small"><Statistic title="Orgs actives" prefix={<BankOutlined />} value={kpis.active_orgs} /></Card></Col>
+        <Col xs={12} md={8} lg={3}><Card size="small"><Statistic title="Teams" prefix={<TeamOutlined />} value={kpis.teams} /></Card></Col>
+        <Col xs={12} md={8} lg={3}><Card size="small"><Statistic title="Clés actives" prefix={<KeyOutlined />} value={kpis.active_keys} /></Card></Col>
+        <Col xs={12} md={8} lg={3}><Card size="small"><Statistic title="Alertes budget (≥80%)" prefix={<WarningOutlined />}
           value={kpis.budget_alerts} valueStyle={kpis.budget_alerts > 0 ? { color: '#cf1322' } : undefined} /></Card></Col>
-        <Col span={4}><Card size="small"><Statistic title="Tokens (30 j)"
+        <Col xs={12} md={8} lg={4}><Card size="small"><Statistic title="Tokens (30 j)"
           value={kpis.tokens_30d == null ? '—' : fmtTokens(kpis.tokens_30d)} /></Card></Col>
-        <Col span={4}><Card size="small"><Statistic title="Erreurs (30 j)"
+        <Col xs={12} md={8} lg={4}><Card size="small"><Statistic title="Erreurs (30 j)"
           value={kpis.errors_30d ?? '—'}
           valueStyle={(kpis.errors_30d ?? 0) > 0 ? { color: '#cf1322' } : undefined} /></Card></Col>
       </Row>
       <Row gutter={12}>
-        <Col span={12}>
+        <Col xs={24} lg={12}>
           <Card size="small" title="Dépense par jour (30 j)">
             <ResponsiveContainer width="100%" height={200}>
               <AreaChart data={data.daily}>
@@ -125,7 +125,7 @@ export default function CodeDashboardSection() {
             </ResponsiveContainer>
           </Card>
         </Col>
-        <Col span={6}>
+        <Col xs={24} md={12} lg={6}>
           <Card size="small" title="Top organisations">
             <Table rowKey="org_id" size="small" pagination={false} showHeader={false}
               dataSource={data.top_orgs}
@@ -133,7 +133,7 @@ export default function CodeDashboardSection() {
                         { dataIndex: 'spend', width: 90, render: (v: number) => `${v} €` }]} />
           </Card>
         </Col>
-        <Col span={6}>
+        <Col xs={24} md={12} lg={6}>
           <Card size="small" title="Top teams">
             <Table rowKey="code_team_id" size="small" pagination={false} showHeader={false}
               dataSource={data.top_teams}

@@ -171,6 +171,7 @@ export default function AuditPage({ orgId: orgIdProp, wsId: wsIdProp }: { orgId?
       </div>
       <Card>
         <Table
+          scroll={{ x: 'max-content' }}
           columns={columns}
           dataSource={logs}
           rowKey="id"

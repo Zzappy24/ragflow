@@ -678,7 +678,7 @@ export default function OrgDetailPage() {
       </div>
 
       <Row gutter={16} className="mb-6">
-        <Col span={6}>
+        <Col xs={12} lg={6}>
           <Card>
             <Statistic
               title="Users"
@@ -688,7 +688,7 @@ export default function OrgDetailPage() {
             />
           </Card>
         </Col>
-        <Col span={6}>
+        <Col xs={12} lg={6}>
           <Card>
             <Statistic
               title="Workspaces"
@@ -698,7 +698,7 @@ export default function OrgDetailPage() {
             />
           </Card>
         </Col>
-        <Col span={6}>
+        <Col xs={12} lg={6}>
           <Card>
             <Statistic
               title="Datasets"
@@ -708,7 +708,7 @@ export default function OrgDetailPage() {
             />
           </Card>
         </Col>
-        <Col span={6}>
+        <Col xs={12} lg={6}>
           <Card>
             <Statistic
               title="Documents"
@@ -905,7 +905,7 @@ export default function OrgDetailPage() {
                   }>
                   {billing ? (
                     <Row gutter={24}>
-                      <Col span={12}>
+                      <Col xs={24} lg={12}>
                         <Statistic title={`Code — consommé en ${billing.month}`}
                           value={billing.code.total_eur} suffix="€" precision={2} />
                         <Table size="small" pagination={false} showHeader={false} className="mt-2"
@@ -917,7 +917,7 @@ export default function OrgDetailPage() {
                               render: (v: number) => `${v} €` },
                           ]} />
                       </Col>
-                      <Col span={12}>
+                      <Col xs={24} lg={12}>
                         <Statistic title={`RAG — forfait ${billing.month}`}
                           value={billing.rag.monthly_fee_eur ?? '—'}
                           suffix={billing.rag.monthly_fee_eur != null ? '€' : ''}

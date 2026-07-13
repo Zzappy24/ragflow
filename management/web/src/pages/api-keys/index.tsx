@@ -133,6 +133,7 @@ export default function ApiKeysPage({ wsId: wsIdProp }: { wsId?: string } = {}) 
 
       <Card>
         <Table
+          scroll={{ x: 'max-content' }}
           columns={columns}
           dataSource={keys}
           rowKey="id"

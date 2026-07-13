@@ -82,7 +82,10 @@ export default function AppLayout() {
 
   return (
     <AntLayout className="min-h-screen">
-      <Sider width={200} theme="light" className="border-r">
+      {/* breakpoint lg : sous 992px le menu se replie en icônes (petit
+          laptop/tablette) au lieu d'écraser le contenu. */}
+      <Sider width={200} theme="light" className="border-r"
+             breakpoint="lg" collapsible collapsedWidth={64}>
         <div className="p-4 text-center border-b">
           <Text strong className="text-lg">RAGFlow Admin</Text>
         </div>

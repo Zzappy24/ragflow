@@ -249,6 +249,7 @@ export default function WorkspacesPage({
 
       <Card>
         <Table
+          scroll={{ x: 'max-content' }}
           columns={columns}
           dataSource={workspaces}
           rowKey="id"

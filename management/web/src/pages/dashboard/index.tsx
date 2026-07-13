@@ -630,9 +630,9 @@ function SuperDashboard() {
           <Col xs={24} md={8}>
             <Card size="small" title="Produit Code" extra={<Link to="/code">→ ouvrir</Link>}>
               <Row gutter={8}>
-                <Col span={8}><Statistic title="Dépensé (cycle)" value={codeKpis.cycle_spend ?? '—'} suffix={codeKpis.cycle_spend != null ? '€' : ''} /></Col>
-                <Col span={8}><Statistic title="Orgs actives" value={codeKpis.active_orgs} /></Col>
-                <Col span={8}><Statistic title="Alertes" value={codeKpis.budget_alerts}
+                <Col xs={24} sm={8}><Statistic title="Dépensé (cycle)" value={codeKpis.cycle_spend ?? '—'} suffix={codeKpis.cycle_spend != null ? '€' : ''} /></Col>
+                <Col xs={24} sm={8}><Statistic title="Orgs actives" value={codeKpis.active_orgs} /></Col>
+                <Col xs={24} sm={8}><Statistic title="Alertes" value={codeKpis.budget_alerts}
                   valueStyle={codeKpis.budget_alerts > 0 ? { color: '#cf1322' } : undefined} /></Col>
               </Row>
             </Card>
