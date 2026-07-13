@@ -458,6 +458,46 @@ def global_quota_overview(_user=Depends(require_superuser)):
 
 # ─── token quota status ────────────────────────────────────────────────────────
 
+_MONTH_RE = r"\d{4}-(0[1-9]|1[0-2])"
+
+
+def _validated_month(month: str | None) -> str:
+    import re as _re
+    if month is None:
+        return date.today().strftime("%Y-%m")
+    if not _re.fullmatch(_MONTH_RE, month):
+        raise HTTPException(status_code=422, detail="month must be YYYY-MM")
+    return month
+
+
+@router.get("/orgs/{org_id}/billing/summary")
+def billing_summary_route(org_id: str, month: str | None = None,
+                          user_id: str = Depends(get_current_user_id)):
+    """Récap consolidé du mois (les 2 produits) — alimente la carte Facturation."""
+    require_org_admin(org_id, user_id)
+    from management.server.services.billing import billing_summary
+    return billing_summary(org_id, _validated_month(month))
+
+
+@router.get("/orgs/{org_id}/billing/statement")
+def billing_statement_route(org_id: str, month: str | None = None,
+                            user_id: str = Depends(get_current_user_id)):
+    """LE relevé compta : CSV consolidé Code (€ consommés dans le mois,
+    delta des snapshots avec gestion des resets de cycle) + RAG (tokens par
+    workspace/BU), lignes TOTAL par produit."""
+    from fastapi.responses import Response
+    from api.db.services.org_service import OrgService
+    require_org_admin(org_id, user_id)
+    month = _validated_month(month)
+    ok, org = OrgService.get_by_id(org_id)
+    org_name = org.name if ok and org else org_id
+    from management.server.services.billing import billing_statement_csv
+    csv_text = billing_statement_csv(org_id, org_name, month)
+    return Response(content=csv_text, media_type="text/csv; charset=utf-8",
+                    headers={"Content-Disposition":
+                             f'attachment; filename="releve-{org_name.replace(" ", "_")[:24]}-{month}.csv"'})
+
+
 @router.get("/orgs/{org_id}/usage/export")
 def export_rag_usage(org_id: str, month: str | None = None,
                      user_id: str = Depends(get_current_user_id)):

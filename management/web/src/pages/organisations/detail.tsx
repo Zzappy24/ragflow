@@ -1,6 +1,6 @@
 import { useEffect, useState, useCallback } from 'react';
 import { useParams, Link, useNavigate } from 'react-router-dom';
-import { Card, Tabs, Spin, Progress, Row, Col, Statistic, Breadcrumb, Typography, Tag, Button, Dropdown, Modal, Input, App, Table, Space, Select, Switch, InputNumber, Tooltip, Alert, Form } from 'antd';
+import { Card, Tabs, Spin, Progress, Row, Col, Statistic, Breadcrumb, Typography, Tag, Button, Modal, Input, App, Table, Space, Select, Switch, InputNumber, Tooltip, Alert, Form } from 'antd';
 import { DatePicker } from 'antd';
 import type { Dayjs } from 'dayjs';
 import { AppstoreOutlined, TeamOutlined, AuditOutlined, HomeOutlined, DatabaseOutlined, FileOutlined, InboxOutlined, UndoOutlined, FireOutlined, ThunderboltOutlined, BarChartOutlined, WarningOutlined, DownloadOutlined } from '@ant-design/icons';
@@ -13,6 +13,7 @@ import dayjs from 'dayjs';
 import api from '@/lib/api';
 import { useAuthStore } from '@/stores/auth';
 import WorkspacesPage from '@/pages/workspaces';
+import CodePage from '@/pages/code';
 import MembersPage from '@/pages/members';
 import AuditPage from '@/pages/audit';
 
@@ -469,6 +470,14 @@ interface OrgQuota {
   overage_today_workspace_ids: string[];
 }
 
+interface BillingSummary {
+  month: string;
+  code: { teams: { team_id: string; name: string; spend_eur: number; tokens: number | null }[];
+          total_eur: number; total_tokens: number | null };
+  rag: { workspaces: { workspace_id: string; name: string; bu: string; tokens: number }[];
+         total_tokens: number };
+}
+
 export default function OrgDetailPage() {
   const { orgId } = useParams<{ orgId: string }>();
   const navigate = useNavigate();
@@ -570,12 +579,18 @@ export default function OrgDetailPage() {
       message.error("Échec de l'export CSV");
     }
   };
-  const monthChoices = (fn: (m?: string) => void) => [
-    { key: 'cur', label: 'Mois courant', onClick: () => fn() },
-    { key: 'prev', label: 'Mois précédent',
-      onClick: () => { const d = new Date(); d.setMonth(d.getMonth() - 1);
-        fn(`${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, '0')}`); } },
-  ];
+  const prevMonthStr = () => {
+    const d = new Date(); d.setMonth(d.getMonth() - 1);
+    return `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, '0')}`;
+  };
+  const [billingMonth, setBillingMonth] = useState<string | undefined>(undefined); // undefined = mois courant
+  const [billing, setBilling] = useState<BillingSummary | null>(null);
+  useEffect(() => {
+    if (!orgId) return;
+    api.get(`/orgs/${orgId}/billing/summary`, { params: billingMonth ? { month: billingMonth } : {} })
+      .then((res) => setBilling(res.data))
+      .catch(() => setBilling(null));
+  }, [orgId, billingMonth]);
 
   const refreshQuota = useCallback(() => {
     if (!orgId) return;
@@ -852,34 +867,75 @@ export default function OrgDetailPage() {
                   )}
                 </Card>
 
-                {/* Facturation — LE point d'entrée compta : les exports
-                    mensuels des deux produits au même endroit. */}
-                <Card title="Facturation — exports mensuels" className="mt-4">
-                  <Space size="large" wrap>
-                    <Space direction="vertical" size={2}>
-                      <Typography.Text strong>RAG (tokens)</Typography.Text>
-                      <Typography.Text type="secondary" className="text-xs">
-                        date ; workspace ; BU ; modèle ; type ; tokens
-                      </Typography.Text>
-                      <Dropdown menu={{ items: monthChoices((m) =>
-                        downloadCsv(`/orgs/${orgId}/usage/export`, `rag-usage-${m ?? 'mois-courant'}.csv`, m)) }}>
-                        <Button icon={<DownloadOutlined />}>Exporter RAG</Button>
-                      </Dropdown>
-                    </Space>
-                    <Space direction="vertical" size={2}>
-                      <Typography.Text strong>Code (€)</Typography.Text>
-                      <Typography.Text type="secondary" className="text-xs">
-                        date ; team ; dépense cumulée du cycle ; budget ; tokens ; erreurs
-                      </Typography.Text>
-                      <Dropdown menu={{ items: monthChoices((m) =>
-                        downloadCsv(`/orgs/${orgId}/code/export`, `code-usage-${m ?? 'mois-courant'}.csv`, m)) }}>
-                        <Button icon={<DownloadOutlined />}>Exporter Code</Button>
-                      </Dropdown>
-                    </Space>
+                {/* Facturation — LE point d'entrée compta : récap consolidé
+                    du mois + relevé exportable + détails jour par jour. */}
+                <Card title="Facturation" className="mt-4"
+                  extra={
+                    <Select size="small" style={{ width: 150 }}
+                      value={billingMonth ?? 'cur'}
+                      onChange={(v) => setBillingMonth(v === 'cur' ? undefined : v)}
+                      options={[
+                        { value: 'cur', label: 'Mois courant' },
+                        { value: prevMonthStr(), label: 'Mois précédent' },
+                      ]} />
+                  }>
+                  {billing ? (
+                    <Row gutter={24}>
+                      <Col span={12}>
+                        <Statistic title={`Code — consommé en ${billing.month}`}
+                          value={billing.code.total_eur} suffix="€" precision={2} />
+                        <Table size="small" pagination={false} showHeader={false} className="mt-2"
+                          rowKey="team_id" dataSource={billing.code.teams}
+                          locale={{ emptyText: 'Aucune consommation Code ce mois' }}
+                          columns={[
+                            { dataIndex: 'name' },
+                            { dataIndex: 'spend_eur', align: 'right' as const,
+                              render: (v: number) => `${v} €` },
+                          ]} />
+                      </Col>
+                      <Col span={12}>
+                        <Statistic title={`RAG — tokens en ${billing.month}`}
+                          value={billing.rag.total_tokens} />
+                        <Table size="small" pagination={false} showHeader={false} className="mt-2"
+                          rowKey="workspace_id" dataSource={billing.rag.workspaces}
+                          locale={{ emptyText: 'Aucune consommation RAG ce mois' }}
+                          columns={[
+                            { dataIndex: 'name',
+                              render: (v: string, r: { bu: string }) => (
+                                <span>{v} {r.bu && <Tag>{r.bu}</Tag>}</span>) },
+                            { dataIndex: 'tokens', align: 'right' as const,
+                              render: (v: number) => v.toLocaleString() },
+                          ]} />
+                      </Col>
+                    </Row>
+                  ) : <Card loading bordered={false} />}
+                  <Space className="mt-4" wrap>
+                    <Tooltip title="LE document compta : totaux et lignes par team/workspace, les deux produits">
+                      <Button type="primary" icon={<DownloadOutlined />}
+                        onClick={() => downloadCsv(`/orgs/${orgId}/billing/statement`,
+                          `releve-${billingMonth ?? 'mois-courant'}.csv`, billingMonth)}>
+                        Relevé mensuel (CSV)
+                      </Button>
+                    </Tooltip>
+                    <Button icon={<DownloadOutlined />}
+                      onClick={() => downloadCsv(`/orgs/${orgId}/usage/export`,
+                        `rag-usage-${billingMonth ?? 'mois-courant'}.csv`, billingMonth)}>
+                      Détail RAG (jour/jour)
+                    </Button>
+                    <Button icon={<DownloadOutlined />}
+                      onClick={() => downloadCsv(`/orgs/${orgId}/code/export`,
+                        `code-usage-${billingMonth ?? 'mois-courant'}.csv`, billingMonth)}>
+                      Détail Code (jour/jour)
+                    </Button>
                   </Space>
                 </Card>
               </div>
             ),
+          },
+          {
+            key: 'code',
+            label: <span><ThunderboltOutlined /> Code</span>,
+            children: <CodePage orgId={orgId} />,
           },
           {
             key: 'usage',

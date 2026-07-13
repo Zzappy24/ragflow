@@ -79,3 +79,61 @@ def test_rag_usage_export_csv(panel, ws_in_org):
 
     assert client.get(f"/api/admin/orgs/{org_id}/usage/export?month=2026-13",
                       headers=_h(tokens["org_admin"])).status_code == 422
+
+
+def test_billing_summary_and_statement(panel, ws_in_org):
+    """Relevé mensuel consolidé : le spend Code du mois est le DELTA des
+    snapshots (seed pré-mois + reset de cycle géré), pas le cumul brut."""
+    from api.db.db_models import DB, CodeSpendSnapshot, TokenUsageDaily, Workspace
+    from common.misc_utils import get_uuid
+    client, (org_id, tokens) = panel
+    _, ws_id, tenant_id = ws_in_org
+
+    team = client.post(f"/api/admin/orgs/{org_id}/code/teams",
+                       json={"name": "bill-t", "max_budget": 50.0, "model_access": []},
+                       headers=_h(tokens["org_admin"])).json()
+    today = datetime.date.today()
+    first = today.replace(day=1)
+    with DB.connection_context():
+        Workspace.update(settings_json={"bu": "Digital"}).where(Workspace.id == ws_id).execute()
+        TokenUsageDaily.create(tenant_id=tenant_id, llm_factory="Ollama", model_type="chat",
+                               llm_name="qwen3", date=str(first), tokens=4321)
+        # seed pré-mois : cumul 10.0 — le 1er delta du mois doit être 2.0, pas 12.0
+        CodeSpendSnapshot.create(id=get_uuid(), snap_date=first - datetime.timedelta(days=1),
+                                 org_id=org_id, code_team_id=team["id"], spend=10.0,
+                                 max_budget=50.0, tokens=999, errors=0)
+        for day, spend, tok in ((0, 12.0, 100),   # +2.0
+                                (1, 3.0, 200),    # reset de cycle -> +3.0
+                                (2, 5.5, None)):  # +2.5, tokens inconnus ce relevé
+            CodeSpendSnapshot.create(id=get_uuid(), snap_date=first + datetime.timedelta(days=day),
+                                     org_id=org_id, code_team_id=team["id"], spend=spend,
+                                     max_budget=50.0, tokens=tok, errors=0)
+
+    month = today.strftime("%Y-%m")
+    # résumé JSON (carte Facturation)
+    r = client.get(f"/api/admin/orgs/{org_id}/billing/summary?month={month}",
+                   headers=_h(tokens["org_admin"]))
+    assert r.status_code == 200
+    data = r.json()
+    assert data["code"]["total_eur"] == 7.5  # 2.0 + 3.0 + 2.5
+    t = [x for x in data["code"]["teams"] if x["team_id"] == team["id"]][0]
+    assert t["spend_eur"] == 7.5 and t["tokens"] == 300
+    ws_row = [w for w in data["rag"]["workspaces"] if w["workspace_id"] == ws_id][0]
+    assert ws_row["tokens"] == 4321 and ws_row["bu"] == "Digital"
+
+    # relevé CSV (compta)
+    assert client.get(f"/api/admin/orgs/{org_id}/billing/statement?month={month}",
+                      headers=_h(tokens["plain_member"])).status_code == 403
+    r = client.get(f"/api/admin/orgs/{org_id}/billing/statement?month={month}",
+                   headers=_h(tokens["org_admin"]))
+    assert r.status_code == 200 and "text/csv" in r.headers["content-type"]
+    body = r.text
+    assert "RELEVE MENSUEL" in body
+    assert "produit;entite;bu;tokens;montant_eur" in body
+    assert "code;bill-t;;300;7.5" in body
+    assert "code;TOTAL;;300;7.5" in body
+    assert "rag;ws-data;Digital;4321;" in body
+    assert "rag;TOTAL;;4321;" in body
+
+    with DB.connection_context():
+        CodeSpendSnapshot.delete().where(CodeSpendSnapshot.code_team_id == team["id"]).execute()

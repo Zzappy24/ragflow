@@ -32,9 +32,13 @@ const euro = (v: number) => `${Math.round(v * 100) / 100} €`;
 // on absolutise à l'affichage pour que le copier-coller marche partout.
 const absClaimUrl = (u: string) => (u.startsWith('http') ? u : window.location.origin + u);
 
-export default function CodePage() {
+export default function CodePage({ orgId: orgIdProp }: { orgId?: string } = {}) {
+  // Deux modes : page autonome (menu Code, vue produit/ops, org via ?org=)
+  // ou embarqué comme onglet de la fiche organisation (orgId en prop —
+  // pas de landing, pas de back-link, pas de dashboard global).
+  const embedded = !!orgIdProp;
   const [searchParams, setSearchParams] = useSearchParams();
-  const orgId = searchParams.get('org') || '';
+  const orgId = orgIdProp || searchParams.get('org') || '';
   const [overview, setOverview] = useState<Overview | null>(null);
   const [loading, setLoading] = useState(true);
   const [loadError, setLoadError] = useState<'forbidden' | 'other' | null>(null);
@@ -382,7 +386,7 @@ export default function CodePage() {
     );
   }
 
-  const backLink = (
+  const backLink = embedded ? null : (
     <Button type="link" className="px-0 mb-2" onClick={() => setSearchParams({})}>
       ← Toutes les organisations
     </Button>
