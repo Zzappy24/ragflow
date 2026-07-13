@@ -157,12 +157,12 @@ export default function WorkspaceDetailPage() {
       </div>
 
       <Row gutter={16} className="mb-6">
-        <Col span={6}>
+        <Col xs={12} lg={6}>
           <Card>
             <Statistic title="Members" value={stats?.members_count || 0} prefix={<TeamOutlined />} />
           </Card>
         </Col>
-        <Col span={6}>
+        <Col xs={12} lg={6}>
           <Card>
             <Statistic title="Datasets" value={stats?.datasets_count || 0} prefix={<DatabaseOutlined />} />
           </Card>

@@ -70,6 +70,7 @@ export default function OrganisationsPage() {
 
       <Card>
         <Table
+          scroll={{ x: 'max-content' }}
           columns={columns}
           dataSource={orgs}
           rowKey="id"

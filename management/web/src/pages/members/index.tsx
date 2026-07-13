@@ -264,6 +264,7 @@ export default function MembersPage({
 
       <Card>
         <Table
+          scroll={{ x: 'max-content' }}
           columns={columns}
           dataSource={members}
           rowKey="user_id"

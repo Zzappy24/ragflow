@@ -1,9 +1,9 @@
 import { useEffect, useState, useCallback } from 'react';
-import { useParams, Link, useNavigate } from 'react-router-dom';
+import { useParams, Link, useNavigate, useSearchParams } from 'react-router-dom';
 import { Card, Tabs, Spin, Progress, Row, Col, Statistic, Breadcrumb, Typography, Tag, Button, Modal, Input, App, Table, Space, Select, Switch, InputNumber, Tooltip, Alert, Form } from 'antd';
 import { DatePicker } from 'antd';
 import type { Dayjs } from 'dayjs';
-import { AppstoreOutlined, TeamOutlined, AuditOutlined, HomeOutlined, DatabaseOutlined, FileOutlined, InboxOutlined, UndoOutlined, FireOutlined, ThunderboltOutlined, BarChartOutlined, WarningOutlined, DownloadOutlined } from '@ant-design/icons';
+import { AppstoreOutlined, TeamOutlined, AuditOutlined, HomeOutlined, DatabaseOutlined, FileOutlined, InboxOutlined, UndoOutlined, FireOutlined, ThunderboltOutlined, BarChartOutlined, WarningOutlined, DownloadOutlined, EuroOutlined } from '@ant-design/icons';
 import {
   AreaChart, Area, BarChart, Bar, PieChart, Pie,
   XAxis, YAxis, CartesianGrid, Tooltip as RechartsTooltip,
@@ -482,6 +482,7 @@ interface BillingSummary {
 export default function OrgDetailPage() {
   const { orgId } = useParams<{ orgId: string }>();
   const navigate = useNavigate();
+  const [searchParams, setSearchParams] = useSearchParams();
   const { message, modal } = App.useApp();
   const { user } = useAuthStore();
   const [org, setOrg] = useState<OrgDetail | null>(null);
@@ -540,7 +541,7 @@ export default function OrgDetailPage() {
     setSavingQuota(true);
     try {
       await api.patch(`/orgs/${orgId}/quota`, quotaForm);
-      message.success('Quota settings saved');
+      message.success('Paramètres de quota enregistrés');
       refreshQuota();
     } catch (err: any) {
       message.error(err?.response?.data?.detail ?? 'Failed to save quota');
@@ -677,7 +678,7 @@ export default function OrgDetailPage() {
       </div>
 
       <Row gutter={16} className="mb-6">
-        <Col span={6}>
+        <Col xs={12} lg={6}>
           <Card>
             <Statistic
               title="Users"
@@ -687,7 +688,7 @@ export default function OrgDetailPage() {
             />
           </Card>
         </Col>
-        <Col span={6}>
+        <Col xs={12} lg={6}>
           <Card>
             <Statistic
               title="Workspaces"
@@ -697,7 +698,7 @@ export default function OrgDetailPage() {
             />
           </Card>
         </Col>
-        <Col span={6}>
+        <Col xs={12} lg={6}>
           <Card>
             <Statistic
               title="Datasets"
@@ -707,7 +708,7 @@ export default function OrgDetailPage() {
             />
           </Card>
         </Col>
-        <Col span={6}>
+        <Col xs={12} lg={6}>
           <Card>
             <Statistic
               title="Documents"
@@ -722,6 +723,8 @@ export default function OrgDetailPage() {
       <Tabs
         type="line"
         size="large"
+        activeKey={searchParams.get('tab') ?? 'workspaces'}
+        onChange={(k) => setSearchParams((prev) => { prev.set('tab', k); return prev; }, { replace: true })}
         items={[
           {
             key: 'workspaces',
@@ -757,17 +760,17 @@ export default function OrgDetailPage() {
 
                 {/* Token quota */}
                 <Card
-                  title={<span>Token quota {quota?.overage_today_workspace_ids?.length ? <Tag color="red" icon={<WarningOutlined />}>Overage today</Tag> : null}</span>}
+                  title={<span>Quota de tokens {quota?.overage_today_workspace_ids?.length ? <Tag color="red" icon={<WarningOutlined />}>Dépassement aujourd'hui</Tag> : null}</span>}
                   extra={user?.is_superuser && (
                     <Space>
-                      <Button size="small" onClick={handleResetPeriod}>Reset period</Button>
-                      <Button size="small" type="primary" loading={savingQuota} onClick={handleSaveQuota}>Save</Button>
+                      <Button size="small" onClick={handleResetPeriod}>Réinitialiser la période</Button>
+                      <Button size="small" type="primary" loading={savingQuota} onClick={handleSaveQuota}>Enregistrer</Button>
                     </Space>
                   )}
                 >
                   {quota?.current_period_start && (
                     <div className="text-xs text-gray-400 mb-3">
-                      Period: {quota.current_period_start} → {quota.current_period_end}
+                      Période : {quota.current_period_start} → {quota.current_period_end}
                     </div>
                   )}
 
@@ -775,7 +778,7 @@ export default function OrgDetailPage() {
                   {user?.is_superuser && (
                     <div className="flex items-center gap-6 mb-4 p-3 bg-gray-50 rounded">
                       <div className="flex items-center gap-2">
-                        <span className="text-sm text-gray-600">Monthly limit (tokens)</span>
+                        <span className="text-sm text-gray-600">Limite mensuelle (tokens)</span>
                         <Tooltip title="0 = unlimited">
                           <InputNumber
                             min={0}
@@ -789,7 +792,7 @@ export default function OrgDetailPage() {
                         </Tooltip>
                       </div>
                       <div className="flex items-center gap-2">
-                        <span className="text-sm text-gray-600">Allow overage</span>
+                        <span className="text-sm text-gray-600">Dépassement autorisé</span>
                         <Switch
                           checked={quotaForm.allow_overage}
                           onChange={(v) => setQuotaForm(f => ({ ...f, allow_overage: v }))}
@@ -831,7 +834,7 @@ export default function OrgDetailPage() {
                         {exceeded && (
                           <div className="mt-1 text-xs text-red-500 flex items-center gap-1">
                             <WarningOutlined />
-                            {quota.allow_overage ? 'Quota dépassé — overage autorisé (soft limit)' : 'Quota dépassé — requêtes bloquées (hard limit)'}
+                            {quota.allow_overage ? 'Quota dépassé — dépassement toléré (limite souple)' : 'Quota dépassé — requêtes bloquées (limite stricte)'}
                           </div>
                         )}
                       </div>
@@ -872,10 +875,22 @@ export default function OrgDetailPage() {
                       </div>
                     );
                   }) : (
-                    <Alert message="No workspaces in this organisation" type="info" showIcon />
+                    <Alert message="Aucun workspace dans cette organisation" type="info" showIcon />
                   )}
                 </Card>
-
+              </div>
+            ),
+          },
+          {
+            key: 'code',
+            label: <span><ThunderboltOutlined /> Code</span>,
+            children: <CodePage orgId={orgId} />,
+          },
+          {
+            key: 'billing',
+            label: <span><EuroOutlined /> Facturation</span>,
+            children: (
+              <div>
                 {/* Facturation — LE point d'entrée compta : récap consolidé
                     du mois + relevé exportable + détails jour par jour. */}
                 <Card title="Facturation" className="mt-4"
@@ -890,7 +905,7 @@ export default function OrgDetailPage() {
                   }>
                   {billing ? (
                     <Row gutter={24}>
-                      <Col span={12}>
+                      <Col xs={24} lg={12}>
                         <Statistic title={`Code — consommé en ${billing.month}`}
                           value={billing.code.total_eur} suffix="€" precision={2} />
                         <Table size="small" pagination={false} showHeader={false} className="mt-2"
@@ -902,7 +917,7 @@ export default function OrgDetailPage() {
                               render: (v: number) => `${v} €` },
                           ]} />
                       </Col>
-                      <Col span={12}>
+                      <Col xs={24} lg={12}>
                         <Statistic title={`RAG — forfait ${billing.month}`}
                           value={billing.rag.monthly_fee_eur ?? '—'}
                           suffix={billing.rag.monthly_fee_eur != null ? '€' : ''}
@@ -955,11 +970,6 @@ export default function OrgDetailPage() {
                 </Card>
               </div>
             ),
-          },
-          {
-            key: 'code',
-            label: <span><ThunderboltOutlined /> Code</span>,
-            children: <CodePage orgId={orgId} />,
           },
           {
             key: 'usage',

@@ -152,7 +152,7 @@ export default function WorkspacesPage({
 
   const columns: ColumnsType<Workspace> = [
     {
-      title: 'Name',
+      title: 'Nom',
       dataIndex: 'name',
       render: (name: string, record: Workspace) =>
         record.status === '1' ? (
@@ -176,18 +176,17 @@ export default function WorkspacesPage({
       ),
     },
     {
-      title: 'Status',
+      title: 'Statut',
       dataIndex: 'status',
       width: 100,
-      render: (s: string) => <Tag color={s === '1' ? 'green' : 'red'}>{s === '1' ? 'Active' : 'Deleted'}</Tag>,
+      render: (s: string) => <Tag color={s === '1' ? 'green' : 'red'}>{s === '1' ? 'Actif' : 'Archivé'}</Tag>,
     },
-    { title: 'Tenant ID', dataIndex: 'tenant_id', ellipsis: true, width: 200 },
     {
       title: '',
       width: 110,
       render: (_: unknown, record: Workspace) =>
         record.status === '1' ? (
-          <Tooltip title="Open workspace in RAGFlow">
+          <Tooltip title="Ouvrir le workspace dans RAGFlow">
             <Button
               type="text"
               icon={<ExportOutlined />}
@@ -197,7 +196,7 @@ export default function WorkspacesPage({
           </Tooltip>
         ) : (
           <Space size="small">
-            <Tooltip title="Restore">
+            <Tooltip title="Restaurer">
               <Button
                 type="text"
                 icon={<UndoOutlined />}
@@ -206,11 +205,11 @@ export default function WorkspacesPage({
               />
             </Tooltip>
             {isSuperuser && (
-              <Tooltip title="Purge permanently (irreversible)">
+              <Tooltip title="Purger définitivement (irréversible)">
                 <Popconfirm
-                  title="Purge this workspace permanently?"
-                  description="All datasets, documents, and chunks will be DELETED. This cannot be undone."
-                  okText="Purge"
+                  title="Purger ce workspace définitivement ?"
+                  description="Tous les datasets, documents et chunks seront SUPPRIMÉS. Irréversible."
+                  okText="Purger"
                   okButtonProps={{ danger: true }}
                   onConfirm={() => onPurge(record.id)}
                 >
@@ -250,6 +249,7 @@ export default function WorkspacesPage({
 
       <Card>
         <Table
+          scroll={{ x: 'max-content' }}
           columns={columns}
           dataSource={workspaces}
           rowKey="id"
