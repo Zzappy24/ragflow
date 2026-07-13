@@ -13,6 +13,8 @@ global:
   # (envoy-gateway-system), certs Let's Encrypt via cert-manager gateway-shim.
   # Ce scheme pilote les liens d'invitation, le CORS et l'URL publique du panel.
   scheme: "https"
+  # Listener 443 du Gateway partagé pour ragflow.cyllene.cloud (redirect 80->443 auto)
+  httpsListenerName: "https-ragflow"
   imagePullSecrets:
     - name: harbor-pull-secret
   env:
@@ -253,6 +255,9 @@ vllm:
   embedModel: "BAAI/bge-m3"                  # ← vrai embedding
   rerankModel: "BAAI/bge-reranker-v2-m3"     # ← vrai rerank
 # CUSTOM B2B SaaS — produit Code (data plane LiteLLM, repo infra argo-helm/litellm-helm)
+ragflow-management-frontend:
+  httpsListenerName: "https-mgmt"
+
 ragflow-management-backend:
   code:
     litellmBaseUrl: "http://litellm.litellm.svc.cluster.local:4000"
