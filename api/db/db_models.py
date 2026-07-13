@@ -1459,6 +1459,9 @@ class Organisation(DataBaseModel):
     max_documents = IntegerField(default=10000)
     max_storage_gb = IntegerField(default=100)
     max_tokens_monthly = BigIntegerField(default=0, help_text="Monthly token quota (0 = unlimited)")
+    # CUSTOM B2B SaaS — forfait RAG mensuel (€) affiché sur le relevé de
+    # facturation. NULL = non contractualisé (ligne absente du relevé).
+    rag_monthly_fee_eur = FloatField(null=True)
     allow_overage = BooleanField(default=True, help_text="Allow usage beyond quota (soft limit)")
     current_period_start = CharField(max_length=10, null=True, help_text="Billing period start YYYY-MM-DD (inclusive)")
     current_period_end = CharField(max_length=10, null=True, help_text="Billing period end YYYY-MM-DD (inclusive)")
@@ -2131,6 +2134,7 @@ def migrate_db():
     alter_db_column_type(migrator, "file", "size", BigIntegerField(default=0, index=True))
     # Token quota fields on organisation (CUSTOM B2B SaaS).
     alter_db_add_column(migrator, "organisation", "max_tokens_monthly", BigIntegerField(default=0, help_text="Monthly token quota (0 = unlimited)"))
+    alter_db_add_column(migrator, "organisation", "rag_monthly_fee_eur", FloatField(null=True))
     alter_db_add_column(migrator, "organisation", "allow_overage", BooleanField(default=True, help_text="Allow usage beyond quota (soft limit)"))
     alter_db_add_column(migrator, "organisation", "current_period_start", CharField(max_length=10, null=True, help_text="Billing period start YYYY-MM-DD"))
     alter_db_add_column(migrator, "organisation", "current_period_end", CharField(max_length=10, null=True, help_text="Billing period end YYYY-MM-DD"))

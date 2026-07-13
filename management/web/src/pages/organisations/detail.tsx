@@ -475,7 +475,8 @@ interface BillingSummary {
   code: { teams: { team_id: string; name: string; spend_eur: number; tokens: number | null }[];
           total_eur: number; total_tokens: number | null };
   rag: { workspaces: { workspace_id: string; name: string; bu: string; tokens: number }[];
-         total_tokens: number };
+         total_tokens: number; monthly_fee_eur: number | null };
+  total_eur: number;
 }
 
 export default function OrgDetailPage() {
@@ -492,7 +493,7 @@ export default function OrgDetailPage() {
   const [purgeModalOpen, setPurgeModalOpen] = useState(false);
   const [purgeConfirmText, setPurgeConfirmText] = useState('');
   const [purging, setPurging] = useState(false);
-  const [quotaForm, setQuotaForm] = useState<{ max_tokens_monthly: number; allow_overage: boolean }>({ max_tokens_monthly: 0, allow_overage: true });
+  const [quotaForm, setQuotaForm] = useState<{ max_tokens_monthly: number; allow_overage: boolean; rag_monthly_fee_eur: number | null }>({ max_tokens_monthly: 0, allow_overage: true, rag_monthly_fee_eur: null });
   const [savingQuota, setSavingQuota] = useState(false);
   const [codeForm] = Form.useForm();
   const [codeLoading, setCodeLoading] = useState(true);
@@ -596,7 +597,7 @@ export default function OrgDetailPage() {
     if (!orgId) return;
     api.get(`/orgs/${orgId}/quota`).then((r) => {
       setQuota(r.data);
-      setQuotaForm({ max_tokens_monthly: r.data.max_tokens_monthly ?? 0, allow_overage: r.data.allow_overage ?? true });
+      setQuotaForm({ max_tokens_monthly: r.data.max_tokens_monthly ?? 0, allow_overage: r.data.allow_overage ?? true, rag_monthly_fee_eur: r.data.rag_monthly_fee_eur ?? null });
     }).catch(() => {});
   }, [orgId]);
 
@@ -628,7 +629,7 @@ export default function OrgDetailPage() {
         setOrg(orgRes.data);
         setStats(statsRes.data);
         setQuota(quotaRes.data);
-        setQuotaForm({ max_tokens_monthly: quotaRes.data.max_tokens_monthly ?? 0, allow_overage: quotaRes.data.allow_overage ?? true });
+        setQuotaForm({ max_tokens_monthly: quotaRes.data.max_tokens_monthly ?? 0, allow_overage: quotaRes.data.allow_overage ?? true, rag_monthly_fee_eur: quotaRes.data.rag_monthly_fee_eur ?? null });
       })
       .finally(() => setLoading(false));
   }, [orgId]);
@@ -795,6 +796,14 @@ export default function OrgDetailPage() {
                           checkedChildren="Soft" unCheckedChildren="Hard"
                         />
                       </div>
+                      <div className="flex items-center gap-2">
+                        <span className="text-sm text-gray-600">Forfait RAG (€/mois)</span>
+                        <Tooltip title="Ligne forfait du relevé de facturation. Vide = non contractualisé. Les tokens restent du fair-use, jamais valorisés.">
+                          <InputNumber min={0} value={quotaForm.rag_monthly_fee_eur}
+                            onChange={(v) => setQuotaForm(f => ({ ...f, rag_monthly_fee_eur: v ?? null }))}
+                            placeholder="—" style={{ width: 120 }} />
+                        </Tooltip>
+                      </div>
                     </div>
                   )}
 
@@ -894,8 +903,13 @@ export default function OrgDetailPage() {
                           ]} />
                       </Col>
                       <Col span={12}>
-                        <Statistic title={`RAG — tokens en ${billing.month}`}
-                          value={billing.rag.total_tokens} />
+                        <Statistic title={`RAG — forfait ${billing.month}`}
+                          value={billing.rag.monthly_fee_eur ?? '—'}
+                          suffix={billing.rag.monthly_fee_eur != null ? '€' : ''}
+                          precision={billing.rag.monthly_fee_eur != null ? 2 : undefined} />
+                        <div className="text-gray-400 text-xs mb-1">
+                          {billing.rag.total_tokens.toLocaleString()} tokens consommés (fair-use, inclus)
+                        </div>
                         <Table size="small" pagination={false} showHeader={false} className="mt-2"
                           rowKey="workspace_id" dataSource={billing.rag.workspaces}
                           locale={{ emptyText: 'Aucune consommation RAG ce mois' }}
@@ -909,6 +923,16 @@ export default function OrgDetailPage() {
                       </Col>
                     </Row>
                   ) : <Card loading bordered={false} />}
+                  {billing && (
+                    <div className="mt-3 text-right">
+                      <Typography.Text strong>
+                        Total général : {billing.total_eur.toFixed(2)} €
+                      </Typography.Text>
+                      <Typography.Text type="secondary" className="ml-2 text-xs">
+                        (forfait RAG + conso Code)
+                      </Typography.Text>
+                    </div>
+                  )}
                   <Space className="mt-4" wrap>
                     <Tooltip title="LE document compta : totaux et lignes par team/workspace, les deux produits">
                       <Button type="primary" icon={<DownloadOutlined />}

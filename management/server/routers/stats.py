@@ -597,6 +597,7 @@ def org_quota_status(org_id: str, user_id: str = Depends(get_current_user_id)):
         "org_name": org.name,
         "max_tokens_monthly": org.max_tokens_monthly or 0,
         "allow_overage": bool(org.allow_overage),
+        "rag_monthly_fee_eur": org.rag_monthly_fee_eur,
         "current_period_start": str(org.current_period_start) if org.current_period_start else None,
         "current_period_end": str(org.current_period_end) if org.current_period_end else None,
         "workspaces": workspace_quotas,
@@ -624,6 +625,14 @@ def update_org_quota(org_id: str, body: dict, _user=Depends(require_superuser)):
 
         if "allow_overage" in body:
             updates["allow_overage"] = bool(body["allow_overage"])
+
+        if "rag_monthly_fee_eur" in body:
+            v = body["rag_monthly_fee_eur"]
+            if v is not None:
+                v = float(v)
+                if v < 0:
+                    raise HTTPException(status_code=400, detail="rag_monthly_fee_eur must be >= 0")
+            updates["rag_monthly_fee_eur"] = v  # None = non contractualisé
 
         if "reset_period" in body and body["reset_period"]:
             # Reset period to current calendar month

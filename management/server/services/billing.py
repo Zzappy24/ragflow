@@ -86,13 +86,24 @@ def _rag_month_tokens(org_id: str, first: datetime.date, nxt: datetime.date) -> 
 
 
 def billing_summary(org_id: str, month: str) -> dict:
-    """Récap consolidé du mois — source de la carte Facturation ET du relevé CSV."""
+    """Récap consolidé du mois — source de la carte Facturation ET du relevé CSV.
+
+    RAG = FORFAIT (les tokens sont du fair-use informatif, jamais valorisés) ;
+    Code = consommation réelle du mois. total_eur = forfait RAG + conso Code."""
+    from api.db.db_models import DB, Organisation
     first, nxt = month_bounds(month)
+    with DB.connection_context():
+        org = Organisation.get_or_none(Organisation.id == org_id)
+    fee = org.rag_monthly_fee_eur if org else None
+    code = _code_month_spend(org_id, first, nxt)
+    rag = _rag_month_tokens(org_id, first, nxt)
+    rag["monthly_fee_eur"] = fee  # None = non contractualisé
     return {
         "org_id": org_id,
         "month": month,
-        "code": _code_month_spend(org_id, first, nxt),
-        "rag": _rag_month_tokens(org_id, first, nxt),
+        "code": code,
+        "rag": rag,
+        "total_eur": round(code["total_eur"] + (fee or 0.0), 4),
     }
 
 
@@ -113,7 +124,12 @@ def billing_statement_csv(org_id: str, org_name: str, month: str) -> str:
     w.writerow(["code", "TOTAL", "",
                 "" if s["code"]["total_tokens"] is None else s["code"]["total_tokens"],
                 s["code"]["total_eur"]])
+    if s["rag"]["monthly_fee_eur"] is not None:
+        w.writerow(["rag", "forfait mensuel", "", "", s["rag"]["monthly_fee_eur"]])
     for ws in s["rag"]["workspaces"]:
-        w.writerow(["rag", ws["name"], ws["bu"], ws["tokens"], ""])
-    w.writerow(["rag", "TOTAL", "", s["rag"]["total_tokens"], ""])
+        w.writerow(["rag", f"conso {ws['name']} (fair-use, incluse)", ws["bu"], ws["tokens"], ""])
+    w.writerow(["rag", "TOTAL", "", s["rag"]["total_tokens"],
+                "" if s["rag"]["monthly_fee_eur"] is None else s["rag"]["monthly_fee_eur"]])
+    w.writerow([])
+    w.writerow(["TOTAL GENERAL", "", "", "", s["total_eur"]])
     return "\ufeff" + buf.getvalue()  # BOM : Excel FR ouvre l'UTF-8 proprement

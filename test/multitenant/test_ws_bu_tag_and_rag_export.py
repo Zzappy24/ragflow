@@ -132,8 +132,56 @@ def test_billing_summary_and_statement(panel, ws_in_org):
     assert "produit;entite;bu;tokens;montant_eur" in body
     assert "code;bill-t;;300;7.5" in body
     assert "code;TOTAL;;300;7.5" in body
-    assert "rag;ws-data;Digital;4321;" in body
+    assert "rag;conso ws-data (fair-use, incluse);Digital;4321;" in body
     assert "rag;TOTAL;;4321;" in body
+    assert "TOTAL GENERAL;;;;7.5" in body  # pas de forfait posé -> conso Code seule
+
+    with DB.connection_context():
+        CodeSpendSnapshot.delete().where(CodeSpendSnapshot.code_team_id == team["id"]).execute()
+
+
+def test_billing_statement_with_rag_fee(panel, ws_in_org):
+    """Forfait RAG contractualisé : ligne forfait + TOTAL GENERAL = forfait + conso Code."""
+    from api.db.db_models import DB, Organisation, CodeSpendSnapshot
+    from common.misc_utils import get_uuid
+    client, (org_id, tokens) = panel
+    _, _, _tenant = ws_in_org
+
+    # superuser pose le forfait via la route quota
+    r = client.patch(f"/api/admin/orgs/{org_id}/quota",
+                     json={"rag_monthly_fee_eur": 1500.0}, headers=_h(tokens["superuser"]))
+    assert r.status_code == 200
+    with DB.connection_context():
+        assert Organisation.get_by_id(org_id).rag_monthly_fee_eur == 1500.0
+
+    team = client.post(f"/api/admin/orgs/{org_id}/code/teams",
+                       json={"name": "fee-t", "max_budget": 50.0, "model_access": []},
+                       headers=_h(tokens["org_admin"])).json()
+    today = datetime.date.today()
+    with DB.connection_context():
+        CodeSpendSnapshot.create(id=get_uuid(), snap_date=today.replace(day=1), org_id=org_id,
+                                 code_team_id=team["id"], spend=7.5, max_budget=50.0,
+                                 tokens=100, errors=0)
+
+    month = today.strftime("%Y-%m")
+    data = client.get(f"/api/admin/orgs/{org_id}/billing/summary?month={month}",
+                      headers=_h(tokens["org_admin"])).json()
+    assert data["rag"]["monthly_fee_eur"] == 1500.0
+    assert data["total_eur"] == 1507.5  # forfait + conso Code
+
+    body = client.get(f"/api/admin/orgs/{org_id}/billing/statement?month={month}",
+                      headers=_h(tokens["org_admin"])).text
+    assert "rag;forfait mensuel;;;1500.0" in body
+    assert "TOTAL GENERAL;;;;1507.5" in body
+
+    # validation : forfait négatif refusé ; null = retrait
+    assert client.patch(f"/api/admin/orgs/{org_id}/quota",
+                        json={"rag_monthly_fee_eur": -5}, headers=_h(tokens["superuser"])).status_code == 400
+    client.patch(f"/api/admin/orgs/{org_id}/quota",
+                 json={"rag_monthly_fee_eur": None}, headers=_h(tokens["superuser"]))
+    data = client.get(f"/api/admin/orgs/{org_id}/billing/summary?month={month}",
+                      headers=_h(tokens["org_admin"])).json()
+    assert data["rag"]["monthly_fee_eur"] is None
 
     with DB.connection_context():
         CodeSpendSnapshot.delete().where(CodeSpendSnapshot.code_team_id == team["id"]).execute()
