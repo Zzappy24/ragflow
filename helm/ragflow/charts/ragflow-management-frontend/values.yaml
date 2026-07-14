@@ -9,7 +9,7 @@ replicas: 1
 image:
   repository: harbor.cylndata.cyllene.pro/data/ragflow-mgmt-frontend
   repositorySuffix: "-mgmt-frontend"
-  tag: v0.9.1
+  tag: v0.9.2
   pullPolicy: IfNotPresent
   imagePullSecrets:
     - name: harbor-pull-secret
