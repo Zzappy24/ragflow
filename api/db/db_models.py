@@ -1568,6 +1568,9 @@ class CodeTeam(DataBaseModel):
     # exceed 64 and get silently truncated by MySQL in non-strict mode (bug found in Task 3 tests).
     litellm_team_id = CharField(max_length=128, null=True, index=True)
     max_budget = FloatField(null=False, default=0.0)  # EUR per entitlement.budget_period (cycle imposed)
+    # Tag d'organisation libre (ex. BU), symétrique du tag des workspaces —
+    # ventilation de la facturation. NULL/"" = non tagué.
+    bu = CharField(max_length=64, null=True)
     model_access = JSONField(null=True, default=[])  # [] = all models exposed by the proxy
     status = CharField(max_length=16, null=False, default="active", index=True)  # active | deleted
     sync_status = CharField(max_length=16, null=False, default="pending", index=True)  # pending | synced | error
@@ -2188,6 +2191,7 @@ def migrate_db():
     alter_db_add_column(migrator, "code_key", "rpm_limit", IntegerField(null=True))
     alter_db_add_column(migrator, "code_key_invite", "max_budget", FloatField(null=True))
     alter_db_add_column(migrator, "code_key_invite", "rpm_limit", IntegerField(null=True))
+    alter_db_add_column(migrator, "code_team", "bu", CharField(max_length=64, null=True))
 
 
 def _add_rbac_unique_indexes(migrator):

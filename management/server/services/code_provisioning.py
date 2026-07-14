@@ -142,7 +142,8 @@ def _mark(model, row_id: str, **fields) -> None:
 
 
 def create_code_team(*, org_id: str, name: str, max_budget: float,
-                     model_access: list[str], created_by: str, client=None):
+                     model_access: list[str], created_by: str,
+                     bu: str | None = None, client=None):
     from api.db.db_models import DB, CodeEntitlement, CodeTeam
     if max_budget <= 0:
         raise ValueError("max_budget must be > 0")
@@ -164,6 +165,7 @@ def create_code_team(*, org_id: str, name: str, max_budget: float,
                     f"> org budget {ent.org_code_budget}")
             # desired state FIRST
             CodeTeam.create(id=team_id, org_id=org_id, name=name, max_budget=max_budget,
+                            bu=(bu or "").strip() or None,
                             model_access=model_access or [], status="active",
                             sync_status="pending", created_by=created_by)
 

@@ -78,6 +78,7 @@ def _invite_email_body(url: str, gateway_url: str | None, *, reminder: bool = Fa
 
 def _team_to_dict(t) -> dict:
     return {"id": t.id, "org_id": t.org_id, "name": t.name, "max_budget": t.max_budget,
+            "bu": t.bu or "",
             "model_access": t.model_access or [], "status": t.status,
             "sync_status": t.sync_status, "litellm_team_id": t.litellm_team_id}
 
@@ -356,7 +357,7 @@ def export_code_usage(org_id: str, month: str | None = None,
 
     from api.db.db_models import DB, CodeTeam, CodeSpendSnapshot
     with DB.connection_context():
-        team_names = {t.id: t.name for t in CodeTeam.select().where(CodeTeam.org_id == org_id)}
+        teams_by_id = {t.id: t for t in CodeTeam.select().where(CodeTeam.org_id == org_id)}
         first = datetime.date(int(month[:4]), int(month[5:7]), 1)
         nxt = (first + datetime.timedelta(days=32)).replace(day=1)
         rows = list(CodeSpendSnapshot.select().where(
@@ -367,10 +368,12 @@ def export_code_usage(org_id: str, month: str | None = None,
 
     buf = io.StringIO()
     w = csv.writer(buf, delimiter=";")
-    w.writerow(["date", "team", "depense_cumulee_cycle_eur", "budget_team_eur",
+    w.writerow(["date", "team", "bu", "depense_cumulee_cycle_eur", "budget_team_eur",
                 "tokens_jour", "erreurs_jour"])
     for r in rows:
-        w.writerow([str(r.snap_date), team_names.get(r.code_team_id, r.code_team_id),
+        t = teams_by_id.get(r.code_team_id)
+        w.writerow([str(r.snap_date), t.name if t else r.code_team_id,
+                    (t.bu or "") if t else "",
                     r.spend, r.max_budget,
                     "" if r.tokens is None else r.tokens,
                     "" if r.errors is None else r.errors])
@@ -387,7 +390,8 @@ def create_team(request: Request, org_id: str, body: CodeTeamCreate,
     from management.server.services import code_provisioning as cp
     try:
         team = cp.create_code_team(org_id=org_id, name=body.name, max_budget=body.max_budget,
-                                   model_access=body.model_access, created_by=user.id)
+                                   model_access=body.model_access, created_by=user.id,
+                                   bu=body.bu)
     except ValueError as e:
         raise HTTPException(status_code=422, detail=str(e))
     audit_svc.record(request=request, actor_user_id=user.id, action=audit_svc.CODE_TEAM_CREATE,
@@ -411,6 +415,13 @@ def update_team(request: Request, team_id: str, body: CodeTeamUpdate,
         team = cp.update_code_team_budget(code_team_id=team_id, new_budget=body.max_budget)
     except ValueError as e:
         raise HTTPException(status_code=422, detail=str(e))
+    # Tag BU : purement local (aucune synchro gateway). None = inchangé,
+    # "" = retirer — mêmes sémantiques que le tag des workspaces.
+    if body.bu is not None:
+        from api.db.db_models import DB as _DB
+        with _DB.connection_context():
+            CodeTeam.update(bu=body.bu.strip() or None).where(CodeTeam.id == team_id).execute()
+            team = CodeTeam.get_by_id(team_id)
     audit_svc.record(request=request, actor_user_id=user.id, action=audit_svc.CODE_TEAM_UPDATE,
                      org_id=team.org_id, resource_type="code_team", resource_id=team.id,
                      details={"name": team.name, "old_budget": old_budget, "new_budget": team.max_budget})

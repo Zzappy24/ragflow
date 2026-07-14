@@ -500,8 +500,8 @@ def test_export_csv_org_admin_only_with_snapshot_rows(panel_client, org_with_ent
     assert "text/csv" in r.headers["content-type"]
     assert "attachment" in r.headers["content-disposition"]
     body = r.text
-    assert "date;team;depense_cumulee_cycle_eur" in body
-    assert f"{today};export-t;4.2;10.0;1234;0" in body
+    assert "date;team;bu;depense_cumulee_cycle_eur" in body
+    assert f"{today};export-t;;4.2;10.0;1234;0" in body
 
     assert client.get(f"/api/admin/orgs/{org_id}/code/export?month=13-2026",
                       headers=_h(tokens["org_admin"])).status_code == 422

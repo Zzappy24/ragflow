@@ -22,7 +22,7 @@ def _code_month_spend(org_id: str, first: datetime.date, nxt: datetime.date) -> 
     """Par team : € consommés dans [first, nxt) + tokens du mois."""
     from api.db.db_models import DB, CodeTeam, CodeSpendSnapshot
     with DB.connection_context():
-        team_names = {t.id: t.name for t in CodeTeam.select().where(CodeTeam.org_id == org_id)}
+        teams_by_id = {t.id: t for t in CodeTeam.select().where(CodeTeam.org_id == org_id)}
         # seed : dernier snapshot STRICTEMENT avant le mois, par team —
         # sans lui, le 1er snapshot du mois émettrait tout le cumul du cycle.
         prev_rows = list(CodeSpendSnapshot.select().where(
@@ -49,8 +49,16 @@ def _code_month_spend(org_id: str, first: datetime.date, nxt: datetime.date) -> 
         elif r.code_team_id not in tokens_by_team:
             tokens_by_team[r.code_team_id] = None
 
-    teams = [{"team_id": tid, "name": team_names.get(tid, tid),
-              "spend_eur": round(s, 4), "tokens": tokens_by_team.get(tid)}
+    # Les teams archivées restent facturables (leur conso du mois est réelle)
+    # mais sont marquées pour la lisibilité du relevé.
+    def _row(tid, spend):
+        t = teams_by_id.get(tid)
+        return {"team_id": tid,
+                "name": t.name if t else tid,
+                "bu": (t.bu or "") if t else "",
+                "archived": bool(t and t.status != "active"),
+                "spend_eur": round(spend, 4), "tokens": tokens_by_team.get(tid)}
+    teams = [_row(tid, s)
              for tid, s in sorted(spend_by_team.items(), key=lambda kv: -kv[1])]
     known_tokens = [t["tokens"] for t in teams if t["tokens"] is not None]
     return {
@@ -119,7 +127,8 @@ def billing_statement_csv(org_id: str, org_name: str, month: str) -> str:
     w.writerow([])
     w.writerow(["produit", "entite", "bu", "tokens", "montant_eur"])
     for t in s["code"]["teams"]:
-        w.writerow(["code", t["name"], "",
+        label = t["name"] + (" (archivée)" if t.get("archived") else "")
+        w.writerow(["code", label, t.get("bu", ""),
                     "" if t["tokens"] is None else t["tokens"], t["spend_eur"]])
     w.writerow(["code", "TOTAL", "",
                 "" if s["code"]["total_tokens"] is None else s["code"]["total_tokens"],
