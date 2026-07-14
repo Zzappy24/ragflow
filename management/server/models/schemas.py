@@ -279,10 +279,13 @@ class CodeTeamCreate(BaseModel):
     name: str = Field(min_length=1, max_length=255)
     max_budget: float = Field(gt=0)
     model_access: list[str] = []
+    bu: str | None = Field(default=None, max_length=64)
 
 
 class CodeTeamUpdate(BaseModel):
     max_budget: float = Field(gt=0)
+    # None = inchangé ; "" = retirer le tag
+    bu: str | None = Field(default=None, max_length=64)
 
 
 class CodeTeamAdminAdd(BaseModel):

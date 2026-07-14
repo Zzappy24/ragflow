@@ -185,3 +185,63 @@ def test_billing_statement_with_rag_fee(panel, ws_in_org):
 
     with DB.connection_context():
         CodeSpendSnapshot.delete().where(CodeSpendSnapshot.code_team_id == team["id"]).execute()
+
+
+def test_code_team_bu_tag_and_archived_label_in_statement(panel, ws_in_org):
+    """BU sur les code-teams (symétrique des workspaces) + marquage
+    (archivée) dans le relevé : une team supprimée reste facturable mais
+    lisible."""
+    import datetime as _dt
+    from api.db.db_models import DB, CodeSpendSnapshot
+    from common.misc_utils import get_uuid
+    client, (org_id, tokens) = panel
+    _ = ws_in_org
+
+    # création avec BU
+    team = client.post(f"/api/admin/orgs/{org_id}/code/teams",
+                       json={"name": "squad-bu", "max_budget": 10.0,
+                             "model_access": [], "bu": "Digital"},
+                       headers=_h(tokens["org_admin"])).json()
+    assert team["bu"] == "Digital"
+
+    # update : changement puis retrait
+    r = client.put(f"/api/admin/code/teams/{team['id']}",
+                   json={"max_budget": 10.0, "bu": "Industrie"},
+                   headers=_h(tokens["org_admin"]))
+    assert r.json()["bu"] == "Industrie"
+    r = client.put(f"/api/admin/code/teams/{team['id']}",
+                   json={"max_budget": 10.0, "bu": ""},
+                   headers=_h(tokens["org_admin"]))
+    assert r.json()["bu"] == ""
+    client.put(f"/api/admin/code/teams/{team['id']}",
+               json={"max_budget": 10.0, "bu": "Digital"},
+               headers=_h(tokens["org_admin"]))
+
+    # conso ce mois puis archivage (une clé rend la team non-vierge -> soft).
+    # Row posée directement : ce test n'a pas de gateway fake et ne doit pas
+    # dépendre d'un LiteLLM local.
+    from api.db.db_models import CodeKey
+    with DB.connection_context():
+        CodeKey.create(id=get_uuid(), code_team_id=team["id"], label="dev",
+                       status="active", sync_status="synced", created_by="tester")
+    today = _dt.date.today()
+    with DB.connection_context():
+        CodeSpendSnapshot.create(id=get_uuid(), snap_date=today.replace(day=1),
+                                 org_id=org_id, code_team_id=team["id"], spend=3.3,
+                                 max_budget=10.0, tokens=42, errors=0)
+    assert client.delete(f"/api/admin/code/teams/{team['id']}",
+                         headers=_h(tokens["org_admin"])).json()["deleted"] == "soft"
+
+    month = today.strftime("%Y-%m")
+    body = client.get(f"/api/admin/orgs/{org_id}/billing/statement?month={month}",
+                      headers=_h(tokens["org_admin"])).text
+    assert "code;squad-bu (archivée);Digital;42;3.3" in body
+
+    # export détail Code : colonne bu présente
+    detail = client.get(f"/api/admin/orgs/{org_id}/code/export?month={month}",
+                        headers=_h(tokens["org_admin"])).text
+    assert "date;team;bu;depense_cumulee_cycle_eur" in detail
+    assert f"squad-bu;Digital;3.3" in detail
+
+    with DB.connection_context():
+        CodeSpendSnapshot.delete().where(CodeSpendSnapshot.code_team_id == team["id"]).execute()

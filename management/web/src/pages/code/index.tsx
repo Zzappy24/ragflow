@@ -6,7 +6,7 @@ import api from '@/lib/api';
 import CodeDashboardSection, { fmtTokens } from './dashboard-section';
 
 interface CodeKey { id: string; label: string; key_masked: string | null; status: string; sync_status: string; spend: number | null; max_budget: number | null; rpm_limit: number | null; }
-interface CodeTeam { id: string; name: string; max_budget: number; spend: number | null; status: string; sync_status: string; keys: CodeKey[]; tokens_today: number | null; }
+interface CodeTeam { id: string; name: string; max_budget: number; bu: string; spend: number | null; status: string; sync_status: string; keys: CodeKey[]; tokens_today: number | null; }
 interface CodeInvite { id: string; email: string; expires_at: string; created_by?: string; }
 interface TeamAdmin { user_id: string; email: string; role: string; }
 interface BulkResult { email: string; invite_id: string; email_sent: boolean; claim_url?: string; }
@@ -144,7 +144,7 @@ export default function CodePage({ orgId: orgIdProp }: { orgId?: string } = {}) 
   const onCreateTeam = async () => {
     try {
       const values = await teamForm.validateFields();
-      await api.post(`/orgs/${orgId}/code/teams`, { ...values, model_access: [] });
+      await api.post(`/orgs/${orgId}/code/teams`, { ...values, bu: values.bu || undefined, model_access: [] });
       message.success('Code team créée');
       setTeamModal(false);
       teamForm.resetFields();
@@ -497,6 +497,7 @@ export default function CodePage({ orgId: orgIdProp }: { orgId?: string } = {}) 
       {(overview?.teams ?? []).map((team) => (
         <Card key={team.id} className="mb-4"
               title={<Space>{team.name}
+                     {team.bu && <Tag>{team.bu}</Tag>}
                      <Tag color={team.spend != null && team.spend >= team.max_budget ? 'red' : 'blue'}>
                        {team.spend != null ? `${euro(team.spend)} / ${euro(team.max_budget)}` : `— / ${euro(team.max_budget)}`}
                      </Tag>
@@ -511,9 +512,9 @@ export default function CodePage({ orgId: orgIdProp }: { orgId?: string } = {}) 
                          <Button size="small" icon={<PlusOutlined />}
                                  onClick={() => setKeyModalTeam(team)}>Clé directe</Button>
                        </Tooltip>
-                       <Tooltip title="Modifier le budget de la team">
+                       <Tooltip title="Modifier la team (budget, BU)">
                          <Button size="small" icon={<EditOutlined />}
-                                 onClick={() => { setBudgetModalTeam(team); budgetForm.setFieldsValue({ max_budget: team.max_budget }); }} />
+                                 onClick={() => { setBudgetModalTeam(team); budgetForm.setFieldsValue({ max_budget: team.max_budget, bu: team.bu || '' }); }} />
                        </Tooltip>
                        <Tooltip title="Déléguer la gestion des clés de cette team à un membre de l'organisation (invitations, rotation, révocation — sans accès aux autres teams).">
                          <Button size="small" icon={<UserAddOutlined />}
@@ -574,6 +575,10 @@ export default function CodePage({ orgId: orgIdProp }: { orgId?: string } = {}) 
                      rules={[{ required: true }]}>
             <InputNumber min={1} max={Math.max(0, total - allocated)} className="w-full" />
           </Form.Item>
+          <Form.Item name="bu" label="BU / groupe — optionnel"
+                     extra="Ventilation de la facturation (même logique que le tag BU des workspaces).">
+            <Input placeholder="ex. Digital" maxLength={64} />
+          </Form.Item>
         </Form>
       </Modal>
 
@@ -591,7 +596,7 @@ export default function CodePage({ orgId: orgIdProp }: { orgId?: string } = {}) 
         </Form>
       </Modal>
 
-      <Modal title={`Budget — ${budgetModalTeam?.name ?? ''}`} open={!!budgetModalTeam}
+      <Modal title={`Modifier — ${budgetModalTeam?.name ?? ''}`} open={!!budgetModalTeam}
              onOk={onUpdateBudget}
              onCancel={() => { setBudgetModalTeam(null); budgetForm.resetFields(); }}>
         <Form form={budgetForm} layout="vertical">
@@ -601,6 +606,10 @@ export default function CodePage({ orgId: orgIdProp }: { orgId?: string } = {}) 
             <InputNumber min={1}
                          max={Math.max(0, total - allocated + (budgetModalTeam?.max_budget ?? 0))}
                          className="w-full" />
+          </Form.Item>
+          <Form.Item name="bu" label="BU / groupe"
+                     extra="Ventilation de la facturation. Vider = retirer le tag.">
+            <Input placeholder="ex. Digital" maxLength={64} />
           </Form.Item>
         </Form>
       </Modal>

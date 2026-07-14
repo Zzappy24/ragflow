@@ -472,7 +472,7 @@ interface OrgQuota {
 
 interface BillingSummary {
   month: string;
-  code: { teams: { team_id: string; name: string; spend_eur: number; tokens: number | null }[];
+  code: { teams: { team_id: string; name: string; bu: string; archived: boolean; spend_eur: number; tokens: number | null }[];
           total_eur: number; total_tokens: number | null };
   rag: { workspaces: { workspace_id: string; name: string; bu: string; tokens: number }[];
          total_tokens: number; monthly_fee_eur: number | null };
@@ -912,7 +912,10 @@ export default function OrgDetailPage() {
                           rowKey="team_id" dataSource={billing.code.teams}
                           locale={{ emptyText: 'Aucune consommation Code ce mois' }}
                           columns={[
-                            { dataIndex: 'name' },
+                            { dataIndex: 'name',
+                              render: (v: string, r: { bu: string; archived: boolean }) => (
+                                <span>{v} {r.bu && <Tag>{r.bu}</Tag>}
+                                  {r.archived && <Tag color="default">archivée</Tag>}</span>) },
                             { dataIndex: 'spend_eur', align: 'right' as const,
                               render: (v: number) => `${v} €` },
                           ]} />
