@@ -1771,6 +1771,9 @@ Example: Virtual Hosted Style`,
       addGoogleRegion: 'Google Cloud Region',
       GoogleRegionMessage: 'Please input Google Cloud Region',
       modelProvidersWarn: `Please add both embedding model and LLM in <b>Settings > Model providers</b> first. Then, set them in 'Set default models'.`,
+      // CUSTOM B2B SaaS — model config is admin-panel-only
+      modelProvidersWarnAdmin:
+        'No default models are configured for this workspace yet. Please contact your administrator.',
       apiVersion: 'API-Version',
       apiVersionMessage: 'Please input API version',
       add: 'Add',
