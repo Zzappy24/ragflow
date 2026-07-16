@@ -174,8 +174,12 @@ def _ensure_owned_chat(chat_id):
 
 
 def _build_default_completion_dialog():
+    # CUSTOM B2B SaaS — scope to the active workspace tenant, not the user id.
+    # Model configs (llm_id, API keys) live on the workspace tenant in our
+    # fork; upstream's `current_user.id` resolves the personal tenant, which
+    # has no models → "Cannot use specified model" / "No default chat model".
     return SimpleNamespace(
-        tenant_id=current_user.id,
+        tenant_id=active_tenant_id(),
         llm_id="",
         tenant_llm_id=None,
         llm_setting={},
