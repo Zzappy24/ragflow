@@ -20,9 +20,32 @@ def _ws_to_response(ws) -> dict:
         "description": getattr(ws, "description", "") or "",
         "status": ws.status,
         "bu": (getattr(ws, "settings_json", None) or {}).get("bu", "") or "",
+        "is_model_template": bool((getattr(ws, "settings_json", None) or {}).get("model_template")),
         "created_by": ws.created_by,
         "create_time": getattr(ws, "create_time", None),
     }
+
+
+def _set_model_template(ws_id: str, on: bool) -> None:
+    """Pose/retire le flag settings_json.model_template. Exclusif quand on=True
+    (un seul workspace-référence à la fois sur la plateforme)."""
+    from api.db.db_models import DB, Workspace
+    from api.db.services.workspace_service import WorkspaceService
+    with DB.connection_context():
+        if on:
+            # retire le flag partout ailleurs
+            for w in Workspace.select(Workspace.id, Workspace.settings_json).where(
+                    Workspace.status == "1"):
+                sj = dict(w.settings_json or {})
+                if sj.pop("model_template", None) is not None and w.id != ws_id:
+                    Workspace.update(settings_json=sj).where(Workspace.id == w.id).execute()
+        ok, ws = WorkspaceService.get_by_id(ws_id)
+        sj = dict((ws.settings_json or {}) if ok and ws else {})
+        if on:
+            sj["model_template"] = True
+        else:
+            sj.pop("model_template", None)
+        Workspace.update(settings_json=sj).where(Workspace.id == ws_id).execute()
 
 
 @router.get("/orgs/{org_id}/workspaces", response_model=list[WsResponse])
@@ -36,6 +59,31 @@ def list_workspaces(
     from api.db.services.workspace_service import WorkspaceService
     workspaces = WorkspaceService.list_by_org(org_id, include_deleted=include_deleted)
     return [_ws_to_response(ws) for ws in workspaces]
+
+
+@router.post("/workspaces/{ws_id}/model-template")
+def set_workspace_model_template(ws_id: str, user=Depends(require_superuser)):
+    """Marque ce workspace comme référence de modèles : tout nouveau workspace
+    héritera de ses modèles (embedding, reranking, LLM) au lieu de repartir
+    vide. Exclusif — désactive le flag sur les autres. Superadmin uniquement
+    (réglage plateforme)."""
+    from api.db.services.workspace_service import WorkspaceService
+    ok, ws = WorkspaceService.get_by_id(ws_id)
+    if not ok or not ws or ws.status != "1":
+        raise HTTPException(status_code=404, detail="Workspace not found")
+    _set_model_template(ws_id, True)
+    return {"workspace_id": ws_id, "is_model_template": True}
+
+
+@router.delete("/workspaces/{ws_id}/model-template")
+def unset_workspace_model_template(ws_id: str, user=Depends(require_superuser)):
+    """Retire le statut de référence de modèles. Superadmin uniquement."""
+    from api.db.services.workspace_service import WorkspaceService
+    ok, ws = WorkspaceService.get_by_id(ws_id)
+    if not ok or not ws:
+        raise HTTPException(status_code=404, detail="Workspace not found")
+    _set_model_template(ws_id, False)
+    return {"workspace_id": ws_id, "is_model_template": False}
 
 
 @router.post("/orgs/{org_id}/workspaces", response_model=WsResponse, status_code=status.HTTP_201_CREATED)
