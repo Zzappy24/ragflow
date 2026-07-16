@@ -197,9 +197,10 @@ export const useNavigatePage = () => {
     [navigate],
   );
 
-  const navigateToModelSetting = useCallback(() => {
-    navigate(`${Routes.UserSetting}${Routes.Model}`);
-  }, [navigate]);
+  // CUSTOM B2B SaaS — navigateToModelSetting intentionally removed: model
+  // config is admin-panel-only and the /user-setting/model route is not
+  // registered. If an upstream merge reintroduces a caller, it must break
+  // the build so the leak gets reviewed instead of silently reappearing.
 
   return {
     navigateToDatasetList,
@@ -227,6 +228,5 @@ export const useNavigatePage = () => {
     navigateToDataSourceDetail,
     navigateToMemory,
     navigateToMemoryList,
-    navigateToModelSetting,
   };
 };

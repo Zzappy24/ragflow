@@ -383,3 +383,108 @@ class TestUpstreamJoinedTenantsMisuse:
             "TestUpstreamJoinedTenantsMisuse.ALLOWED_CALLERS with a justification.\n\n"
             "Offenders:\n" + "\n".join(offenders)
         )
+
+
+# ---------------------------------------------------------------------------
+# tenant_id=current_user.id in API handlers — workspace-scoping anti-pattern
+# ---------------------------------------------------------------------------
+
+class TestUserIdAsTenantIdMisuse:
+    """
+    Static scan: ban `tenant_id=current_user.id` keyword arguments anywhere
+    under api/apps/.
+
+    In our fork, data owned by a workspace (chats, datasets, model configs,
+    …) lives under the **workspace tenant_id**, which is NOT a user_id.
+    Upstream code written against the `user_id == tenant_id` invariant
+    scopes queries with `tenant_id=current_user.id`; in workspace context
+    that resolves the user's *personal* tenant, so the lookup silently
+    misses (empty result, "You don't own the chat", "No default chat model
+    for tenant", …).
+
+    Bitten three times so far:
+      - 2026-05-14 merge: dataset_api_service.list_datasets (joined-tenants
+        variant, see TestUpstreamJoinedTenantsMisuse)
+      - 2026-07-16: openai_api.openai_chat_completions — every workspace
+        chat 102'd with "You don't own the chat" on the OpenAI-compatible
+        endpoint
+      - 2026-07-16: chat_api._build_default_completion_dialog — direct chat
+        without chat_id looked up models on the (empty) personal tenant
+
+    The fix is `active_tenant_id()` (from api.utils.tenant_context), which
+    resolves the workspace tenant for browser (X-Workspace-Id), JWT, and
+    API-key auth alike, and falls back to the personal tenant otherwise.
+
+    Legitimate per-user scoping (resources that are user-owned BY DESIGN)
+    goes in ALLOWED_CALLERS below with a one-line justification.
+    """
+
+    # (file_path_relative_to_repo, enclosing_function) — both must match.
+    ALLOWED_CALLERS: set[tuple[str, str]] = {
+        # Memories are STRICTLY per-user in our B2B SaaS (product decision,
+        # see memory `project_memory_per_user`): a memory must never be
+        # visible to other workspace members, so the personal tenant is the
+        # correct scope here.
+        ("api/apps/services/memory_api_service.py", "create_memory"),
+        # Legacy /v1/llm surface. Model configuration is admin-panel-only in
+        # our fork (the mgmt backend writes tenant_llm with the workspace
+        # tenant); the native model-settings page is not routed anymore, so
+        # this browser route is effectively dead surface. Left as upstream
+        # to minimize merge friction — do NOT copy this pattern.
+        ("api/apps/llm_app.py", "add_llm"),
+    }
+
+    SCAN_ROOT = "api/apps"
+
+    def test_no_handler_scopes_tenant_with_user_id(self):
+        offenders: list[str] = []
+        quick = re.compile(r"tenant_id\s*=\s*current_user\.id")
+
+        for path in (REPO_ROOT / self.SCAN_ROOT).rglob("*.py"):
+            try:
+                src = path.read_text(encoding="utf-8")
+            except Exception:
+                continue
+            if not quick.search(src):
+                continue
+            tree = ast.parse(src, str(path))
+            for node in ast.walk(tree):
+                if not isinstance(node, ast.Call):
+                    continue
+                for kw in node.keywords:
+                    if kw.arg != "tenant_id":
+                        continue
+                    v = kw.value
+                    if (
+                        isinstance(v, ast.Attribute)
+                        and v.attr == "id"
+                        and isinstance(v.value, ast.Name)
+                        and v.value.id == "current_user"
+                    ):
+                        enclosing = "<module>"
+                        for n in ast.walk(tree):
+                            if isinstance(n, (ast.FunctionDef, ast.AsyncFunctionDef)):
+                                if n.lineno <= node.lineno and (
+                                    n.end_lineno is None or n.end_lineno >= node.lineno
+                                ):
+                                    enclosing = n.name
+                        rel = path.relative_to(REPO_ROOT).as_posix()
+                        if (rel, enclosing) in self.ALLOWED_CALLERS:
+                            continue
+                        offenders.append(f"  {rel}:{node.lineno}  in {enclosing}()")
+
+        assert not offenders, (
+            "Anti-pattern detected: `tenant_id=current_user.id` in api/apps/.\n\n"
+            "In our fork the workspace tenant_id is NOT a user_id: scoping a "
+            "query with the user's id resolves their personal tenant and "
+            "silently misses every workspace-owned row (empty lists, "
+            "\"You don't own the chat\", \"No default chat model\", …).\n\n"
+            "Fix one of:\n"
+            "  (a) use `active_tenant_id()` from api.utils.tenant_context "
+            "(canonical fixes: openai_api.openai_chat_completions, "
+            "chat_api._build_default_completion_dialog);\n"
+            "  (b) if the resource is user-owned BY DESIGN (e.g. memories), add "
+            "the (path, func) tuple to TestUserIdAsTenantIdMisuse.ALLOWED_CALLERS "
+            "with a justification.\n\n"
+            "Offenders:\n" + "\n".join(offenders)
+        )

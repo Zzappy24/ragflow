@@ -1363,6 +1363,9 @@ Applicable lorsque vous avez besoin que le LLM résume le document entier.
       addGoogleRegion: 'Région Google Cloud',
       GoogleRegionMessage: 'Veuillez saisir la région Google Cloud',
       modelProvidersWarn: `Veuillez ajouter d'abord à la fois un modèle d'embedding et un LLM dans <b>Paramètres > Fournisseurs de modèles</b>. Ensuite, définissez-les dans 'Définir les modèles par défaut'.`,
+      // CUSTOM B2B SaaS — model config is admin-panel-only
+      modelProvidersWarnAdmin:
+        "Aucun modèle n'est encore configuré pour cet espace de travail. Contactez votre administrateur.",
       apiVersion: 'Version API',
       apiVersionMessage: "Veuillez saisir la version de l'API",
       add: 'Ajouter',

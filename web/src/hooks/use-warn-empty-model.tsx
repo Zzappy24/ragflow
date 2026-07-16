@@ -1,10 +1,12 @@
 import { Modal } from '@/components/ui/modal/modal';
-import DOMPurify from 'dompurify';
 import { isEmpty } from 'lodash';
 import { useEffect, useRef } from 'react';
 import { useTranslation } from 'react-i18next';
-import { useNavigatePage } from './logic-hooks/navigate-hooks';
 
+// CUSTOM B2B SaaS — model configuration is admin-panel-only. The upstream
+// modal pointed users to Settings > Model providers (a page we removed from
+// the sidebar); it now shows a "contact your administrator" message and no
+// longer navigates anywhere. See CLAUDE.md "Custom files to watch".
 export const useWarnEmptyModel = (
   showEmptyModelWarn: boolean,
   embdId?: string,
@@ -13,7 +15,6 @@ export const useWarnEmptyModel = (
 ) => {
   const { t } = useTranslation();
   const warnedRef = useRef(false);
-  const { navigateToModelSetting } = useNavigatePage();
 
   useEffect(() => {
     if (
@@ -27,19 +28,10 @@ export const useWarnEmptyModel = (
       warnedRef.current = true;
       Modal.warning({
         title: t('common.warn'),
-        content: (
-          <div
-            dangerouslySetInnerHTML={{
-              __html: DOMPurify.sanitize(t('setting.modelProvidersWarn')),
-            }}
-          ></div>
-        ),
+        content: <div>{t('setting.modelProvidersWarnAdmin')}</div>,
         closable: false,
         showCancel: false,
-        onOk() {
-          navigateToModelSetting();
-        },
       });
     }
-  }, [showEmptyModelWarn, embdId, llmId, loading, navigateToModelSetting, t]);
+  }, [showEmptyModelWarn, embdId, llmId, loading, t]);
 };

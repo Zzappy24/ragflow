@@ -291,10 +291,9 @@ const routeConfigOptions = [
             Component: () => import('@/pages/user-setting/setting-locale'),
           },
           */
-          {
-            path: `${Routes.UserSetting}/model`,
-            Component: () => import('@/pages/user-setting/setting-model'),
-          },
+          // CUSTOM B2B SaaS — model config is admin-panel-only: the
+          // `/user-setting/model` route (setting-model page) is intentionally
+          // not registered so the page is unreachable even by direct URL.
           {
             path: `${Routes.UserSetting}${Routes.Api}`,
             Component: () => import('@/pages/user-setting/setting-api'),

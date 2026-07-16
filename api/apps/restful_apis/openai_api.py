@@ -19,13 +19,14 @@ import time
 
 from quart import Response, jsonify
 
-from api.apps import current_user, login_required
+from api.apps import login_required
 from api.apps.extensions.rbac import require_permission, Permission
 from api.apps.restful_apis._generation_params import extract_generation_config, merge_generation_config
 from api.db.services.dialog_service import DialogService, async_chat
 from api.db.services.doc_metadata_service import DocMetadataService
 from api.db.joint_services.tenant_model_service import get_model_config_from_provider_instance, get_api_key
 from api.utils.api_utils import get_error_data_result, get_request_json, validate_request
+from api.utils.tenant_context import active_tenant_id
 from common.constants import RetCode, StatusEnum
 from common.metadata_utils import convert_conditions, meta_filter
 from common.token_utils import num_tokens_from_string
@@ -267,7 +268,11 @@ async def openai_chat_completions(chat_id):
     requested_model = req.get("model", "") or ""
     completion_id = f"chatcmpl-{chat_id}"
 
-    dia = DialogService.query(tenant_id=current_user.id, id=chat_id, status=StatusEnum.VALID.value)
+    # CUSTOM B2B SaaS — scope to the active workspace tenant, not the user id.
+    # Chats live under the workspace tenant in our fork; upstream's
+    # `tenant_id=current_user.id` only matches personal-tenant chats and
+    # returns "You don't own the chat" for every workspace chat.
+    dia = DialogService.query(tenant_id=active_tenant_id(), id=chat_id, status=StatusEnum.VALID.value)
     if not dia:
         return get_error_data_result(f"You don't own the chat {chat_id}")
     dia = dia[0]
@@ -276,7 +281,7 @@ async def openai_chat_completions(chat_id):
     if using_placeholder_model:
         requested_model = dia.llm_id or requested_model
     else:
-        llm_id_error = _validate_llm_id(requested_model, current_user.id, {"model_type": "chat"})
+        llm_id_error = _validate_llm_id(requested_model, active_tenant_id(), {"model_type": "chat"})
         if llm_id_error:
             return get_error_data_result(message=llm_id_error, code=RetCode.ARGUMENT_ERROR)
         dia.llm_id = requested_model
