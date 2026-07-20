@@ -97,6 +97,7 @@ class WsResponse(BaseModel):
     description: str = ""
     status: str = "1"
     bu: str = ""
+    is_model_template: bool = False
     created_by: str | None = None
     create_time: datetime | None = None
 

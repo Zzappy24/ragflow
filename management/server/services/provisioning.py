@@ -37,6 +37,19 @@ _DEFAULT_PARSER_IDS = (
 )
 
 
+def _model_template_tenant_id() -> str | None:
+    """tenant_id du workspace marqué comme référence de modèles
+    (settings_json.model_template == True), ou None. Les nouveaux workspaces
+    héritent des modèles de CE workspace au lieu de ceux du créateur."""
+    from api.db.db_models import DB, Workspace
+    with DB.connection_context():
+        for w in Workspace.select(Workspace.tenant_id, Workspace.settings_json).where(
+                Workspace.status == "1"):
+            if (w.settings_json or {}).get("model_template") is True:
+                return w.tenant_id
+    return None
+
+
 def provision_workspace(org_id: str, name: str, description: str, created_by: str):
     """
     Create a workspace with its associated RAGFlow tenant.
@@ -70,6 +83,13 @@ def provision_workspace(org_id: str, name: str, description: str, created_by: st
     technical_email = f"ws-{slug}-{get_uuid()[:8]}@internal"
     technical_user_id = get_uuid()
 
+    # CUSTOM B2B SaaS — modèles hérités : si un workspace est marqué comme
+    # référence (settings_json.model_template), les nouveaux workspaces copient
+    # SES modèles au lieu de ceux du créateur — qui n'en a souvent aucun sur
+    # son tenant perso, d'où des workspaces vides à reconfigurer à la main.
+    # Fallback = créateur (comportement historique).
+    source_tenant_id = _model_template_tenant_id() or created_by
+
     with DB.connection_context():
         # 1. Create technical user (not meant for login).
         # access_token MUST be set to a non-empty value: api/apps/__init__.py
@@ -95,7 +115,7 @@ def provision_workspace(org_id: str, name: str, description: str, created_by: st
         #    the creator may have since customised their picks.
         creator_tenant = None
         try:
-            ok_ct, creator_tenant = TenantService.get_by_id(created_by)
+            ok_ct, creator_tenant = TenantService.get_by_id(source_tenant_id)
             if not ok_ct:
                 creator_tenant = None
         except Exception:
@@ -148,8 +168,9 @@ def provision_workspace(org_id: str, name: str, description: str, created_by: st
             "invited_by": created_by,
         })
 
-        # 7. Copy creator's TenantLLM rows → new tenant (see docstring).
-        creator_llms = TenantLLMService.query(tenant_id=created_by)
+        # 7. Copy the source tenant's TenantLLM rows → new tenant (template
+        #    workspace if one is flagged, else the creator — see docstring).
+        creator_llms = TenantLLMService.query(tenant_id=source_tenant_id)
         llm_copies = []
         for row in creator_llms:
             llm_copies.append({
@@ -163,6 +184,15 @@ def provision_workspace(org_id: str, name: str, description: str, created_by: st
             })
         if llm_copies:
             TenantLLMService.insert_many(llm_copies)
+
+    # CUSTOM B2B SaaS — synchroniser les modèles copiés dans les tables
+    # tenant_model_provider/instance/model, sinon /v1/models et
+    # get_model_config_from_provider_instance ne les voient pas (le add/update
+    # manuel le fait déjà ; la copie au provisioning l'oubliait).
+    if llm_copies:
+        from management.server.services.sync_tenant_model_tables import sync_tenant_llm_to_new_tables
+        for factory in {c["llm_factory"] for c in llm_copies}:
+            sync_tenant_llm_to_new_tables(technical_user_id, factory)
 
     ok, ws = WorkspaceService.get_by_id(ws_id)
     return ws

@@ -65,6 +65,33 @@ def _get_ws_tenant(ws_id: str) -> str:
     return ws.tenant_id
 
 
+def _fetch_stored_row(tenant_id: str, factory: str, stored: str) -> dict | None:
+    """Re-fetch a tenant_llm row directly, WITHOUT the LLMFactories join.
+
+    CUSTOM B2B SaaS — TenantLLMService.get_my_llms() INNER JOINs llm_factories,
+    which is empty by design in our fork (init_llm_factory disabled after the
+    tenant_model_provider migration). The join therefore returns zero rows, so
+    update/toggle routes that re-fetch through it either 404 ("Model not found
+    after update") or return blank fields even though the row exists. Query
+    tenant_llm directly — same reason the list route above avoids the join.
+    """
+    from api.db.db_models import TenantLLM, DB
+    with DB.connection_context():
+        return (
+            TenantLLM.select(
+                TenantLLM.model_type, TenantLLM.api_base,
+                TenantLLM.max_tokens, TenantLLM.used_tokens, TenantLLM.status,
+            )
+            .where(
+                TenantLLM.tenant_id == tenant_id,
+                TenantLLM.llm_factory == factory,
+                TenantLLM.llm_name == stored,
+            )
+            .dicts()
+            .first()
+        )
+
+
 # ---------------------------------------------------------------------------
 # GET  /workspaces/{ws_id}/models/providers
 # ---------------------------------------------------------------------------
@@ -212,9 +239,8 @@ def update_workspace_provider(
     _invalidate_model_config_cache(tenant_id)
     from management.server.services.sync_tenant_model_tables import sync_tenant_llm_to_new_tables
     sync_tenant_llm_to_new_tables(tenant_id, factory)
-    # Return updated row
-    llms = TenantLLMService.get_my_llms(tenant_id)
-    row = next((r for r in llms if r.get("llm_name") == stored and r.get("llm_factory") == factory), None)
+    # Return updated row — direct query (see _fetch_stored_row).
+    row = _fetch_stored_row(tenant_id, factory, stored)
     if not row:
         raise HTTPException(status_code=404, detail="Model not found after update")
 
@@ -269,8 +295,7 @@ def toggle_workspace_provider_status(
     _invalidate_model_config_cache(tenant_id)
     from management.server.services.sync_tenant_model_tables import sync_tenant_llm_to_new_tables
     sync_tenant_llm_to_new_tables(tenant_id, factory)
-    llms = TenantLLMService.get_my_llms(tenant_id)
-    row = next((r for r in llms if r.get("llm_name") == stored and r.get("llm_factory") == factory), None)
+    row = _fetch_stored_row(tenant_id, factory, stored)
 
     return WsLlmProviderResponse(
         llm_factory=factory,

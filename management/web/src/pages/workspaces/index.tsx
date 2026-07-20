@@ -1,7 +1,7 @@
 import { useEffect, useState } from 'react';
 import { useParams, Link } from 'react-router-dom';
 import { Table, Button, Card, Modal, Form, Input, App, Tag, Space, Switch, Popconfirm, Tooltip } from 'antd';
-import { PlusOutlined, UndoOutlined, FireOutlined, ExportOutlined } from '@ant-design/icons';
+import { PlusOutlined, UndoOutlined, FireOutlined, ExportOutlined, StarFilled, StarOutlined } from '@ant-design/icons';
 import type { ColumnsType } from 'antd/es/table';
 import api from '@/lib/api';
 import { useBulkDelete } from '@/components/BulkActions';
@@ -15,6 +15,7 @@ interface Workspace {
   description: string;
   status: string;
   bu: string;
+  is_model_template: boolean;
 }
 
 export default function WorkspacesPage({
@@ -150,16 +151,40 @@ export default function WorkspacesPage({
     }
   };
 
+  const onToggleTemplate = async (record: Workspace) => {
+    try {
+      if (record.is_model_template) {
+        await api.delete(`/workspaces/${record.id}/model-template`);
+        message.success('Ce workspace n\'est plus la référence de modèles');
+      } else {
+        await api.post(`/workspaces/${record.id}/model-template`);
+        message.success('Référence de modèles définie — les nouveaux workspaces en hériteront');
+      }
+      refresh();
+    } catch (err: unknown) {
+      const msg = (err as { response?: { data?: { detail?: string } } })?.response?.data?.detail;
+      message.error(msg ?? 'Échec de la mise à jour');
+    }
+  };
+
   const columns: ColumnsType<Workspace> = [
     {
       title: 'Nom',
       dataIndex: 'name',
-      render: (name: string, record: Workspace) =>
-        record.status === '1' ? (
-          <Link to={`/workspaces/${record.id}`}>{name}</Link>
-        ) : (
-          <span className="text-gray-400 line-through">{name}</span>
-        ),
+      render: (name: string, record: Workspace) => (
+        <Space size="small">
+          {record.status === '1' ? (
+            <Link to={`/workspaces/${record.id}`}>{name}</Link>
+          ) : (
+            <span className="text-gray-400 line-through">{name}</span>
+          )}
+          {record.is_model_template && (
+            <Tooltip title="Les nouveaux workspaces héritent des modèles de ce workspace">
+              <Tag color="gold" icon={<StarFilled />}>Modèles par défaut</Tag>
+            </Tooltip>
+          )}
+        </Space>
+      ),
     },
     { title: 'Description', dataIndex: 'description', ellipsis: true },
     {
@@ -183,17 +208,24 @@ export default function WorkspacesPage({
     },
     {
       title: '',
-      width: 110,
+      width: 140,
       render: (_: unknown, record: Workspace) =>
         record.status === '1' ? (
-          <Tooltip title="Ouvrir le workspace dans RAGFlow">
-            <Button
-              type="text"
-              icon={<ExportOutlined />}
-              size="small"
-              onClick={() => onLaunch(record.id)}
-            />
-          </Tooltip>
+          <Space size="small">
+            {isSuperuser && (
+              <Tooltip title={record.is_model_template
+                ? 'Retirer le statut de référence de modèles'
+                : 'Définir comme modèles par défaut (les nouveaux workspaces en hériteront)'}>
+                <Button type="text" size="small"
+                  icon={record.is_model_template ? <StarFilled style={{ color: '#d4a017' }} /> : <StarOutlined />}
+                  onClick={() => onToggleTemplate(record)} />
+              </Tooltip>
+            )}
+            <Tooltip title="Ouvrir le workspace dans RAGFlow">
+              <Button type="text" icon={<ExportOutlined />} size="small"
+                onClick={() => onLaunch(record.id)} />
+            </Tooltip>
+          </Space>
         ) : (
           <Space size="small">
             <Tooltip title="Restaurer">
