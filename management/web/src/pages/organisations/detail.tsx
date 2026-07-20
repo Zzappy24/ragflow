@@ -496,6 +496,8 @@ export default function OrgDetailPage() {
   const [purging, setPurging] = useState(false);
   const [quotaForm, setQuotaForm] = useState<{ max_tokens_monthly: number; allow_overage: boolean; rag_monthly_fee_eur: number | null }>({ max_tokens_monthly: 0, allow_overage: true, rag_monthly_fee_eur: null });
   const [savingQuota, setSavingQuota] = useState(false);
+  const [resourceForm, setResourceForm] = useState<{ max_users: number; max_workspaces: number; max_datasets: number; max_documents: number; max_storage_gb: number } | null>(null);
+  const [savingResources, setSavingResources] = useState(false);
   const [codeForm] = Form.useForm();
   const [codeLoading, setCodeLoading] = useState(true);
   const [codeError, setCodeError] = useState(false);
@@ -534,6 +536,20 @@ export default function OrgDetailPage() {
   const refreshStats = () => {
     if (!orgId) return;
     api.get(`/orgs/${orgId}/stats`).then((r) => setStats(r.data));
+  };
+
+  const handleSaveResources = async () => {
+    if (!orgId || !resourceForm) return;
+    setSavingResources(true);
+    try {
+      await api.put(`/orgs/${orgId}`, resourceForm);
+      message.success('Quotas de ressources enregistrés');
+      const [o, st] = await Promise.all([api.get(`/orgs/${orgId}`), api.get(`/orgs/${orgId}/stats`)]);
+      setOrg(o.data); setStats(st.data);
+    } catch (err: unknown) {
+      const msg = (err as { response?: { data?: { detail?: string } } })?.response?.data?.detail;
+      message.error(msg ?? 'Échec de l\'enregistrement');
+    } finally { setSavingResources(false); }
   };
 
   const handleSaveQuota = async () => {
@@ -628,6 +644,8 @@ export default function OrgDetailPage() {
     ])
       .then(([orgRes, statsRes, quotaRes]) => {
         setOrg(orgRes.data);
+        setResourceForm({ max_users: orgRes.data.max_users, max_workspaces: orgRes.data.max_workspaces,
+          max_datasets: orgRes.data.max_datasets, max_documents: orgRes.data.max_documents, max_storage_gb: orgRes.data.max_storage_gb });
         setStats(statsRes.data);
         setQuota(quotaRes.data);
         setQuotaForm({ max_tokens_monthly: quotaRes.data.max_tokens_monthly ?? 0, allow_overage: quotaRes.data.allow_overage ?? true, rag_monthly_fee_eur: quotaRes.data.rag_monthly_fee_eur ?? null });
@@ -757,6 +775,40 @@ export default function OrgDetailPage() {
                     </div>
                   ))}
                 </Card>
+
+                {/* Quotas de ressources (superuser) */}
+                {user?.is_superuser && resourceForm && (
+                  <Card className="mb-4" title="Quotas de ressources"
+                    extra={<Button size="small" type="primary" loading={savingResources} onClick={handleSaveResources}>Enregistrer</Button>}>
+                    <div className="flex flex-wrap gap-6">
+                    <div className="flex flex-col gap-1">
+                      <span className="text-sm text-gray-600">Utilisateurs{stats?.quotas?.users?.current != null ? <span className="text-xs text-gray-400 ml-1">{`(utilisé : ${stats.quotas.users.current})`}</span> : null}</span>
+                      <InputNumber min={1} value={resourceForm.max_users} style={{ width: 150 }}
+                        onChange={(v) => setResourceForm(f => f ? { ...f, max_users: v ?? 1 } : f)} />
+                    </div>
+                    <div className="flex flex-col gap-1">
+                      <span className="text-sm text-gray-600">Workspaces{stats?.quotas?.workspaces?.current != null ? <span className="text-xs text-gray-400 ml-1">{`(utilisé : ${stats.quotas.workspaces.current})`}</span> : null}</span>
+                      <InputNumber min={1} value={resourceForm.max_workspaces} style={{ width: 150 }}
+                        onChange={(v) => setResourceForm(f => f ? { ...f, max_workspaces: v ?? 1 } : f)} />
+                    </div>
+                    <div className="flex flex-col gap-1">
+                      <span className="text-sm text-gray-600">Datasets{stats?.quotas?.datasets?.current != null ? <span className="text-xs text-gray-400 ml-1">{`(utilisé : ${stats.quotas.datasets.current})`}</span> : null}</span>
+                      <InputNumber min={1} value={resourceForm.max_datasets} style={{ width: 150 }}
+                        onChange={(v) => setResourceForm(f => f ? { ...f, max_datasets: v ?? 1 } : f)} />
+                    </div>
+                    <div className="flex flex-col gap-1">
+                      <span className="text-sm text-gray-600">Documents{stats?.quotas?.documents?.current != null ? <span className="text-xs text-gray-400 ml-1">{`(utilisé : ${stats.quotas.documents.current})`}</span> : null}</span>
+                      <InputNumber min={1} value={resourceForm.max_documents} style={{ width: 150 }}
+                        onChange={(v) => setResourceForm(f => f ? { ...f, max_documents: v ?? 1 } : f)} />
+                    </div>
+                    <div className="flex flex-col gap-1">
+                      <span className="text-sm text-gray-600">Stockage (Go)</span>
+                      <InputNumber min={1} value={resourceForm.max_storage_gb} style={{ width: 150 }}
+                        onChange={(v) => setResourceForm(f => f ? { ...f, max_storage_gb: v ?? 1 } : f)} />
+                    </div>
+                    </div>
+                  </Card>
+                )}
 
                 {/* Token quota */}
                 <Card

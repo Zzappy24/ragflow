@@ -249,14 +249,16 @@ export default function MembersPage({
         </h2>
         <Space>
           <BulkDeleteButton />
-          {scope === 'ws' && (
-            <Button type="primary" icon={<PlusOutlined />} onClick={() => setModalOpen(true)}>
-              Add Member
-            </Button>
-          )}
+          {/* Ajouter un utilisateur DÉJÀ existant (add_org_member / add_ws_member).
+              Pour l'org, indispensable quand le compte existe déjà (superadmin,
+              membre d'une autre org, ex-testeur) — l'invitation, elle, CRÉE un
+              compte et échoue si l'email existe. */}
+          <Button icon={<PlusOutlined />} onClick={() => setModalOpen(true)}>
+            {scope === 'ws' ? 'Add Member' : 'Ajouter un membre existant'}
+          </Button>
           {scope === 'org' && (
             <Button type="primary" icon={<UserAddOutlined />} onClick={() => setInviteOpen(true)}>
-              Invite User
+              Inviter (nouveau compte)
             </Button>
           )}
         </Space>
@@ -274,8 +276,15 @@ export default function MembersPage({
         />
       </Card>
 
-      <Modal title="Add Member" open={modalOpen} onOk={onAdd} onCancel={() => setModalOpen(false)} okText="Add">
+      <Modal title={scope === 'ws' ? 'Add Member' : 'Ajouter un membre existant'}
+             open={modalOpen} onOk={onAdd} onCancel={() => setModalOpen(false)} okText="Ajouter">
         <Form form={form} layout="vertical" className="mt-4">
+          {scope === 'org' && (
+            <p className="text-gray-500 mb-3">
+              L'utilisateur doit déjà avoir un compte. Pour créer un nouveau compte,
+              utilisez « Inviter (nouveau compte) ».
+            </p>
+          )}
           <Form.Item name="email" label="Email" rules={[{ required: true, type: 'email' }]}>
             <Input placeholder="user@example.com" />
           </Form.Item>
