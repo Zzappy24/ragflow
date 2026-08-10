@@ -184,6 +184,13 @@ spec:
             - name: WORKER_HEARTBEAT_FILE
               value: {{ .Values.livenessProbe.heartbeatFile | quote }}
             {{- end }}
+            # Extra env vars passthrough (e.g. LLM_TIMEOUT_SECONDS,
+            # LLM_MAX_RETRIES — read by rag/llm/chat_model.py). Lets prod
+            # values tune worker behaviour without touching this template.
+            {{- range .Values.extraEnv }}
+            - name: {{ .name | quote }}
+              value: {{ .value | quote }}
+            {{- end }}
 
           resources:
             {{- toYaml .Values.resources | nindent 12 }}

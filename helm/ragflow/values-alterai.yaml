@@ -142,6 +142,35 @@ ragflow-task-executor:
     - key: nvidia.com/gpu
       operator: Exists
       effect: NoSchedule
+  # Incident 2026-08-07 : 3 workers figés 3 jours (event-loop bloquée sur
+  # des appels LLM pendants — GraphRAG/RAPTOR vers un backend Qwen muet),
+  # pods "Running" mais 0 consommation, toute la file en pending. Deux
+  # correctifs config, AUCUN code touché :
+  #
+  # 1. Liveness probe sur le heartbeat que le worker écrit déjà toutes
+  #    les 30 s (rag/svr/_k8s_runtime.py). Le mécanisme existait, jamais
+  #    activé en prod. maxAge 180 s = large marge vs les 30 s nominales
+  #    (les tâches OCR lourdes n'ont jamais bloqué le heartbeat — vérifié
+  #    sur un parse de 271 s le 2026-08-10) ; un worker gelé est recyclé
+  #    en ~4-5 min au lieu de rester zombie des jours.
+  livenessProbe:
+    enabled: true
+    heartbeatFile: "/tmp/k8s_heartbeat"
+    maxAgeSeconds: 180
+    initialDelaySeconds: 120      # laisse l'init (modèles, Infinity) finir
+    periodSeconds: 30
+    failureThreshold: 2
+  # 2. Timeouts LLM adaptés à l'ingestion. Défauts upstream (600 s × 6
+  #    tentatives ≈ 1 h par appel face à un backend muet) × dizaines
+  #    d'appels GraphRAG par doc = gel de fait. 120 s × 3 tentatives
+  #    ≈ 7 min max par appel : la tâche échoue proprement et libère son
+  #    slot au lieu de figer le worker. Ne concerne QUE les workers —
+  #    l'API server garde les défauts (chat interactif streamé).
+  extraEnv:
+    - name: LLM_TIMEOUT_SECONDS
+      value: "120"
+    - name: LLM_MAX_RETRIES
+      value: "2"
   # Node alteraiworkergpt1: 4x RTX PRO 6000 Blackwell (96 GB each).
   # MIG mixed strategy active depuis 2026-07-01 → 2 GPUs full (Qwen×2)
   # + 8 instances MIG (1g.24gb). Slots utilisés en fonctionnement normal:

@@ -79,3 +79,8 @@ livenessProbe:
 #  initialDelaySeconds: 60       # let model loading finish first
 #  periodSeconds: 30
 #  failureThreshold: 2
+
+# Extra env vars appended verbatim to the container (name/value pairs).
+# Used in prod to tune LLM client behaviour for ingestion workers
+# (LLM_TIMEOUT_SECONDS, LLM_MAX_RETRIES).
+extraEnv: []
