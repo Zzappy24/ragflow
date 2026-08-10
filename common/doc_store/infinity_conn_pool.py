@@ -20,9 +20,49 @@ import time
 import infinity
 from infinity.connection_pool import ConnectionPool
 from infinity.errors import ErrorCode
+from infinity.remote_thrift.client import ThriftInfinityClient
 
 from common import settings
 from common.decorator import singleton
+
+# CUSTOM B2B SaaS — Read timeout on Infinity thrift sockets.
+#
+# Incident 2026-08-07/2026-08-10 (stack dump faulthandler à l'appui) : le SDK
+# infinity crée ses sockets thrift SANS timeout (TSocket(ip, port), lecture
+# infiniment bloquante) et le pool garde ces connexions pendant des heures
+# d'idle. Quand une connexion TCP est silencieusement tuée (conntrack k8s),
+# le premier appel dessus (init_kb → create_idx → CreateDatabase) bloque
+# pour toujours — et comme l'appel est synchrone sur l'event-loop du
+# task_executor, TOUT le worker gèle : heartbeat mort, plus aucune tâche
+# consommée, file en pending pendant des jours.
+#
+# Fix : poser un timeout de lecture sur la socket après chaque (re)connexion.
+# Chaîne auto-guérissante vérifiée dans les libs installées :
+#   timeout socket → thrift lève TTransportException(TIMED_OUT)
+#   → le retry_wrapper du SDK attrape, _reconnect() (socket fraîche) et
+#     rejoue l'appel → la tâche continue sans intervention.
+# Patch au niveau classe : couvre les connexions initiales du pool ET toutes
+# les reconnexions. Vérifier à chaque bump du SDK infinity que
+# `_reconnect` et le transport bufferisé (`_TBufferedTransport__trans`)
+# existent toujours — le fallback log un warning sans casser.
+_INFINITY_RPC_TIMEOUT_MS = int(os.environ.get("INFINITY_RPC_TIMEOUT_MS", "120000"))
+
+_orig_reconnect = ThriftInfinityClient._reconnect
+
+
+def _reconnect_with_socket_timeout(self):
+    _orig_reconnect(self)
+    try:
+        sock = getattr(self.transport, "_TBufferedTransport__trans", None)
+        if sock is not None and hasattr(sock, "setTimeout"):
+            sock.setTimeout(_INFINITY_RPC_TIMEOUT_MS)
+        else:
+            logging.warning("Infinity thrift transport layout changed — socket read timeout NOT applied (check SDK version)")
+    except Exception as exc:
+        logging.warning(f"Could not set Infinity thrift socket timeout: {exc}")
+
+
+ThriftInfinityClient._reconnect = _reconnect_with_socket_timeout
 
 
 @singleton
