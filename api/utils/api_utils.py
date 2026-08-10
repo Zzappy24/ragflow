@@ -540,8 +540,14 @@ def get_parser_config(chunk_method, parser_config):
             "auto_questions": 0,
             "html4excel": False,
             "topn_tags": 3,
+            # CUSTOM B2B SaaS — RAPTOR/GraphRAG OFF par défaut. Upstream #10960
+            # a inversé ces défauts à True pour "naive" : chaque dataset créé par
+            # API/SDK déclenchait alors des centaines d'appels LLM par document
+            # (résumés RAPTOR + extraction d'entités GraphRAG) → coût GPU massif
+            # et gel des task-executors quand le backend chat pend (incident
+            # 2026-08-07). Ces features restent activables explicitement par KB.
             "raptor": {
-                "use_raptor": True,
+                "use_raptor": False,
                 "prompt": "Please summarize the following paragraphs. Be careful with the numbers, do not make things up. Paragraphs as following:\n      {cluster_content}\nThe above is the content you need to summarize.",
                 "max_token": 256,
                 "threshold": 0.1,
@@ -549,7 +555,7 @@ def get_parser_config(chunk_method, parser_config):
                 "random_seed": 0,
             },
             "graphrag": {
-                "use_graphrag": True,
+                "use_graphrag": False,
                 "entity_types": [
                     "organization",
                     "person",
