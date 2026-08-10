@@ -30,6 +30,16 @@ spec:
       terminationGracePeriodSeconds: 60
       securityContext:
         {{- include "ragflow.podSecurityContext" . | nindent 8 }}
+      # Optional scheduling constraints — prod pins Infinity to the GPU node
+      # (350+ Gi free) after the 2026-08-10 OOMKill on the 16 Gi worker1.
+      {{- with .Values.infinity.affinity }}
+      affinity:
+        {{- toYaml . | nindent 8 }}
+      {{- end }}
+      {{- with .Values.infinity.tolerations }}
+      tolerations:
+        {{- toYaml . | nindent 8 }}
+      {{- end }}
 
       # `infiniflow/infinity:v0.7.0-dev5` runs as root (`User=""`,
       # `Entrypoint=/usr/bin/infinity`). On kindnet's local-path-provisioner
