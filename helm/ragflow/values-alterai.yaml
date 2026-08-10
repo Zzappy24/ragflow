@@ -244,13 +244,24 @@ minio:
 
 infinity:
   storage: "100Gi"
+  # Incident 2026-08-10 : OOMKilled (35 restarts cumulés !) pendant un
+  # re-parse de 14 docs — tempête de conflits delete-vs-delete sur la même
+  # table (12 tâches parallèles × retries) → CPU 195%, mémoire > 8Gi → kill.
+  # L'ancien sizing bootstrap (8Gi) écrasait même le défaut du chart (16Gi).
+  #
+  # DÉPLACÉ sur le node GPU (alteraiworkergpt1, ~450Gi dont ~350Gi libres,
+  # vérifié kubectl describe node 2026-08-10) : l'ancien hôte alteraiworker1
+  # ne fait que ~16Gi allocatable — un plafond 24Gi y était infaisable
+  # (OOM node). Bonus : co-localisé avec api + task-executors (trafic
+  # thrift local). Le PVC rook-ceph-block (RWO) se ré-attache au nouveau
+  # node au reschedule.
   resources:
     requests:
-      cpu: "500m"
-      memory: "2Gi"
+      cpu: "1000m"
+      memory: "4Gi"
     limits:
-      cpu: "2000m"
-      memory: "8Gi"
+      cpu: "4000m"
+      memory: "24Gi"
   affinity:
     nodeAffinity:
       requiredDuringSchedulingIgnoredDuringExecution:
@@ -260,6 +271,10 @@ infinity:
                 operator: In
                 values: ["true"]
   tolerations:
+    - key: node-role
+      operator: Equal
+      value: gpu
+      effect: NoSchedule
     - key: nvidia.com/gpu
       operator: Exists
       effect: NoSchedule
