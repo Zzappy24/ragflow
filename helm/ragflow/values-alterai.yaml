@@ -244,13 +244,19 @@ minio:
 
 infinity:
   storage: "100Gi"
+  # Incident 2026-08-10 : OOMKilled (35 restarts cumulés !) pendant un
+  # re-parse de 14 docs — tempête de conflits delete-vs-delete sur la même
+  # table (12 tâches parallèles × retries) → CPU 195%, mémoire > 8Gi → kill.
+  # L'ancien sizing bootstrap (8Gi) écrasait même le défaut du chart (16Gi).
+  # Le node GPU a 200+ Gi libres : 24Gi de plafond + 4 CPU pour absorber
+  # les compactions et les rafales d'ingestion sans OOM.
   resources:
     requests:
-      cpu: "500m"
-      memory: "2Gi"
+      cpu: "1000m"
+      memory: "4Gi"
     limits:
-      cpu: "2000m"
-      memory: "8Gi"
+      cpu: "4000m"
+      memory: "24Gi"
   affinity:
     nodeAffinity:
       requiredDuringSchedulingIgnoredDuringExecution:
