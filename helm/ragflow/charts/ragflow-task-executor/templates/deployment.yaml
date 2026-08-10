@@ -210,6 +210,11 @@ spec:
             initialDelaySeconds: {{ .Values.livenessProbe.initialDelaySeconds }}
             periodSeconds: {{ .Values.livenessProbe.periodSeconds }}
             failureThreshold: {{ .Values.livenessProbe.failureThreshold }}
+            # K8s default is 1s — far too tight for an exec probe on a pod
+            # doing heavy GPU/ONNX work (observed 2026-08-10: probe timed
+            # out during model loading → healthy worker killed mid-task).
+            # Same rationale as the API probes' timeoutSeconds bump.
+            timeoutSeconds: {{ .Values.livenessProbe.timeoutSeconds | default 10 }}
           {{- end }}
 
           # Phase 0 securityContext — same relaxation as ragflow-api. The

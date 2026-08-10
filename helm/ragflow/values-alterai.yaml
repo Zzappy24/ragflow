@@ -159,7 +159,13 @@ ragflow-task-executor:
     maxAgeSeconds: 180
     initialDelaySeconds: 120      # laisse l'init (modèles, Infinity) finir
     periodSeconds: 30
-    failureThreshold: 2
+    # 3 échecs (et pas 2) + timeout 10 s : le default K8s timeoutSeconds=1
+    # faisait "timer out" l'exec probe pendant les chargements ONNX/GPU →
+    # worker sain tué en pleine tâche (observé 2026-08-10, event "command
+    # timed out after 1s"). Même leçon que les probes API (timeoutSeconds
+    # bumpé pour tolérer les micro-blocages sous charge).
+    failureThreshold: 3
+    timeoutSeconds: 10
   # 2. Timeouts LLM adaptés à l'ingestion. Défauts upstream (600 s × 6
   #    tentatives ≈ 1 h par appel face à un backend muet) × dizaines
   #    d'appels GraphRAG par doc = gel de fait. 120 s × 3 tentatives
