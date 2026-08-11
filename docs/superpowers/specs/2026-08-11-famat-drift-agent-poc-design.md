@@ -79,7 +79,7 @@ Justification : la surveillance/alerte doit être déterministe et reproductible
 - **DuckDB** dans CodeExec (pas pandas) : agrégats `regr_slope`/`regr_intercept` natifs → la régression par segment s'écrit en SQL ; fenêtrage pour la détection de segments ; nettement plus rapide. **Polars en repli** si DuckDB absent de l'image sandbox.
 - **Extraction JSON** : selon le moteur de la base Cyllene (à découvrir), soit `JSON_VALUE`/`JSON_EXTRACT` côté SQL (idéalement une vue si les droits le permettent), soit parsing dans CodeExec.
 - **`max_records` ExeSQL** : à monter au-delà du défaut 1024, ou pousser l'agrégation côté SQL pour rester sous la limite (préféré).
-- **Graphiques** : matplotlib → PNG via le mécanisme d'artefacts CodeExec (`_ARTIFACTS` → MinIO → pièces jointes chat).
+- **Graphiques** : matplotlib avec style SPC soigné (bandes ±3σ, points hors-contrôle marqués, régression par segment annotée en µm/pièce, marqueurs de re-réglage), via le mécanisme d'artefacts CodeExec (`_ARTIFACTS` → MinIO → pièces jointes chat). Export **SVG si le pipeline d'artefacts l'accepte** (vectoriel, net en projection — à tester en première tâche), sinon PNG 200 dpi. Seaborn écarté (même moteur, rien de structurel pour du SPC). Graphiques interactifs JS dans le chat (renderer custom de code-fence + recharts, comme le panel admin) : **phase 1**, pas POC — chantier frontend à part entière.
 
 ## Hors scope POC
 
