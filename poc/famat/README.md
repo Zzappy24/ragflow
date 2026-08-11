@@ -155,3 +155,155 @@ brute, pas encore l'atteignabilité applicative de Cyllene spécifiquement.
   up** — pool 6/6, `/healthz` → `{"status":"ok"}`.
 - Aucun conteneur de test/probe laissé après les vérifications manuelles (tous lancés avec
   `--rm`).
+
+## Provider RAGFlow (Task 9)
+
+### Où vivent réellement les routes `/api/v1/admin/sandbox/*`
+
+Écart d'architecture constaté (pas un bug applicatif, mais un vrai piège pour Task 11-12) :
+`admin/server/routes.py` (`admin_bp`, prefix `/api/v1/admin`) contient les routes
+`sandbox/providers`, `sandbox/providers/<id>/schema`, `sandbox/config` (GET/POST),
+`sandbox/test` — servies par le serveur Flask legacy **upstream**
+`admin/server/admin_server.py`, `run_simple(port=9381)` codé en dur. La page frontend
+`web/src/pages/admin/sandbox-settings.tsx` (route `/admin/sandbox-settings`) cible bien ces
+routes — `web/vite.config.ts` proxy explicitement `/api/v1/admin/sandbox` (+ `roles`,
+`whitelist`, `variables`) vers `http://127.0.0.1:9381/`.
+
+Or `scripts/dev_up.sh --full` démarre sur ce **même port 9381** notre backend admin custom
+`management/server/main.py` (FastAPI/uvicorn, prefix `/api/admin`, sans le `v1` — orgs,
+workspaces, members, code product…) — qui **n'expose pas** de router sandbox. Résultat : avec le
+stack `--full` standard, `http://localhost:9222/admin/sandbox-settings` tape sur
+`management/server` et reçoit 404 (route inconnue), le serveur Flask legacy qui porte réellement
+ces routes n'étant jamais lancé par nos scripts. Pas de fichier de code modifié pour ce constat
+— juste `admin/server/admin_server.py` lancé manuellement en dehors de `dev_up.sh` le temps du
+smoke (voir ci-dessous), puis arrêté. **Table de vérité :**
+
+| Chemin | Serveur qui répond réellement | Démarré par |
+|---|---|---|
+| `/api/admin/*` (org/workspace/members/code…) | `management/server/main.py` (FastAPI, :9381) | `scripts/dev_up.sh --full` |
+| `/api/v1/admin/sandbox/*`, `/api/v1/admin/roles*`, `/api/v1/admin/whitelist`, `/api/v1/admin/variables` | `admin/server/admin_server.py` (Flask legacy, :9381) | **rien dans nos scripts** — à lancer à la main |
+
+### Auth utilisée
+
+Compte superuser existant en base `admin@test.local` (`is_superuser=1`, `is_active=1`) — trouvé
+via `docker exec docker-mysql-1 mysql ... -e "SELECT email,is_superuser FROM user WHERE
+is_superuser=1"` (credentials root MySQL dans `docker/.env`, procédure documentée dans
+`CLAUDE.md` § « DB client pod »/dev). Mot de passe applicatif inconnu (hash existant non
+réversible) : reset via la procédure exacte documentée dans `CLAUDE.md` § « Account Password
+Handling » — `UPDATE user SET password=<scrypt hash of Base64(raw)> WHERE email='admin@test.local'`
+généré avec `werkzeug.security.generate_password_hash`. Mot de passe en clair **jamais commité**
+— seule la procédure (déjà dans `CLAUDE.md`, préexistante) est référencée ici.
+
+Login exécuté contre la route propre au serveur admin, `POST /api/v1/admin/login`
+(`admin/server/routes.py:43`, **pas** `/api/v1/auth/login` du serveur principal — process Flask
+distinct mais même schéma RSA(Base64(password)) + secret JWT `ADMIN_JWT_SECRET`/itsdangerous
+que documenté dans `CLAUDE.md` § « Obtaining an API Token »). Token récupéré dans le header
+`Authorization` de la réponse, réutilisé en `Authorization: <token>` sur les appels suivants.
+
+### Config posée
+
+```bash
+POST /api/v1/admin/sandbox/config
+{"provider_type":"self_managed","config":{"endpoint":"http://localhost:9385","timeout":30},"set_active":true}
+→ {"code":0,"data":{"config":{"endpoint":"http://localhost:9385","timeout":30},"provider_type":"self_managed"},"message":"Sandbox configuration updated successfully"}
+
+POST /api/v1/admin/sandbox/test
+{"provider_type":"self_managed","config":{"endpoint":"http://localhost:9385","timeout":30}}
+→ {"code":0,"data":{"success":true,"message":"Test PASSED | Exit code: 0 | ...TEST_PASSED...", ...},"message":"Success"}
+```
+
+`endpoint=http://localhost:9385` fonctionne tel quel (pas besoin de `host.docker.internal`) : le
+`ragflow_server.py` de dev tourne en process natif sur le host (pas en conteneur), donc
+`localhost:9385` pointe directement sur `sandbox-executor-manager` publié par
+`agent/sandbox/docker-compose.yml`. La config est persistée par `SandboxMgr.set_config()`
+(`admin/server/services.py`) dans la table `system_settings` (clés `sandbox.provider_type` et
+`sandbox.self_managed`, JSON) — lue par `agent.sandbox.client._load_provider_from_settings()`
+côté process API principal (:9380) et task_executor, indépendamment de quel serveur HTTP a fait
+l'écriture. `set_config()` appelle `agent.sandbox.client.reload_provider()` en fin de requête, donc
+la config est active immédiatement, sans redémarrage du serveur API.
+
+### Smoke recettes (Step 3 du brief)
+
+Validé au niveau du client Python du provider, pas du canvas navigateur (session non
+interactive) :
+
+```python
+from agent.sandbox.client import execute_code, reload_provider
+reload_provider()
+result = execute_code(code="""
+import famat_recipes, json
+def main():
+    import duckdb
+    con = duckdb.connect()
+    con.execute("CREATE TABLE t AS SELECT 1 AS a")
+    return json.dumps({"ok": True})
+""", language="python", arguments={})
+```
+
+Résultat : `exit_code=0`, `metadata['result_present']=True`,
+`metadata['result_value']='{"ok": true}'`. `stderr` contient uniquement le warning bénin
+matplotlib déjà noté au Task 8 (`/tmp/matplotlib is not a writable directory`, fallback auto) —
+sans incidence.
+
+### Smoke artefacts (Step 4 du brief)
+
+Même approche, code du brief inchangé (drift synthétique 25 points + `spc_chart` en `svg` puis
+`png`) :
+
+```python
+result = execute_code(code="""
+import famat_recipes as fr, json
+def main():
+    rows = [(i+1, f"P{i:02d}", 10, "CORRECTION_X", 0.001*i, f"2026-01-01 10:{i:02d}:00") for i in range(25)]
+    d = fr.drift(fr.load_rows(rows), "CORRECTION_X", 10)
+    svg = fr.spc_chart(d, out_dir="artifacts", fmt="svg")
+    png = fr.spc_chart(d, out_dir="artifacts", fmt="png")
+    return json.dumps({"svg": svg, "png": png})
+""", language="python", arguments={})
+```
+
+Résultat : `exit_code=0`, `result_value='{"svg": "artifacts/spc_CORRECTION_X_ch10.svg", "png":
+"artifacts/spc_CORRECTION_X_ch10.png"}'`, et **2 artefacts** dans `metadata['artifacts']` :
+
+| name | mime_type | size (octets) |
+|---|---|---|
+| `spc_CORRECTION_X_ch10.svg` | `image/svg+xml` | 40 470 |
+| `spc_CORRECTION_X_ch10.png` | `image/png` | 84 041 |
+
+**Verdict SVG vs PNG : les deux formats sont générés par `famat_recipes.spc_chart()` et
+collectés par le sandbox, sans erreur ni différence de traitement.** Pas de raison technique de
+figer `fmt` par défaut sur l'un plutôt que l'autre à ce stade — aucune modification de
+`poc/famat/famat_recipes.py` nécessaire. L'affichage réel en pièce jointe de chat (rendu SVG
+inline supporté ou non par le composant chat RAGFlow) reste à valider en Task 11-12.
+
+### Mécanisme d'artefacts constaté (lecture de `agent/tools/code_exec.py` + `agent/sandbox/providers/self_managed.py`)
+
+Deux étapes bien séparées, une seule vérifiée ici :
+
+1. **Executor-manager → réponse HTTP `/run`** (vérifié par ce smoke) : le conteneur sandbox
+   écrit les fichiers dans `artifacts/` (relatif au workdir), l'executor-manager les scanne après
+   exécution et les renvoie **inline, base64**, dans le corps JSON de la réponse
+   (`result.artifacts = [{name, content_b64, mime_type, size}, ...]`). C'est
+   `SelfManagedProvider.execute_code()` (`agent/sandbox/providers/self_managed.py:187`) qui
+   remonte cette liste telle quelle dans `ExecutionResult.metadata['artifacts']` — confirmé
+   empiriquement ci-dessus (2 entrées, tailles cohérentes avec les fichiers SVG/PNG générés).
+2. **Upload vers le stockage RAGFlow (MinIO/S3) + rendu markdown chat** (NON exercé ici — ce
+   smoke appelle `agent.sandbox.client.execute_code()` directement, pas le composant canvas) :
+   c'est `CodeExec._upload_artifacts()` (`agent/tools/code_exec.py:541`) qui décode chaque
+   `content_b64`, pousse le binaire dans le bucket `SANDBOX_ARTIFACT_BUCKET` via
+   `settings.STORAGE_IMPL.put()`, génère une URL `/api/v1/documents/artifact/<uuid><ext>`, puis
+   `_build_attachment_markdown_list()` produit `![name](url)` pour les images (rendu inline
+   attendu côté chat) ou `[Download name](url)` sinon. Cette étape nécessite le contexte canvas
+   (`self._canvas`, tenant) et un backend de stockage actif — non invoquée par ce smoke bas
+   niveau, à valider dans un vrai canvas en Task 11-12.
+
+### État final / nettoyage
+
+- `admin/server/admin_server.py` a été lancé manuellement (hors `dev_up.sh`) le temps de valider
+  les routes admin, puis **arrêté** après les smokes — aucun process laissé sur :9381 en dehors
+  de ce que `scripts/dev_up.sh`/`dev_down.sh` gèrent normalement.
+- Config sandbox (`system_settings.sandbox.*`) **laissée en base**, active :
+  `provider_type=self_managed`, `endpoint=http://localhost:9385`, `timeout=30` — persiste pour
+  Task 10/11/12.
+- Mot de passe de `admin@test.local` a été réinitialisé (voir § Auth ci-dessus) ; le compte reste
+  un compte de dev local, pas de secret de prod concerné.
