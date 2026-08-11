@@ -39,3 +39,39 @@ def test_load_rows_synthetic():
     con = fr.load_rows(rows)
     assert con.execute("SELECT count(*) FROM events").fetchone()[0] == 2
     assert con.execute("SELECT value_num FROM events WHERE seq=2").fetchone()[0] == pytest.approx(0.02)
+
+
+def _mk(seq, serial, value, minute):
+    return (seq, serial, 10, "CORRECTION_X", value, f"2026-01-01 10:{minute:02d}:00")
+
+
+def test_series_orders_parts_and_takes_last_value():
+    rows = [
+        _mk(1, "A", 0.010, 0),
+        _mk(2, "A", 0.011, 1),   # 2e mesure de A -> retenue
+        _mk(3, "B", 0.012, 2),
+    ]
+    s = fr.series(fr.load_rows(rows), "CORRECTION_X", 10)
+    assert [p["serial"] for p in s] == ["A", "B"]
+    assert s[0]["value"] == pytest.approx(0.011)
+    assert s[0]["part_index"] == 1 and s[1]["part_index"] == 2
+
+
+def test_series_detects_segment_break_on_jump():
+    # 10 pièces à pas +0.001, puis saut brutal (re-réglage), puis 10 pièces
+    rows = [_mk(i + 1, f"P{i:02d}", 0.001 * i, i) for i in range(10)]
+    rows += [_mk(i + 11, f"Q{i:02d}", -0.050 + 0.001 * i, i + 10) for i in range(10)]
+    s = fr.series(fr.load_rows(rows), "CORRECTION_X", 10)
+    assert len(s) == 20
+    assert s[9]["segment_id"] == 0
+    assert s[10]["segment_id"] == 1
+    assert len({p["segment_id"] for p in s}) == 2
+
+
+@real_data
+def test_series_real_correction_x():
+    con = fr.load_csv(CSV)
+    s = fr.series(con, "CORRECTION_X", 10)
+    assert 50 <= len(s) <= 94          # une entrée max par serial
+    idx = [p["part_index"] for p in s]
+    assert idx == sorted(idx) == list(range(1, len(s) + 1))

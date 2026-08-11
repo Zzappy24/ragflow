@@ -34,3 +34,43 @@ def load_rows(rows) -> duckdb.DuckDBPyConnection:
     con.execute(f"CREATE TABLE events ({_EVENTS_SCHEMA})")
     con.executemany("INSERT INTO events VALUES (?, ?, ?, ?, ?, ?)", rows)
     return con
+
+
+def series(con, cle: str, chapter: int, jump_k: float = 5.0) -> list[dict]:
+    """Série chronologique par pièce pour (cle, chapter), segmentée par ruptures.
+
+    Une pièce = un point (dernière mesure retenue). Une rupture = |diff|
+    dépassant jump_k fois la médiane des |diff| non nuls (re-réglage machine).
+    """
+    rows = con.execute(
+        """
+        WITH per_part AS (
+            SELECT serial,
+                   arg_max(value_num, seq) AS value,
+                   max(ts)                 AS ts
+            FROM events
+            WHERE cle = ? AND chapter = ? AND value_num IS NOT NULL
+            GROUP BY serial
+        ),
+        ordered AS (
+            SELECT serial, value, ts,
+                   ROW_NUMBER() OVER (ORDER BY ts)          AS part_index,
+                   value - LAG(value) OVER (ORDER BY ts)    AS diff
+            FROM per_part
+        ),
+        med AS (
+            SELECT COALESCE(median(abs(diff)), 0) AS mad FROM ordered WHERE diff IS NOT NULL AND diff <> 0
+        )
+        SELECT o.serial, o.value, CAST(o.ts AS VARCHAR) AS ts, o.part_index,
+               SUM(CASE WHEN o.diff IS NOT NULL AND m.mad > 0
+                         AND abs(o.diff) > ? * m.mad THEN 1 ELSE 0 END)
+                   OVER (ORDER BY o.part_index ROWS UNBOUNDED PRECEDING) AS segment_id
+        FROM ordered o CROSS JOIN med m
+        ORDER BY o.part_index
+        """,
+        [cle, chapter, jump_k],
+    ).fetchall()
+    return [
+        {"serial": r[0], "value": r[1], "ts": r[2], "part_index": r[3], "segment_id": int(r[4])}
+        for r in rows
+    ]
