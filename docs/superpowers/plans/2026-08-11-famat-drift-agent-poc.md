@@ -1212,13 +1212,14 @@ Un "redémarrage" = le chapitre redescend dans la séquence d'une pièce (perte 
 corrélée à la température atelier).
 
 ## Recettes canoniques — utilise le tool code_exec avec EXACTEMENT ces codes
-Le module `famat_recipes` est préinstallé dans le sandbox. Connexion :
-CFG = dict(host="<HOST>", port=<PORT>, user="<USER>", password="<PWD>", database="<DB>")
+Le module `famat_recipes` est préinstallé dans le sandbox. Source de données (POC fichier —
+révision Task 10 ; en prod, remplacer par `fr.load_db(...)` vers la base Cyllene) :
+DATA_URL = "http://host.containers.internal:9000/famat-poc/Payload-20260526.csv"
 
 ### Recette 1 — Dérive d'une clé à un chapitre (défaut : CORRECTION_X, chapitre 10)
 import famat_recipes as fr, json
 def main():
-    con = fr.load_db(**CFG)
+    con = fr.load_url("http://host.containers.internal:9000/famat-poc/Payload-20260526.csv")
     d = fr.drift(con, "<CLE>", <CHAPITRE>)
     fr.spc_chart(d, out_dir="artifacts")
     d.pop("series")  # ne pas renvoyer les points bruts
@@ -1227,7 +1228,7 @@ def main():
 ### Recette 2 — Backtest des alertes (la preuve d'anticipation)
 import famat_recipes as fr, json
 def main():
-    con = fr.load_db(**CFG)
+    con = fr.load_url("http://host.containers.internal:9000/famat-poc/Payload-20260526.csv")
     b = fr.backtest(con, "<CLE>", <CHAPITRE>)
     b["alerts"] = b["alerts"][:20]
     return json.dumps(b, default=str)
@@ -1235,7 +1236,7 @@ def main():
 ### Recette 3 — Température ↔ redémarrages
 import famat_recipes as fr, json
 def main():
-    con = fr.load_db(**CFG)
+    con = fr.load_url("http://host.containers.internal:9000/famat-poc/Payload-20260526.csv")
     t = fr.temperature_restarts(con)
     t["per_serial"] = sorted(t["per_serial"], key=lambda x: -x["restarts"])[:15]
     return json.dumps(t, default=str)
@@ -1243,8 +1244,14 @@ def main():
 ## Règles
 - Pour les 3 analyses ci-dessus : recopie la recette TELLE QUELLE, en remplaçant
   uniquement <CLE> et <CHAPITRE> selon la demande. N'invente JAMAIS une autre méthode.
-- Pour toute autre question sur les données : utilise le tool execute_sql avec des
-  requêtes AGRÉGÉES (count, avg, min/max, group by) — jamais de SELECT * massif.
+- Pour toute autre question sur les données : utilise le tool code_exec avec ce squelette,
+  en n'écrivant que du SQL DuckDB AGRÉGÉ (count, avg, min/max, group by — jamais de
+  SELECT * massif) sur la table events(seq, serial, chapter, cle, value_num, ts) :
+  import famat_recipes as fr, json
+  def main():
+      con = fr.load_url("http://host.containers.internal:9000/famat-poc/Payload-20260526.csv")
+      rows = con.execute("<REQUETE SQL AGREGEE>").fetchall()
+      return json.dumps(rows, default=str)
 - Interprète toujours les résultats : pente en µm/pièce, pièces restantes avant limite,
   vrais/faux positifs du backtest, écart de température aux redémarrages.
 - Si une carte est générée, mentionne-la dans ta réponse.
@@ -1255,9 +1262,8 @@ def main():
 - [ ] **Step 2: Construire le canvas dans l'UI**
 
 Dans l'UI agent RAGFlow : créer un agent « FAMAT — Dérive process » (partir de zéro ou du template *Text2SQL data expert* pour la structure Agent+tools) :
-- Composant **Agent** : modèle = LLM du workspace avec tool-calling ; prompt système = contenu de `system_prompt.md` avec les `<...>` remplacés ; température basse (0.1-0.2).
-- Tool **code_exec** : langage Python, timeout 60 s.
-- Tool **execute_sql** : db_type selon le moteur réel, host/port/database/credentials Cyllene, `max_records` = 2000 (exploration agrégée seulement).
+- Composant **Agent** : modèle = LLM du workspace avec tool-calling ; prompt système = contenu de `system_prompt.md` (aucun secret à substituer en mode fichier — la DATA_URL est publique en lecture sur le MinIO local) ; température basse (0.1-0.2).
+- Tool **code_exec** : langage Python, timeout 60 s. (Pas de tool execute_sql en mode fichier — l'exploration libre passe par du SQL DuckDB dans code_exec, cf. Règles du prompt. ExeSQL sera ajouté quand la base Cyllene sera accessible.)
 - Composant **Begin** puis Agent puis **Message** selon le pattern du template.
 
 - [ ] **Step 3: Tester les 3 recettes en chat**
