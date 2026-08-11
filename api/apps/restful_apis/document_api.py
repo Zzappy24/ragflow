@@ -595,7 +595,8 @@ async def _upload_local_documents(kb, tenant_id):
             logging.error(msg)
             return get_error_data_result(message=msg, code=RetCode.ARGUMENT_ERROR)
 
-    # CIA-9 phase 2 — plafond de stockage org (max_storage_gb) à l'upload.
+    # CUSTOM B2B SaaS — storage quota enforcement (CIA-9 phase 2).
+    # Plafond de stockage org (max_storage_gb) vérifié à l'upload.
     # Taille entrante = somme des fichiers du batch (seek/tell sur le spool,
     # position restaurée pour ne pas perturber la sauvegarde en aval).
     incoming_bytes = 0
