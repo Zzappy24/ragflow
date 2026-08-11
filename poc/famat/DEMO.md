@@ -107,7 +107,7 @@ franchissement réel sur cet échantillon (cf. chiffres ci-dessous).
    (le modèle explore/corrige plusieurs pistes avant de converger ; les chiffres
    restent identiques une fois convergés).
 
-4. **Question libre du client (exploration execute_sql)** → montrer la trace
+4. **Question libre du client (exploration code_exec)** → montrer la trace
    d'exécution (logs serveur `[ToolCall] invoke/done`, ou `return_trace` dans la
    réponse API) pour prouver que la réponse vient d'un calcul réel sur les vraies
    données, pas d'une estimation. Deux questions testées en Task 12, cf. § Question
@@ -129,8 +129,8 @@ pièces 36/86, franchissement pièce 75, 495 redémarrages, corr=−0,073…) �
 rédaction du rapport varie, comme attendu d'un code déterministe derrière un LLM.
 Le seul aléa porte sur le NOMBRE DE TENTATIVES nécessaires pour obtenir une réponse
 (1 à 5 selon les cas), pas sur le CONTENU une fois obtenue — voir le playbook
-anti-échec en § Setup et le § Durcissement dans `task-12-report.md` pour le détail
-de l'investigation.
+anti-échec en § Setup et `docs/superpowers/plans/2026-08-11-famat-drift-agent-poc.md`
+§ Task 12 pour le détail de l'investigation.
 
 ## Corrélation température : état des lieux
 
@@ -163,7 +163,7 @@ petit pour être représentative (effet de sélection / bruit statistique amplif
 petite échelle). Ne pas reprendre l'affirmation du partenaire telle quelle sans la
 nuancer avec ces chiffres.
 
-## Question libre (exploration execute_sql)
+## Question libre (exploration code_exec)
 
 Le tool `code_exec` accepte toute question data hors des 3 recettes canoniques, via
 une requête SQL DuckDB agrégée sur `events(seq, serial, chapter, cle, value_num, ts)`.

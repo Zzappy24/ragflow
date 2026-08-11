@@ -7,7 +7,8 @@ Tests : `uv run --with duckdb python -m pytest poc/famat/tests/ -v`
 ## Source de données (Task 10 — révisée)
 
 La base Cyllene (webhook `WebhookMesure`) n'est pas accessible depuis ce poste (flux réseau
-à ouvrir côté prod, cf. archive dans `task-10-brief.md`). Le POC charge donc le même CSV via
+à ouvrir côté prod, cf. `docs/superpowers/plans/2026-08-11-famat-drift-agent-poc.md` § Task 10).
+Le POC charge donc le même CSV via
 HTTP depuis le MinIO du stack dev, par `famat_recipes.load_url(url)` (télécharge vers un
 fichier temporaire puis délègue à `load_csv()` — même table `events`, même schéma).
 
@@ -69,8 +70,9 @@ con = fr.load_url("http://host.containers.internal:9000/famat-poc/Payload-202605
 
 Quand les flux réseau prod seront ouverts, remplacer `fr.load_url(DATA_URL)` par
 `fr.load_db(host, port, user, password, database)` (implémentation documentée mais NON codée,
-cf. section archive de `task-10-brief.md`) dans le prompt/composant qui appelle la recette —
-signature et table `events` identiques, aucun autre changement requis côté canvas.
+cf. `docs/superpowers/plans/2026-08-11-famat-drift-agent-poc.md` § Task 10) dans le
+prompt/composant qui appelle la recette — signature et table `events` identiques, aucun
+autre changement requis côté canvas.
 
 ## Resync de l'image sandbox custom
 

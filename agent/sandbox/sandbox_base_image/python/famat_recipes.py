@@ -1,7 +1,8 @@
 # GÉNÉRÉ depuis poc/famat/famat_recipes.py — ne pas éditer ici
 """Recettes analytiques FAMAT — POC dérive process.
 
-Module autonome : seules dépendances duckdb, matplotlib, pymysql.
+Module autonome. Seules dépendances : duckdb, matplotlib, requests (stdlib :
+statistics, tempfile, os).
 Cuit dans l'image sandbox custom ET utilisé hors ligne pour les tests.
 """
 import os

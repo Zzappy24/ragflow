@@ -4,6 +4,43 @@
 **Statut** : validé pour plan d'implémentation
 **Objectif business** : démontrer devant FAMAT (réunion client Cyllene/Zefire) que la plateforme RAGFlow de Cyllene sait faire l'analyse de dérive process et l'explication de non-conformités en interne — sans délégation de la partie technique à Zefire.
 
+## Révisions — 2026-08-11, exécution
+
+Écarts constatés entre ce spec et l'exécution réelle du POC (tasks 9-12,
+`.superpowers/sdd/2026-08-11-famat-drift-agent-poc/`) :
+
+- **Source de données** : le spec décrivait `execute_sql`/ExeSQL branché directement sur
+  la base Cyllene (topologie de prod dès le POC, § Architecture). En pratique, la base
+  Cyllene n'était pas accessible pendant l'exécution — le flux réel est un fichier CSV
+  (`Payload-20260526.csv`) servi via MinIO local et chargé par `famat_recipes.load_url()`
+  dans DuckDB. Le branchement base directe (`fr.load_db(...)`) reste différé, documenté
+  comme TODO en tête de `poc/famat/system_prompt.md`.
+- **Tool unique** : conséquence directe du point précédent — seul `code_exec` est câblé
+  dans le canvas (recettes 1/2/3 + exploration SQL agrégée via DuckDB, toutes passant par
+  le même tool). `execute_sql`/ExeSQL n'a jamais été branché ; à ouvrir quand l'accès base
+  Cyllene sera disponible.
+- **Critère « < 1 min/analyse »** : qualifié par la mesure réelle (task 12) plutôt
+  qu'atteint uniformément. Recettes 1 et 2 tiennent le critère (≈13-16 s en cas de succès
+  au premier essai). Recette 3 (température/redémarrages) monte jusqu'à ≈67 s, et
+  l'exploration libre jusqu'à ≈100 s. La latence ne vient PAS des recettes elles-mêmes
+  (déterministes, quelques secondes d'exécution DuckDB/matplotlib) mais du LLM reasoning
+  + de l'infrastructure LiteLLM/vLLM en aval (voir inquiétudes task-12-report.md).
+- **Verdict corrélation température** : le spec (§ Contexte, « corrélation déjà
+  établie ») présentait le lien température↔redémarrages comme un fait acquis côté
+  partenaire. L'investigation sur le dump complet (task 12) **infirme** cette
+  corrélation : `corr = −0,073` (quasi nulle), effet directionnel modeste mais réel
+  (test de Welch, Cohen's d ≈ −0,32) — très loin d'expliquer l'intégralité des
+  redémarrages. Détail complet dans `poc/famat/DEMO.md` § Corrélation température.
+- **Backtest CORRECTION_X, chapitre 10** : le backtest rejoué sur ce couple clé/chapitre
+  donne **0 vraie alerte / 2 fausses alertes** — les limites Shewhart statiques ±3σ sont
+  peu sensibles à une dérive lente et n'anticipent pas les franchissements sur ce cas
+  précis. L'anticipation démontrée par le POC vient de la **régression par segment**
+  (pente courante), pas des limites statiques elles-mêmes — cohérent avec la remarque
+  déjà présente en fin de prompt système, mais à noter explicitement ici car le chiffre
+  contredit l'hypothèse implicite du critère de réussite (§ Critères de réussite du POC)
+  selon laquelle le backtest produirait un chiffre d'anticipation favorable sur le premier
+  cas testé.
+
 ## Contexte
 
 FAMAT (usinage aéronautique, JV Safran/GE) veut réduire ses coûts de non-conformité :
