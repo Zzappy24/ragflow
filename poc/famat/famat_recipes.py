@@ -74,3 +74,56 @@ def series(con, cle: str, chapter: int, jump_k: float = 5.0) -> list[dict]:
         {"serial": r[0], "value": r[1], "ts": r[2], "part_index": r[3], "segment_id": int(r[4])}
         for r in rows
     ]
+
+
+def drift(con, cle: str, chapter: int, k_sigma: float = 3.0, jump_k: float = 5.0) -> dict:
+    """Analyse de dérive : régression par segment + limites ±k_sigma + extrapolation."""
+    s = series(con, cle, chapter, jump_k)
+    if not s:
+        return {"cle": cle, "chapter": chapter, "n_parts": 0, "series": [],
+                "segments": [], "current": None, "mean": None, "sigma": None,
+                "lcl": None, "ucl": None}
+
+    seg_con = duckdb.connect()  # connexion de travail vide
+    seg_con.execute("CREATE TABLE pts (part_index INTEGER, value DOUBLE, segment_id INTEGER)")
+    seg_con.executemany(
+        "INSERT INTO pts VALUES (?, ?, ?)",
+        [(p["part_index"], p["value"], p["segment_id"]) for p in s],
+    )
+    mean, sigma = seg_con.execute("SELECT avg(value), stddev_samp(value) FROM pts").fetchone()
+    sigma = sigma or 0.0
+    lcl, ucl = mean - k_sigma * sigma, mean + k_sigma * sigma
+
+    segments = [
+        {"segment_id": int(r[0]), "n": int(r[1]),
+         "slope_per_part": r[2], "intercept": r[3]}
+        for r in seg_con.execute(
+            """
+            SELECT segment_id, count(*),
+                   regr_slope(value, part_index),
+                   regr_intercept(value, part_index)
+            FROM pts GROUP BY segment_id ORDER BY segment_id
+            """
+        ).fetchall()
+    ]
+
+    last = s[-1]
+    cur_seg = next(x for x in segments if x["segment_id"] == last["segment_id"])
+    slope = cur_seg["slope_per_part"]
+    parts_to_limit = None
+    if slope is not None and sigma > 0 and abs(slope) > 1e-12:
+        target = ucl if slope > 0 else lcl
+        remaining = (target - last["value"]) / slope
+        if remaining > 0:
+            parts_to_limit = remaining
+    current = {
+        "segment_id": cur_seg["segment_id"],
+        "slope_per_part": slope,
+        "last_value": last["value"],
+        "last_part_index": last["part_index"],
+        "parts_to_limit": parts_to_limit,
+        "beyond_limits": not (lcl <= last["value"] <= ucl),
+    }
+    return {"cle": cle, "chapter": chapter, "n_parts": len(s), "mean": mean,
+            "sigma": sigma, "lcl": lcl, "ucl": ucl, "series": s,
+            "segments": segments, "current": current}

@@ -75,3 +75,35 @@ def test_series_real_correction_x():
     assert 50 <= len(s) <= 94          # une entrée max par serial
     idx = [p["part_index"] for p in s]
     assert idx == sorted(idx) == list(range(1, len(s) + 1))
+
+
+def test_drift_slope_per_segment_and_extrapolation():
+    # segment 1 : pente 0.001/pièce (20 pièces), segment 2 : pente 0.002/pièce (20 pièces)
+    rows = [_mk(i + 1, f"P{i:02d}", 0.001 * i, i) for i in range(20)]
+    rows += [_mk(i + 21, f"Q{i:02d}", -0.100 + 0.002 * i, i + 20) for i in range(20)]
+    d = fr.drift(fr.load_rows(rows), "CORRECTION_X", 10)
+    assert d["n_parts"] == 40
+    assert len(d["segments"]) == 2
+    assert d["segments"][0]["slope_per_part"] == pytest.approx(0.001, rel=1e-6)
+    assert d["segments"][1]["slope_per_part"] == pytest.approx(0.002, rel=1e-6)
+    cur = d["current"]
+    assert cur["segment_id"] == 1
+    assert cur["slope_per_part"] == pytest.approx(0.002, rel=1e-6)
+    # pente positive, dernière valeur sous l'UCL -> extrapolation finie et positive
+    assert cur["parts_to_limit"] is not None and cur["parts_to_limit"] > 0
+
+
+def test_drift_no_extrapolation_when_flat():
+    rows = [_mk(i + 1, f"P{i:02d}", 0.005, i) for i in range(15)]  # série plate
+    d = fr.drift(fr.load_rows(rows), "CORRECTION_X", 10)
+    assert d["current"]["parts_to_limit"] is None
+
+
+@real_data
+def test_drift_real_correction_x_chapter10():
+    d = fr.drift(fr.load_csv(CSV), "CORRECTION_X", 10)
+    assert d["n_parts"] >= 50
+    assert d["sigma"] > 0
+    assert d["lcl"] < d["mean"] < d["ucl"]
+    for seg in d["segments"]:
+        assert seg["n"] >= 1
