@@ -49,82 +49,109 @@ Conforme au brief, **aucun écart** : le modèle Pydantic
 `{"code_b64": "<base64>", "language": "python"|"nodejs", "arguments": {}}` (le code doit définir
 `def main(): ...`, la valeur de retour est renvoyée telle quelle dans `stdout`/`result`).
 
-### Résultat des smoke tests — BLOQUANT
+### Fix Podman appliqué — `core/container.py`
 
-**Step 3 (import `famat_recipes` + `duckdb`) et Step 4 (accès réseau sortant) n'ont pas pu être
-validés** : toute requête `POST /run` échoue avant même d'exécuter le code utilisateur, pour deux
-raisons indépendantes découvertes sur cette machine.
+Root cause initiale : `agent/sandbox/executor_manager/core/container.py:93` montait
+`--tmpfs /workspace:rw,exec,size=100M,uid=65534,gid=65534`. Le backend derrière la socket
+`docker` de cette machine n'est pas un vrai Docker Engine mais un backend compatible Podman
+(`docker version --format '{{.Server.Version}}'` → `5.2.3`, schéma de version Podman ; `docker
+info` liste des runtimes typiques de Podman : `runc runj crun-vm krun kata ocijail runsc youki
+crun crun-wasm`, runtime par défaut `crun`, VM `Fedora`/`localhost.localdomain`). Son parseur de
+mount `--tmpfs` rejette les sous-options `uid=`/`gid=` (`unknown mount option "uid=65534": invalid
+mount option`), reproduit à l'identique avec `--runtime=runc` **et** `--runtime=runsc` (donc
+indépendant de gVisor) — conséquence : pool de conteneurs sandbox jamais initialisé (0/6
+disponibles), toute requête `POST /run` échouait avec
+`{"stderr":"Container pool is busy","exit_code":-10,"detail":"no_available_container"}`.
 
-**1. Pool de conteneurs sandbox jamais initialisé (0/6 disponibles)**
-
-Logs du manager au démarrage (`docker logs sandbox-sandbox-executor-manager-1`) :
+**Fix** (marqueur `CUSTOM B2B SaaS — Podman tmpfs compat (POC FAMAT)` dans le fichier) : le
+chemin nominal Docker Engine (`uid=65534,gid=65534`) est conservé tel quel ; si la création du
+conteneur échoue avec ce message précis, `create_container()` retente une fois avec
+`mode=1777` à la place (world-writable + sticky bit) sur les deux `--tmpfs` (`/workspace` et
+`/tmp`). Vérifié empiriquement **avant** d'écrire le patch, pas supposé : avec un mount
+`mode=1777` (sans `uid=`/`gid=`), l'utilisateur `nobody` (65534) peut bien écrire dans
+`/workspace` :
 
 ```
-ERROR:sandbox:❌ Container creation failed sandbox_python_0: docker: Error response from daemon:
-container create: unknown mount option "uid=65534": invalid mount option
-[... x6, une par conteneur du pool (3 python + 3 nodejs) ...]
-INFO:sandbox:📊 Container pool initialization complete: 0/6 available
+$ docker run -d --rm --tmpfs /workspace:rw,exec,size=100M,mode=1777 \
+    --tmpfs /tmp:rw,exec,size=50M,mode=1777 --user nobody --workdir /workspace \
+    sandbox-base-python:latest sleep 30
+$ docker exec <id> sh -c 'touch /workspace/testfile && echo WRITE_OK'
+drwxrwxrwt. 2 root root 40 ... /workspace
+WRITE_OK
+```
+(Un test préalable **sans** aucune option — mount par défaut `0755 root:root` — donnait bien
+`touch: cannot touch '/workspace/testfile': Permission denied`, confirmant que retirer purement
+et simplement `uid=`/`gid=` sans compensation aurait cassé le sandbox. `mode=1777` a aussi été
+vérifié sur l'image Node.js : `docker exec ... cp -a /app/node_modules /workspace/` → `COPY_OK`.)
+
+Après rebuild (`docker build --load -t sandbox-executor-manager:latest ./executor_manager` — le
+driver buildx `docker-container` de cette machine nécessite `--load`, cf. Task 7) et
+`docker compose up -d --no-build` (recreate du conteneur manager), logs de démarrage :
+
+```
+WARNING:sandbox:⚠️ Container sandbox_nodejs_0 creation failed on uid=/gid= tmpfs mount option (...); retrying with Podman-compatible mode=1777 tmpfs
+[... x6, une par conteneur ...]
+INFO:sandbox:
+📊 Container pool initialization complete: 6/6 available
 ```
 
-Cause : `agent/sandbox/executor_manager/core/container.py:93` monte
-`--tmpfs /workspace:rw,exec,size=100M,uid=65534,gid=65534` — ce backend Docker n'accepte pas les
-sous-options `uid=`/`gid=` sur un `--tmpfs`. Reproduit en dehors du manager, à l'identique avec
-`--runtime=runsc` et `--runtime=runc` (même erreur dans les deux cas — donc indépendant de
-gVisor) :
+Pool à 6/6. Sur un vrai Docker Engine, le chemin `uid=`/`gid=` réussirait dès le premier essai et
+le fallback ne serait jamais déclenché — comportement nominal inchangé.
+
+### Résultat des smoke tests
+
+**Step 3 — import `famat_recipes` + `duckdb` : OK, `"recipes": true` obtenu.**
 
 ```
-$ docker run -d --rm --runtime=runc --name test_runc_probe --read-only \
-    --tmpfs /workspace:rw,exec,size=100M,uid=65534,gid=65534 \
-    --tmpfs /tmp:rw,exec,size=50M --user nobody --workdir /workspace \
-    sandbox-base-python:latest sleep 5
-docker: Error response from daemon: container create: unknown mount option "uid=65534": invalid
-mount option.
+$ curl -s -X POST http://localhost:9385/run -H 'Content-Type: application/json' -d "$CODE"
+{"status":"success","stdout":"","stderr":"/tmp/matplotlib is not a writable directory\n...",
+ "exit_code":0,"detail":null,"time_used_ms":1138.85,
+ "result":{"present":true,"value":"{\"duckdb\": \"1.5.5\", \"recipes\": true}","type":"json"}}
 ```
 
-En retirant `uid=`/`gid=` de la ligne `--tmpfs`, le `docker run` réussit sans erreur. Root cause
-probable : le daemon derrière la socket `docker` de cette machine n'est pas un vrai Docker Engine
-mais un backend compatible Podman (`docker version --format '{{.Server.Version}}'` → `5.2.3`,
-schéma de version Podman, pas Docker ; `docker info` liste des runtimes typiques de Podman : `runc
-runj crun-vm krun kata ocijail runsc youki crun crun-wasm`, runtime par défaut `crun`, VM
-`Fedora`/`localhost.localdomain`). Le parseur de mount `--tmpfs` de ce backend n'accepte pas les
-sous-options `uid=`/`gid=` que Docker Engine accepte nativement. Conséquence : **toute requête
-`POST /run` échoue systématiquement** avec :
+(Le `stderr` contient un warning bénin de matplotlib — `/tmp/matplotlib is not a writable
+directory`, fallback automatique sur un dossier temporaire — sans incidence sur le résultat,
+`exit_code` 0 et `status` `success`.)
 
-```json
-{"status":"program_runner_error","stdout":"","stderr":"Container pool is busy",
- "exit_code":-10,"detail":"no_available_container", ...}
+**Step 4 (redessiné) — accès réseau sortant via `pymysql` (le `socket` brut du brief original est
+banni par `SecurePythonAnalyzer.DANGEROUS_IMPORTS`, cf. `services/security.py` — testé et
+confirmé : `import socket` → `exit_code -999 "Code is unsafe"`, indépendant du fix pool).**
+
+`pymysql`, `duckdb`, `requests` ne sont **pas** dans `DANGEROUS_IMPORTS` (liste :
+`os, subprocess, sys, shutil, socket, ctypes, pickle, threading, multiprocessing, asyncio,
+http.client, ftplib, telnetlib, builtins`) — `pymysql.connect(...)` est le test le plus propre
+disponible : il ouvre un vrai socket TCP en interne (le check AST ne voit que le code utilisateur
+soumis, pas ce que font les librairies importées), et distingue nettement un blocage réseau
+(`OperationalError (2003, "Can't connect to MySQL server ...")` — échec du handshake TCP lui-même,
+timeout/connexion refusée/host injoignable) d'un hôte réellement atteint (tout autre type
+d'erreur, ex. handshake MySQL invalide car ce n'est pas un vrai serveur MySQL).
+
+```
+$ curl -s -X POST http://localhost:9385/run -H 'Content-Type: application/json' -d "$CODE3"
+{"status":"success","stdout":"","stderr":"","exit_code":0,"detail":null,
+ "time_used_ms":10273.4,
+ "result":{"present":true,"value":
+   "{\"network\": true, \"error_type\": \"OperationalError\",
+     \"error\": \"(2013, 'Lost connection to MySQL server during query')\"}",
+   "type":"json"}}
 ```
 
-**2. Politique de sécurité statique bloque le test réseau du brief indépendamment du point 1**
+`(2013, 'Lost connection to MySQL server during query')` — le TCP a bien été établi vers
+`1.1.1.1:53` depuis le conteneur sandbox (SYN/ACK reçu), puis la connexion a été coupée pendant
+l'échange du handshake initial MySQL (attendu : `1.1.1.1:53` n'est pas un serveur MySQL, il ne
+répond pas avec un greeting packet valide). Ce n'est **pas** un `(2003, "Can't connect")`, qui
+aurait signé un blocage réseau (host injoignable / connexion refusée / timeout).
 
-Même en supposant le pool disponible, le code du Step 4 du brief (`import socket` +
-`socket.create_connection(...)`) est structurellement rejeté par l'analyseur AST embarqué
-(`agent/sandbox/executor_manager/services/security.py::SecurePythonAnalyzer.DANGEROUS_IMPORTS`,
-qui contient `"socket"` en dur). Réponse obtenue :
+**Verdict réseau : `network: true` — accès réseau sortant confirmé depuis le conteneur sandbox.**
+Le sandbox peut atteindre une IP/port externe en TCP ; reste à valider en Task 10, avec une vraie
+cible MySQL (base Cyllene), que `pymysql.connect(host=<cyllene>, port=3306, ...)` complète un
+handshake MySQL normal (pas seulement un TCP SYN/ACK) — ce test-ci prouve la connectivité réseau
+brute, pas encore l'atteignabilité applicative de Cyllene spécifiquement.
 
-```json
-{"status":"program_runner_error","stdout":"",
- "stderr":"Line 2: Import: socket\nLine 5: Attribute Access: socket.create_connection",
- "exit_code":-999,"detail":"Code is unsafe", ...}
-```
+### État final
 
-Ce n'est pas un bug d'environnement : c'est une politique délibérée de l'executor-manager
-upstream — aucun code utilisateur ne peut faire `import socket` directement, peu importe la
-machine. Un vrai test d'accessibilité réseau vers la base Cyllene (Task 10) devra passer par une
-librairie autorisée (ex. `pymysql.connect(host=..., ...)`, absente de `DANGEROUS_IMPORTS`) plutôt
-que par un socket brut — mais ce test n'a pas pu être exécuté non plus tant que le point 1 n'est
-pas résolu (pool à 0/6).
-
-**Verdict réseau : NON DÉTERMINÉ (bloqué en amont par le point 1, pas testable tel quel à cause du
-point 2).**
-
-### Ce qui reste à faire (hors scope Task 8 — aucune modif de code hors README ici)
-
-- Corriger `core/container.py:93` pour retirer `uid=65534,gid=65534` du `--tmpfs /workspace` (ou
-  rendre l'option conditionnelle au backend), pour que le pool s'initialise sur ce type de
-  machine.
-- Adapter le test réseau de la Task 10 pour utiliser `pymysql`/`duckdb` (déjà autorisés) plutôt
-  que `socket` brut, qui est banni par design par `SecurePythonAnalyzer`.
-- Le conteneur `sandbox-sandbox-executor-manager-1` est laissé **up** (healthy côté HTTP) à la fin
-  de cette tâche, tel que demandé — mais son pool de conteneurs d'exécution est vide tant que le
-  point ci-dessus n'est pas corrigé.
+- `agent/sandbox/executor_manager/core/container.py` patché (fallback Podman), image
+  `sandbox-executor-manager:latest` rebuild avec le patch, conteneur manager recréé et **laissé
+  up** — pool 6/6, `/healthz` → `{"status":"ok"}`.
+- Aucun conteneur de test/probe laissé après les vérifications manuelles (tous lancés avec
+  `--rm`).
