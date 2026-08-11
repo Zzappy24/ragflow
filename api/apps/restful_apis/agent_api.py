@@ -1338,8 +1338,10 @@ async def agent_chat_completion(tenant_id, agent_id=None):
         await thread_pool_exec(API4ConversationService.update_by_id, session_id, workflow_conv)
 
         try:
-            from agent.canvas import Canvas
-
+            # NOTE: no local `from agent.canvas import Canvas` here — a local
+            # import would make `Canvas` function-scoped and raise
+            # UnboundLocalError on the no-session path below (module-level
+            # import at the top of this file is the one that counts).
             workflow_dsl = workflow_conv.get("dsl", {})
             if isinstance(workflow_dsl, str):
                 dsl_str = workflow_dsl
