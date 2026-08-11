@@ -1,5 +1,6 @@
 import os
 import pytest
+import tempfile
 
 import sys
 sys.path.insert(0, os.path.join(os.path.dirname(__file__), ".."))
@@ -180,3 +181,15 @@ def test_temperature_restarts_real():
     assert t["n_serials_with_restart"] == 94          # invariant profilé : 94/94
     assert 400 <= t["n_restarts"] <= 600              # ~5.4 × 94
     assert 14 <= t["mean_temp_overall"] <= 26
+
+
+def test_spc_chart_writes_svg_and_png():
+    rows = [_mk(i + 1, f"P{i:02d}", 0.001 * i, i) for i in range(25)]
+    d = fr.drift(fr.load_rows(rows), "CORRECTION_X", 10)
+    with tempfile.TemporaryDirectory() as td:
+        svg = fr.spc_chart(d, out_dir=td, fmt="svg")
+        png = fr.spc_chart(d, out_dir=td, fmt="png")
+        assert svg.endswith("spc_CORRECTION_X_ch10.svg") and os.path.getsize(svg) > 1000
+        assert png.endswith("spc_CORRECTION_X_ch10.png") and os.path.getsize(png) > 1000
+        with open(svg, encoding="utf-8", errors="ignore") as f:
+            assert "<svg" in f.read(500)

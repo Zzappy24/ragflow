@@ -3,9 +3,14 @@
 Module autonome : seules dépendances duckdb, matplotlib, pymysql.
 Cuit dans l'image sandbox custom ET utilisé hors ligne pour les tests.
 """
+import os
 import statistics
 
 import duckdb
+import matplotlib
+
+matplotlib.use("Agg")
+import matplotlib.pyplot as plt
 
 _EVENTS_SCHEMA = "seq BIGINT, serial VARCHAR, chapter INTEGER, cle VARCHAR, value_num DOUBLE, ts TIMESTAMP"
 
@@ -248,3 +253,50 @@ def temperature_restarts(con) -> dict:
     return {"n_restarts": int(row[0]), "n_serials_with_restart": int(row[1]),
             "mean_temp_at_restart": row[2], "mean_temp_overall": row[3],
             "corr_restarts_temp": row[4], "per_serial": per_serial}
+
+
+def spc_chart(drift_result: dict, out_dir: str = "artifacts", fmt: str = "svg") -> str:
+    """Carte de contrôle SPC depuis un résultat de drift()."""
+    d = drift_result
+    s = d["series"]
+    os.makedirs(out_dir, exist_ok=True)
+    path = os.path.join(out_dir, f"spc_{d['cle']}_ch{d['chapter']}.{fmt}")
+
+    xs = [p["part_index"] for p in s]
+    ys = [p["value"] for p in s]
+    fig, ax = plt.subplots(figsize=(11, 5.5), dpi=200)
+    ax.axhspan(d["lcl"], d["ucl"], color="#2b8a3e", alpha=0.07)
+    ax.axhline(d["mean"], color="#2b8a3e", lw=1, label="moyenne")
+    ax.axhline(d["ucl"], color="#e03131", lw=1, ls="--", label=f"±{3:.0f}σ")
+    ax.axhline(d["lcl"], color="#e03131", lw=1, ls="--")
+    inside = [(x, y) for x, y in zip(xs, ys) if d["lcl"] <= y <= d["ucl"]]
+    outside = [(x, y) for x, y in zip(xs, ys) if not (d["lcl"] <= y <= d["ucl"])]
+    if inside:
+        ax.plot(*zip(*inside), "o-", ms=3.5, lw=0.8, color="#1971c2")
+    if outside:
+        ax.plot(*zip(*outside), "o", ms=5, color="#e03131", label="hors limites")
+
+    seg_starts = {}
+    for p in s:
+        seg_starts.setdefault(p["segment_id"], p["part_index"])
+    for seg in d["segments"]:
+        pts = [(p["part_index"], p["value"]) for p in s if p["segment_id"] == seg["segment_id"]]
+        if len(pts) >= 2 and seg["slope_per_part"] is not None:
+            x0, x1 = pts[0][0], pts[-1][0]
+            y0 = seg["intercept"] + seg["slope_per_part"] * x0
+            y1 = seg["intercept"] + seg["slope_per_part"] * x1
+            ax.plot([x0, x1], [y0, y1], color="#f08c00", lw=1.6)
+            ax.annotate(f"{seg['slope_per_part'] * 1000:+.2f} µm/pièce",
+                        xy=(x1, y1), fontsize=8, color="#f08c00",
+                        xytext=(4, 4), textcoords="offset points")
+        if seg_starts[seg["segment_id"]] > 1:
+            ax.axvline(seg_starts[seg["segment_id"]] - 0.5, color="#868e96", lw=0.8, ls=":")
+
+    ax.set_title(f"Carte de contrôle — {d['cle']} (chapitre {d['chapter']}), {d['n_parts']} pièces")
+    ax.set_xlabel("pièce (ordre chronologique)")
+    ax.set_ylabel("valeur (mm)")
+    ax.legend(loc="best", fontsize=8)
+    fig.tight_layout()
+    fig.savefig(path, format=fmt)
+    plt.close(fig)
+    return path
