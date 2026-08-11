@@ -1,0 +1,183 @@
+{
+  "avatar": null,
+  "canvas_category": "agent_canvas",
+  "create_date": "2026-08-11T15:43:24",
+  "create_time": 1786455804904,
+  "description": "Agent qualite process FAMAT : drift, backtest alertes, correlation temperature/redemarrages via code_exec + famat_recipes.",
+  "dsl": {
+    "components": {
+      "Agent:FamatDriftExpert": {
+        "downstream": [
+          "Message:FamatAnswer"
+        ],
+        "obj": {
+          "component_name": "Agent",
+          "params": {
+            "cite": false,
+            "delay_after_error": 1,
+            "description": "",
+            "exception_default_value": "",
+            "exception_goto": [],
+            "exception_method": "",
+            "frequencyPenaltyEnabled": false,
+            "frequency_penalty": 0.7,
+            "llm_id": "qwen-code@OpenAI-API-Compatible",
+            "maxTokensEnabled": false,
+            "max_retries": 3,
+            "max_rounds": 5,
+            "max_tokens": 4096,
+            "mcp": [],
+            "message_history_window_size": 12,
+            "outputs": {
+              "content": {
+                "type": "string",
+                "value": ""
+              }
+            },
+            "parameter": "Precise",
+            "presencePenaltyEnabled": false,
+            "presence_penalty": 0.4,
+            "prompts": [
+              {
+                "content": "{sys.query}",
+                "role": "user"
+              }
+            ],
+            "showStructuredOutput": false,
+            "sys_prompt": "Tu es l'assistant qualité process de FAMAT (usinage aéronautique). Tu analyses le flux\nde mesures machine (palpage, corrections outil, températures) pour détecter les dérives\nprocess et expliquer les non-conformités. Tu réponds TOUJOURS en français, en langage\nqualiticien (SPC, cartes de contrôle, limites ±3σ), précis et chiffré.\n\n## Données\nBase SQL alimentée par webhook, table `<TABLE>` : une ligne par événement,\nJSON {\"Serial\": pièce, \"Chapter\": étape d'usinage 0-57, \"cle\": nom de mesure, \"value\": valeur}.\nClés importantes : CORRECTION_X/Z (correction outil par chapitre — signal de dérive),\nCOTR_X/Z (cotes mesurées), JAUGE_X/Z (jauges outil), TEMP_PIECE/TEMP_ETALON (températures),\nRAYON_OUT. ~94 pièces, ~90 000 événements, chapitres 0→57.\nUn \"redémarrage\" = le chapitre redescend dans la séquence d'une pièce (perte de temps,\ncorrélée à la température atelier).\n\n## Recettes canoniques — utilise le tool code_exec avec EXACTEMENT ces codes\nLe module `famat_recipes` est préinstallé dans le sandbox. Source de données (POC fichier —\nrévision Task 10 ; en prod, remplacer par `fr.load_db(...)` vers la base Cyllene) :\nDATA_URL = \"http://host.containers.internal:9000/famat-poc/Payload-20260526.csv\"\n\n### Recette 1 — Dérive d'une clé à un chapitre (défaut : CORRECTION_X, chapitre 10)\nimport famat_recipes as fr, json\ndef main():\n    con = fr.load_url(\"http://host.containers.internal:9000/famat-poc/Payload-20260526.csv\")\n    d = fr.drift(con, \"<CLE>\", <CHAPITRE>)\n    fr.spc_chart(d, out_dir=\"artifacts\")\n    d.pop(\"series\")  # ne pas renvoyer les points bruts\n    return json.dumps(d, default=str)\n\n### Recette 2 — Backtest des alertes (la preuve d'anticipation)\nimport famat_recipes as fr, json\ndef main():\n    con = fr.load_url(\"http://host.containers.internal:9000/famat-poc/Payload-20260526.csv\")\n    b = fr.backtest(con, \"<CLE>\", <CHAPITRE>)\n    b[\"alerts\"] = b[\"alerts\"][:20]\n    return json.dumps(b, default=str)\n\n### Recette 3 — Température ↔ redémarrages\nimport famat_recipes as fr, json\ndef main():\n    con = fr.load_url(\"http://host.containers.internal:9000/famat-poc/Payload-20260526.csv\")\n    t = fr.temperature_restarts(con)\n    t[\"per_serial\"] = sorted(t[\"per_serial\"], key=lambda x: -x[\"restarts\"])[:15]\n    return json.dumps(t, default=str)\n\n## Règles\n- Pour les 3 analyses ci-dessus : recopie la recette TELLE QUELLE, en remplaçant\n  uniquement <CLE> et <CHAPITRE> selon la demande. N'invente JAMAIS une autre méthode.\n- Pour toute autre question sur les données : utilise le tool code_exec avec ce squelette,\n  en n'écrivant que du SQL DuckDB AGRÉGÉ (count, avg, min/max, group by — jamais de\n  SELECT * massif) sur la table events(seq, serial, chapter, cle, value_num, ts) :\n  import famat_recipes as fr, json\n  def main():\n      con = fr.load_url(\"http://host.containers.internal:9000/famat-poc/Payload-20260526.csv\")\n      rows = con.execute(\"<REQUETE SQL AGREGEE>\").fetchall()\n      return json.dumps(rows, default=str)\n- Interprète toujours les résultats : pente en µm/pièce, pièces restantes avant limite,\n  vrais/faux positifs du backtest, écart de température aux redémarrages.\n- Si une carte est générée, mentionne-la dans ta réponse.\n- Si la demande est ambiguë (clé ou chapitre manquant), propose CORRECTION_X chapitre 10\n  et dis pourquoi (signal de dérive le plus dense : 99 % de valeurs non nulles).\n",
+            "temperature": 0.15,
+            "temperatureEnabled": true,
+            "tools": [
+              {
+                "component_name": "CodeExec",
+                "id": "CodeExec:FamatSandbox",
+                "name": "CodeExec",
+                "params": {}
+              }
+            ],
+            "topPEnabled": false,
+            "top_p": 0.3,
+            "user_prompt": "",
+            "visual_files_var": ""
+          }
+        },
+        "upstream": [
+          "begin"
+        ]
+      },
+      "Message:FamatAnswer": {
+        "downstream": [],
+        "obj": {
+          "component_name": "Message",
+          "params": {
+            "content": [
+              "{Agent:FamatDriftExpert@content}"
+            ]
+          }
+        },
+        "upstream": [
+          "Agent:FamatDriftExpert"
+        ]
+      },
+      "begin": {
+        "downstream": [
+          "Agent:FamatDriftExpert"
+        ],
+        "obj": {
+          "component_name": "Begin",
+          "params": {
+            "mode": "conversational",
+            "prologue": "Bonjour, je suis l'assistant qualité process FAMAT. Je peux analyser les dérives de correction outil, faire un backtest des alertes, ou corréler température et redémarrages machine. Que voulez-vous analyser ?"
+          }
+        },
+        "upstream": []
+      }
+    },
+    "globals": {
+      "sys.conversation_turns": 0,
+      "sys.date": "",
+      "sys.files": [],
+      "sys.history": [],
+      "sys.query": "",
+      "sys.user_id": ""
+    },
+    "graph": {
+      "edges": [
+        {
+          "data": {
+            "isHovered": false
+          },
+          "id": "xy-edge__beginstart-Agent:FamatDriftExpertend",
+          "source": "begin",
+          "sourceHandle": "start",
+          "target": "Agent:FamatDriftExpert",
+          "targetHandle": "end"
+        },
+        {
+          "data": {
+            "isHovered": false
+          },
+          "id": "xy-edge__Agent:FamatDriftExpertstart-Message:FamatAnswerend",
+          "source": "Agent:FamatDriftExpert",
+          "sourceHandle": "start",
+          "target": "Message:FamatAnswer",
+          "targetHandle": "end"
+        }
+      ],
+      "nodes": [
+        {
+          "data": {
+            "label": "Begin",
+            "name": "begin"
+          },
+          "id": "begin",
+          "position": {
+            "x": 0,
+            "y": 200
+          },
+          "type": "beginNode"
+        },
+        {
+          "data": {
+            "label": "Agent",
+            "name": "FAMAT — Dérive process"
+          },
+          "id": "Agent:FamatDriftExpert",
+          "position": {
+            "x": 300,
+            "y": 200
+          },
+          "type": "agentNode"
+        },
+        {
+          "data": {
+            "label": "Message",
+            "name": "Réponse"
+          },
+          "id": "Message:FamatAnswer",
+          "position": {
+            "x": 600,
+            "y": 200
+          },
+          "type": "messageNode"
+        }
+      ]
+    },
+    "history": [],
+    "memory": [],
+    "messages": [],
+    "path": [],
+    "retrieval": [],
+    "task_id": "",
+    "variables": []
+  },
+  "id": "a01649f6958a11f192717178b890f94c",
+  "last_publish_time": null,
+  "nickname": "[WS] famat-poc-task11",
+  "permission": "me",
+  "tenant_avatar": null,
+  "title": "FAMAT — Derive process",
+  "update_date": "2026-08-11T15:43:24",
+  "update_time": 1786455804904,
+  "user_id": "3f0fdba4958a11f187bf29b64cd89c66"
+}
