@@ -686,6 +686,22 @@ export default function OrgDetailPage() {
     return `${Math.round(b / 1024)} Ko`;
   };
   const storage = stats?.storage;
+  interface StorageBreakdown {
+    workspaces: { ws_id: string; name: string; minio_bytes: number; doc_count: number; infinity_bytes: number | null }[];
+    users: { user_id: string; email?: string; nickname?: string; minio_bytes: number; doc_count: number }[];
+    groups: { group_id: string; name: string; workspace: string; dataset_count: number; minio_bytes: number; infinity_bytes: number | null }[];
+    infinity_available: boolean;
+  }
+  const [storageDetail, setStorageDetail] = useState<StorageBreakdown | null>(null);
+  const [storageLoading, setStorageLoading] = useState(false);
+  const loadStorageDetail = () => {
+    if (!orgId || storageLoading) return;
+    setStorageLoading(true);
+    api.get(`/orgs/${orgId}/storage`)
+      .then((r) => setStorageDetail(r.data))
+      .catch(() => message.error('Ventilation stockage indisponible'))
+      .finally(() => setStorageLoading(false));
+  };
 
   return (
     <div>
@@ -774,7 +790,10 @@ export default function OrgDetailPage() {
         type="line"
         size="large"
         activeKey={searchParams.get('tab') ?? 'workspaces'}
-        onChange={(k) => setSearchParams((prev) => { prev.set('tab', k); return prev; }, { replace: true })}
+        onChange={(k) => {
+          if (k === 'storage' && !storageDetail) loadStorageDetail();
+          setSearchParams((prev) => { prev.set('tab', k); return prev; }, { replace: true });
+        }}
         items={[
           {
             key: 'workspaces',
@@ -785,6 +804,61 @@ export default function OrgDetailPage() {
             key: 'members',
             label: <span><TeamOutlined /> Members</span>,
             children: <MembersPage orgId={orgId} onChange={refreshStats} />,
+          },
+          {
+            key: 'storage',
+            label: <span><HddOutlined /> Stockage</span>,
+            children: (
+              <div className="space-y-4">
+                {storageDetail && !storageDetail.infinity_available && (
+                  <Text type="secondary">Mesure de l'index Infinity indisponible — volumes fichiers uniquement.</Text>
+                )}
+                <Card title="Par workspace" size="small" loading={storageLoading}>
+                  <Table
+                    size="small"
+                    rowKey="ws_id"
+                    pagination={false}
+                    dataSource={storageDetail?.workspaces ?? []}
+                    columns={[
+                      { title: 'Workspace', dataIndex: 'name' },
+                      { title: 'Documents', dataIndex: 'doc_count', align: 'right' as const },
+                      { title: 'Fichiers', dataIndex: 'minio_bytes', align: 'right' as const, render: (v: number) => fmtBytes(v),
+                        sorter: (a: { minio_bytes: number }, b: { minio_bytes: number }) => a.minio_bytes - b.minio_bytes, defaultSortOrder: 'descend' as const },
+                      { title: 'Index Infinity', dataIndex: 'infinity_bytes', align: 'right' as const, render: (v: number | null) => fmtBytes(v) },
+                    ]}
+                  />
+                </Card>
+                <Card title="Par groupe" size="small" loading={storageLoading}>
+                  <Table
+                    size="small"
+                    rowKey="group_id"
+                    pagination={false}
+                    dataSource={storageDetail?.groups ?? []}
+                    locale={{ emptyText: 'Aucun groupe' }}
+                    columns={[
+                      { title: 'Groupe', dataIndex: 'name' },
+                      { title: 'Workspace', dataIndex: 'workspace' },
+                      { title: 'Datasets', dataIndex: 'dataset_count', align: 'right' as const },
+                      { title: 'Fichiers', dataIndex: 'minio_bytes', align: 'right' as const, render: (v: number) => fmtBytes(v) },
+                      { title: 'Index Infinity', dataIndex: 'infinity_bytes', align: 'right' as const, render: (v: number | null) => fmtBytes(v) },
+                    ]}
+                  />
+                </Card>
+                <Card title="Par utilisateur (top 20)" size="small" loading={storageLoading}>
+                  <Table
+                    size="small"
+                    rowKey="user_id"
+                    pagination={false}
+                    dataSource={storageDetail?.users ?? []}
+                    columns={[
+                      { title: 'Utilisateur', render: (_: unknown, u: { email?: string; nickname?: string; user_id: string }) => u.email ?? u.nickname ?? u.user_id },
+                      { title: 'Documents', dataIndex: 'doc_count', align: 'right' as const },
+                      { title: 'Fichiers', dataIndex: 'minio_bytes', align: 'right' as const, render: (v: number) => fmtBytes(v) },
+                    ]}
+                  />
+                </Card>
+              </div>
+            ),
           },
           {
             key: 'quotas',

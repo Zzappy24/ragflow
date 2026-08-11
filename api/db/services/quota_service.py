@@ -35,6 +35,38 @@ def check_quota(org_id: str, resource_type: str) -> tuple[bool, str]:
     return True, ""
 
 
+def check_storage_quota(kb_tenant_id: str, incoming_bytes: int) -> tuple[bool, str]:
+    """CIA-9 phase 2 — enforcement du plafond de stockage org à l'upload.
+
+    Compare SUM(document.size) de l'org (fichiers MinIO, temps réel) +
+    la taille des fichiers entrants au ``max_storage_gb`` de l'org.
+
+    L'index Infinity est volontairement EXCLU de l'enforcement : sa mesure
+    est cachée/asynchrone et sa taille n'est pas contrôlable par
+    l'utilisateur — il reste visible dans le reporting du panel, mais ne
+    bloque pas un upload. Tenant personnel (hors workspace) : pas de quota.
+    """
+    from api.db.services.workspace_service import WorkspaceService
+    from api.db.services.org_service import OrgService
+
+    ws = WorkspaceService.get_by_tenant_id(kb_tenant_id)
+    if not ws:
+        return True, ""  # tenant personnel — pas de quota org
+    e, org = OrgService.get_by_id(ws.org_id)
+    if not e or not org or not org.max_storage_gb:
+        return True, ""
+    max_bytes = int(org.max_storage_gb) * 1024 ** 3
+    current = OrgService.get_minio_storage_bytes(org.id)
+    if current + int(incoming_bytes or 0) > max_bytes:
+        used_gb = current / 1024 ** 3
+        return False, (
+            f"Storage quota exceeded: {used_gb:.2f} GB used of "
+            f"{org.max_storage_gb} GB. Contact your administrator to "
+            f"raise the organisation storage limit."
+        )
+    return True, ""
+
+
 # ---------------------------------------------------------------------------
 # Token quota
 # ---------------------------------------------------------------------------

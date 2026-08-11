@@ -298,3 +298,130 @@ def org_stats(org_id: str, user_id: str = Depends(get_current_user_id)):
             "max_bytes": (org.max_storage_gb or 0) * 1024**3,
         },
     }
+
+
+@router.get("/{org_id}/storage")
+def org_storage(org_id: str, user_id: str = Depends(get_current_user_id)):
+    """CIA-9 phase 2 — ventilation du stockage par workspace, groupe et
+    utilisateur. Fichiers = SUM(document.size) temps réel ; index Infinity =
+    mesure réelle via l'endpoint interne (None si indisponible)."""
+    require_org_admin(org_id, user_id)
+    from peewee import fn
+    from api.db.db_models import DB, Workspace, Knowledgebase, Document, User, WsGroup, WsGroupDataset
+    from management.server.services.storage_usage import (
+        get_infinity_usage_by_kb,
+        get_infinity_usage_by_tenant,
+    )
+
+    inf_by_tenant = get_infinity_usage_by_tenant()  # None = indisponible
+    inf_by_kb = get_infinity_usage_by_kb()
+
+    with DB.connection_context():
+        ws_list = list(
+            Workspace.select().where(
+                (Workspace.org_id == org_id) & (Workspace.status == "1")
+            )
+        )
+        tenant_ids = [ws.tenant_id for ws in ws_list]
+        ws_ids = [ws.id for ws in ws_list]
+
+        # -- fichiers par tenant (workspace) et par KB, en 2 requêtes groupées
+        minio_by_tenant: dict = {}
+        minio_by_kb: dict = {}
+        if tenant_ids:
+            for row in (
+                Document.select(
+                    Knowledgebase.tenant_id.alias("tid"),
+                    Document.kb_id.alias("kb"),
+                    fn.COALESCE(fn.SUM(Document.size), 0).alias("b"),
+                    fn.COUNT(Document.id).alias("n"),
+                )
+                .join(Knowledgebase, on=(Document.kb_id == Knowledgebase.id))
+                .where(Knowledgebase.tenant_id.in_(tenant_ids))
+                .group_by(Knowledgebase.tenant_id, Document.kb_id)
+                .dicts()
+            ):
+                t = minio_by_tenant.setdefault(row["tid"], {"bytes": 0, "docs": 0})
+                t["bytes"] += int(row["b"]); t["docs"] += int(row["n"])
+                minio_by_kb[row["kb"]] = {"bytes": int(row["b"]), "docs": int(row["n"])}
+
+        workspaces = [
+            {
+                "ws_id": ws.id,
+                "name": ws.name,
+                "minio_bytes": minio_by_tenant.get(ws.tenant_id, {}).get("bytes", 0),
+                "doc_count": minio_by_tenant.get(ws.tenant_id, {}).get("docs", 0),
+                "infinity_bytes": (
+                    inf_by_tenant.get(ws.tenant_id, {}).get("bytes", 0)
+                    if inf_by_tenant is not None else None
+                ),
+            }
+            for ws in ws_list
+        ]
+
+        # -- par utilisateur (top 20 par volume de fichiers)
+        users = []
+        if tenant_ids:
+            user_rows = list(
+                Document.select(
+                    Document.created_by.alias("uid"),
+                    fn.COALESCE(fn.SUM(Document.size), 0).alias("b"),
+                    fn.COUNT(Document.id).alias("n"),
+                )
+                .join(Knowledgebase, on=(Document.kb_id == Knowledgebase.id))
+                .where(Knowledgebase.tenant_id.in_(tenant_ids))
+                .group_by(Document.created_by)
+                .order_by(fn.SUM(Document.size).desc())
+                .limit(20)
+                .dicts()
+            )
+            uids = [r["uid"] for r in user_rows if r["uid"]]
+            emails = {
+                u.id: {"email": u.email, "nickname": u.nickname}
+                for u in User.select().where(User.id.in_(uids))
+            } if uids else {}
+            users = [
+                {
+                    "user_id": r["uid"],
+                    "email": emails.get(r["uid"], {}).get("email"),
+                    "nickname": emails.get(r["uid"], {}).get("nickname"),
+                    "minio_bytes": int(r["b"]),
+                    "doc_count": int(r["n"]),
+                }
+                for r in user_rows
+            ]
+
+        # -- par groupe (ws_group → ws_group_dataset → KB) : somme des KB liés
+        groups = []
+        if ws_ids:
+            group_list = list(
+                WsGroup.select().where(
+                    (WsGroup.workspace_id.in_(ws_ids)) & (WsGroup.status == "1")
+                )
+            )
+            gids = [g.id for g in group_list]
+            kb_links: dict = {}
+            if gids:
+                for link in WsGroupDataset.select().where(WsGroupDataset.group_id.in_(gids)):
+                    kb_links.setdefault(link.group_id, []).append(link.dataset_id)
+            ws_names = {ws.id: ws.name for ws in ws_list}
+            for g in group_list:
+                kbs = kb_links.get(g.id, [])
+                groups.append({
+                    "group_id": g.id,
+                    "name": g.name,
+                    "workspace": ws_names.get(g.workspace_id, g.workspace_id),
+                    "dataset_count": len(kbs),
+                    "minio_bytes": sum(minio_by_kb.get(k, {}).get("bytes", 0) for k in kbs),
+                    "infinity_bytes": (
+                        sum(inf_by_kb.get(k, {}).get("bytes", 0) for k in kbs)
+                        if inf_by_kb is not None else None
+                    ),
+                })
+
+    return {
+        "workspaces": workspaces,
+        "users": users,
+        "groups": groups,
+        "infinity_available": inf_by_tenant is not None,
+    }

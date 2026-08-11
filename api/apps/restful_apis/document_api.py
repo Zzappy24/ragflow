@@ -595,6 +595,24 @@ async def _upload_local_documents(kb, tenant_id):
             logging.error(msg)
             return get_error_data_result(message=msg, code=RetCode.ARGUMENT_ERROR)
 
+    # CIA-9 phase 2 — plafond de stockage org (max_storage_gb) à l'upload.
+    # Taille entrante = somme des fichiers du batch (seek/tell sur le spool,
+    # position restaurée pour ne pas perturber la sauvegarde en aval).
+    incoming_bytes = 0
+    for file_obj in file_objs:
+        try:
+            pos = file_obj.stream.tell()
+            file_obj.stream.seek(0, 2)
+            incoming_bytes += file_obj.stream.tell()
+            file_obj.stream.seek(pos)
+        except (OSError, AttributeError):
+            pass  # flux non seekable : on laisse passer, le quota rattrapera au prochain upload
+    from api.db.services.quota_service import check_storage_quota
+    allowed, quota_msg = await thread_pool_exec(check_storage_quota, kb.tenant_id, incoming_bytes)
+    if not allowed:
+        logging.warning(f"upload refused (storage quota): {quota_msg}")
+        return get_error_data_result(message=quota_msg, code=RetCode.PERMISSION_ERROR)
+
     # Parse optional parser_config overrides from form data
     parser_config_override = None
     raw_parser_config = form.get("parser_config")
