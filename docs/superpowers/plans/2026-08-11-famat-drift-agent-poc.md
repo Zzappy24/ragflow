@@ -998,7 +998,78 @@ git commit -m "docs(famat-poc): provider self_managed opérationnel, verdict art
 
 ---
 
-### Task 10: Chargement depuis la base Cyllene
+### Task 10: Source de données par URL (fichier servi par MinIO) — base Cyllene différée
+
+> **Révision 2026-08-11 (décision utilisateur)** : la base Cyllene n'est pas accessible depuis ce poste (ouvertures de flux nécessaires en prod). Le POC fonctionne sur fichier : le CSV est déposé dans le MinIO du stack dev (la donnée reste locale) et les recettes le chargent par HTTP depuis le sandbox via `load_url()`. `load_db()` (chemin prod, pymysql) reste dans le plan d'origine ci-dessous À TITRE DOCUMENTAIRE et n'est PAS implémenté tant que les flux ne sont pas ouverts — le code de cette task est `load_url()` uniquement.
+
+**Files:**
+- Modify: `poc/famat/famat_recipes.py` (ajout `load_url`)
+- Test: `poc/famat/tests/test_recipes.py`
+- Modify: `agent/sandbox/sandbox_base_image/python/famat_recipes.py` (recopie) + rebuild image
+
+**Interfaces (révisées):**
+- Produces: `load_url(url: str, timeout: int = 60) -> duckdb.DuckDBPyConnection` — télécharge le CSV webhook (via `requests`, déjà dans l'image sandbox et non banni par l'AST security) vers un fichier temporaire puis délègue à `load_csv()` ; même table `events`.
+- Produces: le CSV uploadé dans le MinIO du stack dev (bucket `famat-poc`), URL stable accessible DEPUIS le conteneur sandbox (à déterminer empiriquement : `host.containers.internal`, IP de gateway, ou IP LAN du host — tester via POST /run).
+
+**Steps (révisés):**
+
+- [ ] **Step 1: Test qui échoue**
+
+```python
+# ajouter à poc/famat/tests/test_recipes.py
+
+@real_data
+def test_load_url_matches_load_csv(tmp_path, monkeypatch):
+    # sert le CSV local par HTTP éphémère et vérifie l'équivalence avec load_csv
+    import threading, functools, http.server
+    handler = functools.partial(http.server.SimpleHTTPRequestHandler,
+                                directory=os.path.dirname(CSV))
+    srv = http.server.ThreadingHTTPServer(("127.0.0.1", 0), handler)
+    t = threading.Thread(target=srv.serve_forever, daemon=True); t.start()
+    try:
+        url = f"http://127.0.0.1:{srv.server_port}/{os.path.basename(CSV)}"
+        con = fr.load_url(url)
+        assert con.execute("SELECT count(*) FROM events").fetchone()[0] == 90375
+        assert con.execute("SELECT count(DISTINCT serial) FROM events").fetchone()[0] == 94
+    finally:
+        srv.shutdown()
+```
+
+- [ ] **Step 2: Vérifier l'échec** — `uv run --with duckdb --with requests python -m pytest poc/famat/tests/test_recipes.py -v -k load_url` → FAIL `has no attribute 'load_url'`.
+
+- [ ] **Step 3: Implémenter `load_url()`**
+
+```python
+# ajouter à poc/famat/famat_recipes.py
+
+def load_url(url: str, timeout: int = 60) -> duckdb.DuckDBPyConnection:
+    """CSV webhook servi par HTTP (MinIO local en POC) -> table `events`."""
+    import os
+    import tempfile
+
+    import requests
+
+    resp = requests.get(url, timeout=timeout)
+    resp.raise_for_status()
+    fd, path = tempfile.mkstemp(suffix=".csv")
+    try:
+        with os.fdopen(fd, "wb") as f:
+            f.write(resp.content)
+        return load_csv(path)
+    finally:
+        os.unlink(path)
+```
+
+- [ ] **Step 4: Tests verts + recopie image + rebuild** — suite complète verte, puis `cp poc/famat/famat_recipes.py agent/sandbox/sandbox_base_image/python/famat_recipes.py` (ré-ajouter le header GÉNÉRÉ), rebuild `sandbox-base-python:latest` (`--load` si buildx), `docker compose up -d --force-recreate` dans agent/sandbox.
+
+- [ ] **Step 5: Uploader le CSV dans MinIO + URL joignable du sandbox** — utiliser le MinIO du stack dev (credentials dans docker/.env) : créer le bucket `famat-poc`, uploader `Payload-20260526.csv`, rendre l'objet téléchargeable (politique anonyme sur le bucket OU URL présignée longue durée). Depuis le sandbox (POST /run), tester `famat_recipes.load_url("<URL candidate>")` avec les candidates dans l'ordre : `http://host.containers.internal:<port>`, `http://host.docker.internal:<port>`, IP de gateway du réseau du conteneur. Retenir la première qui marche → c'est la `DATA_URL` du POC. Attendu : `rows == 90375` retourné par le sandbox.
+
+- [ ] **Step 6: Documenter + commit** — README section « Source de données » : URL retenue, procédure d'upload MinIO, bascule future vers `load_db()` (base Cyllene, une ligne dans le prompt). Commit sans binaire ni secret (les credentials MinIO du stack dev sont déjà dans docker/.env non commité — référencer, ne pas copier).
+
+---
+
+#### (Archive — chemin prod base Cyllene, NON implémenté dans ce POC)
+### ~~Task 10 (original): Chargement depuis la base Cyllene~~
 
 **Files:**
 - Modify: `poc/famat/famat_recipes.py`
