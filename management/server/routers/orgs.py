@@ -261,11 +261,40 @@ def org_stats(org_id: str, user_id: str = Depends(get_current_user_id)):
         raise HTTPException(status_code=404, detail="Organisation not found")
 
     counts = OrgService.get_resource_counts(org_id)
+
+    # CIA-9 — stockage : fichiers (MinIO, temps réel via SUM(document.size))
+    # + index Infinity (mesure réelle via l'endpoint interne, cache 5 min).
+    # infinity_bytes=None si la mesure est indisponible — l'UI dégrade en
+    # "fichiers seuls", jamais de 500.
+    minio_bytes = OrgService.get_minio_storage_bytes(org_id)
+    infinity_bytes = None
+    try:
+        from api.db.db_models import Workspace
+        from management.server.services.storage_usage import get_infinity_usage_by_tenant
+        usage = get_infinity_usage_by_tenant()
+        if usage is not None:
+            tenant_ids = [
+                ws.tenant_id
+                for ws in Workspace.select().where(
+                    (Workspace.org_id == org_id) & (Workspace.status == "1")
+                )
+            ]
+            infinity_bytes = sum(usage.get(t, {}).get("bytes", 0) for t in tenant_ids)
+    except Exception:
+        import logging
+        logging.getLogger(__name__).warning("org_stats: mesure Infinity indisponible", exc_info=True)
+
     return {
         "quotas": {
             "users": {"current": counts.get("users", 0), "max": org.max_users},
             "workspaces": {"current": counts.get("workspaces", 0), "max": org.max_workspaces},
             "datasets": {"current": counts.get("datasets", 0), "max": org.max_datasets},
             "documents": {"current": counts.get("documents", 0), "max": org.max_documents},
-        }
+        },
+        "storage": {
+            "minio_bytes": minio_bytes,
+            "infinity_bytes": infinity_bytes,  # None = indisponible
+            "total_bytes": minio_bytes + (infinity_bytes or 0),
+            "max_bytes": (org.max_storage_gb or 0) * 1024**3,
+        },
     }

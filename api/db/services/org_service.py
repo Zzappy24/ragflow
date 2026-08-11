@@ -1,4 +1,5 @@
 from api.db.db_models import DB, Organisation, OrgMember, Workspace, WsMember, Knowledgebase, Document
+from peewee import fn
 from api.db.services.common_service import CommonService
 from common.misc_utils import get_uuid
 
@@ -55,6 +56,25 @@ class OrgService(CommonService):
             "datasets": dataset_count,
             "documents": document_count,
         }
+
+    @classmethod
+    @DB.connection_context()
+    def get_minio_storage_bytes(cls, org_id):
+        """CIA-9 — somme des tailles de fichiers (MinIO) de l'org, via
+        SUM(document.size) sur les KB des tenants workspace actifs."""
+        active_ws = Workspace.select().where(
+            (Workspace.org_id == org_id) & (Workspace.status == "1")
+        )
+        tenant_ids = [ws.tenant_id for ws in active_ws]
+        if not tenant_ids:
+            return 0
+        total = (
+            Document.select(fn.COALESCE(fn.SUM(Document.size), 0))
+            .join(Knowledgebase, on=(Document.kb_id == Knowledgebase.id))
+            .where(Knowledgebase.tenant_id.in_(tenant_ids))
+            .scalar()
+        )
+        return int(total or 0)
 
 
 class OrgMemberService(CommonService):

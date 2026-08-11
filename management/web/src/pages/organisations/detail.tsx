@@ -3,7 +3,7 @@ import { useParams, Link, useNavigate, useSearchParams } from 'react-router-dom'
 import { Card, Tabs, Spin, Progress, Row, Col, Statistic, Breadcrumb, Typography, Tag, Button, Modal, Input, App, Table, Space, Select, Switch, InputNumber, Tooltip, Alert, Form } from 'antd';
 import { DatePicker } from 'antd';
 import type { Dayjs } from 'dayjs';
-import { AppstoreOutlined, TeamOutlined, AuditOutlined, HomeOutlined, DatabaseOutlined, FileOutlined, InboxOutlined, UndoOutlined, FireOutlined, ThunderboltOutlined, BarChartOutlined, WarningOutlined, DownloadOutlined, EuroOutlined } from '@ant-design/icons';
+import { AppstoreOutlined, TeamOutlined, AuditOutlined, HomeOutlined, DatabaseOutlined, FileOutlined, InboxOutlined, UndoOutlined, FireOutlined, ThunderboltOutlined, BarChartOutlined, WarningOutlined, DownloadOutlined, EuroOutlined, HddOutlined } from '@ant-design/icons';
 import {
   AreaChart, Area, BarChart, Bar, PieChart, Pie,
   XAxis, YAxis, CartesianGrid, Tooltip as RechartsTooltip,
@@ -445,6 +445,12 @@ interface OrgDetail {
 
 interface OrgStats {
   quotas: Record<string, { current: number; max: number }>;
+  storage?: {
+    minio_bytes: number;
+    infinity_bytes: number | null; // null = mesure Infinity indisponible
+    total_bytes: number;
+    max_bytes: number;
+  };
 }
 
 interface WsQuota {
@@ -672,6 +678,15 @@ export default function OrgDetailPage() {
   const datasetsQ = getQuota('datasets');
   const docsQ = getQuota('documents');
 
+  // CIA-9 — stockage (fichiers MinIO + index Infinity)
+  const fmtBytes = (b?: number | null) => {
+    if (b == null) return '—';
+    if (b >= 1024 ** 3) return `${(b / 1024 ** 3).toFixed(2)} Go`;
+    if (b >= 1024 ** 2) return `${(b / 1024 ** 2).toFixed(1)} Mo`;
+    return `${Math.round(b / 1024)} Ko`;
+  };
+  const storage = stats?.storage;
+
   return (
     <div>
       <Breadcrumb
@@ -734,6 +749,23 @@ export default function OrgDetailPage() {
               suffix={`/ ${docsQ?.max ?? '∞'}`}
               prefix={<FileOutlined />}
             />
+          </Card>
+        </Col>
+        <Col xs={12} lg={6}>
+          <Card>
+            <Statistic
+              title="Stockage"
+              value={fmtBytes(storage?.total_bytes)}
+              suffix={storage?.max_bytes ? `/ ${fmtBytes(storage.max_bytes)}` : ''}
+              prefix={<HddOutlined />}
+            />
+            <Text type="secondary" className="text-xs">
+              {storage
+                ? `Fichiers ${fmtBytes(storage.minio_bytes)} · Index ${
+                    storage.infinity_bytes == null ? 'n/d' : fmtBytes(storage.infinity_bytes)
+                  }`
+                : ' '}
+            </Text>
           </Card>
         </Col>
       </Row>

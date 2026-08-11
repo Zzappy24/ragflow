@@ -165,3 +165,100 @@ async def internal_llm_verify():
     except Exception as e:
         logging.exception("verify failed")
         return get_result(data={"ok": False, "message": str(e)})
+
+
+# =============================================================================
+# CIA-9 — Infinity storage usage per tenant/KB (service-to-service).
+#
+# The slim management image does not ship the infinity SDK (it would drag in
+# numpy/pandas/pyarrow). This endpoint scans Infinity's tables — named
+# `ragflow_<tenant_id>_<kb_id>` — and returns per-table row counts and real
+# on-disk sizes (sum of segment sizes via show_segments). The management
+# backend aggregates them per org/workspace for the storage dashboard.
+#
+# Results are cached in-process (INTERNAL_STORAGE_SCAN_TTL, default 900 s):
+# the scan issues 2 thrift calls per table, and per yesterday's post-mortem
+# we do not hammer Infinity for reporting. Pass ?refresh=1 to force.
+# =============================================================================
+import re as _re
+import time as _time
+
+_STORAGE_TABLE_RE = _re.compile(r"^ragflow_([0-9a-f]{32})_([0-9a-f]{32})$")
+_SIZE_RE = _re.compile(r"^\s*([0-9]*\.?[0-9]+)\s*(B|KB|MB|GB|TB)?\s*$", _re.IGNORECASE)
+_SIZE_MULT = {None: 1, "B": 1, "KB": 1024, "MB": 1024**2, "GB": 1024**3, "TB": 1024**4}
+_storage_cache: dict = {"ts": 0.0, "data": None}
+
+
+def _parse_size_to_bytes(val) -> int:
+    """Infinity returns segment sizes as strings ('1.50MB'); parse to bytes."""
+    if val is None:
+        return 0
+    if isinstance(val, (int, float)):
+        return int(val)
+    m = _SIZE_RE.match(str(val))
+    if not m:
+        return 0
+    return int(float(m.group(1)) * _SIZE_MULT[(m.group(2) or "B").upper() if m.group(2) else "B"])
+
+
+def _scan_infinity_storage() -> dict:
+    """Blocking scan — always call via asyncio.to_thread. Per-table errors are
+    swallowed (a table mid-drop must not kill the whole report)."""
+    from common import settings as common_settings
+    from common.doc_store.infinity_conn_pool import INFINITY_CONN
+
+    db_name = common_settings.INFINITY.get("db_name", "default_db") if hasattr(common_settings, "INFINITY") else "default_db"
+    pool = INFINITY_CONN.get_conn_pool()
+    inf_conn = pool.get_conn()
+    tables = []
+    try:
+        db = inf_conn.get_database(db_name)
+        names = db.list_tables().table_names or []
+        for name in names:
+            m = _STORAGE_TABLE_RE.match(name)
+            if not m:
+                continue
+            tenant_id, kb_id = m.group(1), m.group(2)
+            entry = {"tenant_id": tenant_id, "kb_id": kb_id, "rows": 0, "bytes": 0}
+            try:
+                info = db.show_table(name)
+                entry["rows"] = int(getattr(info, "row_count", 0) or 0)
+                segs = db.get_table(name).show_segments()  # polars DataFrame
+                if segs is not None and "size" in segs.columns:
+                    entry["bytes"] = sum(_parse_size_to_bytes(s) for s in segs["size"].to_list())
+            except Exception as e:
+                logging.warning(f"storage scan: table {name} skipped: {e}")
+            tables.append(entry)
+    finally:
+        try:
+            pool.release_conn(inf_conn)
+        except Exception:
+            pass
+    return {
+        "scanned_at": _time.time(),
+        "tables": tables,
+        "total_bytes": sum(t["bytes"] for t in tables),
+        "total_rows": sum(t["rows"] for t in tables),
+    }
+
+
+@manager.route("/internal/storage/infinity", methods=["GET"])  # noqa: F821
+async def internal_infinity_storage():
+    """Per-tenant/KB Infinity storage usage. Auth: X-Internal-Secret."""
+    ok, err = _check_internal_secret()
+    if not ok:
+        return get_error_data_result(message=err, code=401)
+
+    ttl = int(os.environ.get("INTERNAL_STORAGE_SCAN_TTL", "900"))
+    force = request.args.get("refresh") == "1"
+    cached = _storage_cache.get("data")
+    if not force and cached and (_time.time() - _storage_cache["ts"]) < ttl:
+        return get_result(data=cached)
+
+    try:
+        data = await asyncio.to_thread(_scan_infinity_storage)
+    except Exception as e:
+        logging.exception("infinity storage scan failed")
+        return get_error_data_result(message=f"scan failed: {e}")
+    _storage_cache.update(ts=_time.time(), data=data)
+    return get_result(data=data)
