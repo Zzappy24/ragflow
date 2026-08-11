@@ -4,6 +4,74 @@ Spec : docs/superpowers/specs/2026-08-11-famat-drift-agent-poc-design.md
 Données : `data/Payload-20260526.csv` (JAMAIS commité — .gitignore).
 Tests : `uv run --with duckdb python -m pytest poc/famat/tests/ -v`
 
+## Source de données (Task 10 — révisée)
+
+La base Cyllene (webhook `WebhookMesure`) n'est pas accessible depuis ce poste (flux réseau
+à ouvrir côté prod, cf. archive dans `task-10-brief.md`). Le POC charge donc le même CSV via
+HTTP depuis le MinIO du stack dev, par `famat_recipes.load_url(url)` (télécharge vers un
+fichier temporaire puis délègue à `load_csv()` — même table `events`, même schéma).
+
+### Procédure d'upload MinIO
+
+Credentials MinIO du stack dev : `docker/.env` (`MINIO_USER`, `MINIO_PASSWORD`), **jamais
+copiés en clair ici**. Bucket `famat-poc`, objet `Payload-20260526.csv`, policy anonyme en
+lecture seule sur le bucket (`s3:GetObject` sur `arn:aws:s3:::famat-poc/*`) :
+
+```bash
+MINIO_USER=$(grep '^MINIO_USER=' docker/.env | cut -d= -f2) \
+MINIO_PASSWORD=$(grep '^MINIO_PASSWORD=' docker/.env | cut -d= -f2) \
+uv run --with boto3 python3 - <<'EOF'
+import os, json, boto3
+s3 = boto3.client("s3", endpoint_url="http://localhost:9000",
+                   aws_access_key_id=os.environ["MINIO_USER"],
+                   aws_secret_access_key=os.environ["MINIO_PASSWORD"],
+                   region_name="us-east-1")
+bucket = "famat-poc"
+if bucket not in [b["Name"] for b in s3.list_buckets()["Buckets"]]:
+    s3.create_bucket(Bucket=bucket)
+s3.upload_file("poc/famat/data/Payload-20260526.csv", bucket, "Payload-20260526.csv")
+s3.put_bucket_policy(Bucket=bucket, Policy=json.dumps({
+    "Version": "2012-10-17",
+    "Statement": [{"Effect": "Allow", "Principal": {"AWS": ["*"]},
+                   "Action": ["s3:GetObject"], "Resource": [f"arn:aws:s3:::{bucket}/*"]}]
+}))
+EOF
+```
+
+### URL retenue
+
+Depuis le host, MinIO est publié sur `localhost:9000`. Depuis le conteneur sandbox (réseau
+podman par défaut, backend Podman derrière la socket `docker` — cf. § Task 8 ci-dessous), les
+candidates du brief ont été testées dans l'ordre via `POST /run` (`famat_recipes.load_url(...)`,
+assertion `rows == 90375`) :
+
+| Candidate testée | Résultat depuis le sandbox |
+|---|---|
+| `http://host.containers.internal:9000/...` | **OK** — `rows: 90375` — **retenue** |
+| `http://host.docker.internal:9000/...` | OK — `rows: 90375` (fonctionne aussi, non retenue car testée en 2e) |
+| `http://<gateway podman, 10.88.0.1>:9000/...` | OK — `rows: 90375` (fonctionne aussi, non retenue car testée en 3e) |
+
+Les trois candidates aboutissent sur cette machine (backend Podman avec VM unique) ; le brief
+demande de retenir la première testée dans l'ordre, donc :
+
+```
+DATA_URL = http://host.containers.internal:9000/famat-poc/Payload-20260526.csv
+```
+
+Utilisation depuis un canvas/recette :
+
+```python
+import famat_recipes as fr
+con = fr.load_url("http://host.containers.internal:9000/famat-poc/Payload-20260526.csv")
+```
+
+### Bascule future vers `load_db()` (base Cyllene)
+
+Quand les flux réseau prod seront ouverts, remplacer `fr.load_url(DATA_URL)` par
+`fr.load_db(host, port, user, password, database)` (implémentation documentée mais NON codée,
+cf. section archive de `task-10-brief.md`) dans le prompt/composant qui appelle la recette —
+signature et table `events` identiques, aucun autre changement requis côté canvas.
+
 ## Resync de l'image sandbox custom
 
 `agent/sandbox/sandbox_base_image/python/famat_recipes.py` est une **copie cuite** de

@@ -35,6 +35,24 @@ def load_csv(path: str) -> duckdb.DuckDBPyConnection:
     return con
 
 
+def load_url(url: str, timeout: int = 60) -> duckdb.DuckDBPyConnection:
+    """CSV webhook servi par HTTP (MinIO local en POC) -> table `events`."""
+    import os
+    import tempfile
+
+    import requests
+
+    resp = requests.get(url, timeout=timeout)
+    resp.raise_for_status()
+    fd, path = tempfile.mkstemp(suffix=".csv")
+    try:
+        with os.fdopen(fd, "wb") as f:
+            f.write(resp.content)
+        return load_csv(path)
+    finally:
+        os.unlink(path)
+
+
 def load_rows(rows) -> duckdb.DuckDBPyConnection:
     """Tuples (seq, serial, chapter, cle, value_num, ts) -> table `events`."""
     con = duckdb.connect()

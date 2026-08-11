@@ -183,6 +183,26 @@ def test_temperature_restarts_real():
     assert 14 <= t["mean_temp_overall"] <= 26
 
 
+@real_data
+def test_load_url_matches_load_csv(tmp_path, monkeypatch):
+    # sert le CSV local par HTTP éphémère et vérifie l'équivalence avec load_csv
+    import functools
+    import http.server
+    import threading
+    handler = functools.partial(http.server.SimpleHTTPRequestHandler,
+                                directory=os.path.dirname(CSV))
+    srv = http.server.ThreadingHTTPServer(("127.0.0.1", 0), handler)
+    t = threading.Thread(target=srv.serve_forever, daemon=True); t.start()
+    try:
+        url = f"http://127.0.0.1:{srv.server_port}/{os.path.basename(CSV)}"
+        con = fr.load_url(url)
+        assert con.execute("SELECT count(*) FROM events").fetchone()[0] == 90375
+        assert con.execute("SELECT count(DISTINCT serial) FROM events").fetchone()[0] == 94
+    finally:
+        srv.shutdown()
+        srv.server_close()
+
+
 def test_spc_chart_writes_svg_and_png():
     rows = [_mk(i + 1, f"P{i:02d}", 0.001 * i, i) for i in range(25)]
     d = fr.drift(fr.load_rows(rows), "CORRECTION_X", 10)
