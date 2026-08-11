@@ -50,13 +50,18 @@ Agent (composant tool-calling RAGFlow)
    │   + 3 recettes d'analyse canoniques (SQL + code paramétrés)
    │
    ├─ tool: execute_sql  ──► base SQL Cyllene (table webhook)
-   │        agrégations poussées côté SQL autant que possible
+   │        EXPLORATION LIBRE uniquement : agrégats, échantillons
+   │        (les résultats repassent par le contexte LLM → jamais de bulk)
    │
-   └─ tool: code_exec    ──► sandbox Python
+   └─ tool: code_exec    ──► sandbox Python (image custom)
+            module `famat_recipes` CUIT DANS L'IMAGE : va chercher
+            les données à la source lui-même (load_db → base Cyllene),
             DuckDB in-memory : pivot, détection de segments
             (redémarrages), regr_slope/regr_intercept par segment,
             limites ±3σ ; matplotlib → PNG (cartes de contrôle)
-            renvoyés en pièces jointes dans le chat
+            renvoyés en pièces jointes dans le chat.
+            Le code passé par le LLM = appel de recette paramétré,
+            jamais les 90k lignes dans le contexte.
    │
    ▼
 Réponse : interprétation métier en français + graphiques
