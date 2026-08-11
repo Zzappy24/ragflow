@@ -42,7 +42,9 @@ def test_load_rows_synthetic():
 
 
 def _mk(seq, serial, value, minute):
-    return (seq, serial, 10, "CORRECTION_X", value, f"2026-01-01 10:{minute:02d}:00")
+    # minute peut dépasser 59 (grandes séries synthétiques) -> déborde sur l'heure.
+    hour, minute = 10 + minute // 60, minute % 60
+    return (seq, serial, 10, "CORRECTION_X", value, f"2026-01-01 {hour:02d}:{minute:02d}:00")
 
 
 def test_series_orders_parts_and_takes_last_value():
@@ -107,3 +109,47 @@ def test_drift_real_correction_x_chapter10():
     assert d["lcl"] < d["mean"] < d["ucl"]
     for seg in d["segments"]:
         assert seg["n"] >= 1
+
+
+def test_backtest_detects_upcoming_crossing():
+    # 250 pièces stables autour de 0 puis dérive douce +0.0005/pièce sur 15
+    # pièces : le franchissement de l'UCL final doit être anticipé AVANT
+    # d'arriver (dérive trop brutale = premier point déjà hors limites =
+    # inanticipable).
+    #
+    # NOTE ajustement (cf. brief Step 4) : avec seulement 30 pièces stables
+    # (valeur initiale du brief), aucune pente dans [0.0003, 0.001] ni
+    # aucune longueur de queue jusqu'à 200 points ne produit de vrai
+    # franchissement — c'est structurel, pas un problème de réglage fin :
+    # pour une rampe purement linéaire, mean_all + k_sigma*sigma_all croît
+    # *plus vite* que le max de la rampe elle-même (sigma d'une suite
+    # linéaire ~ amplitude/sqrt(12)), donc un contrôle Shewhart statique
+    # calculé sur ses propres données ne "voit" jamais une tendance
+    # linéaire pure, quels que soient la pente ou la longueur — c'est la
+    # limite connue des cartes de contrôle statiques face à une dérive
+    # lente. Il faut un historique stable nettement plus long pour que
+    # sigma_all reste ancré près du bruit de fond pendant que la queue de
+    # dérive devient un vrai outlier vis-à-vis des limites finales : d'où
+    # 250 pièces stables (au lieu de 30). Pente et longueur de queue de
+    # dérive inchangées (0.0005/pièce, 15 points, dans les bornes
+    # suggérées par le brief).
+    rows = [_mk(i + 1, f"P{i:02d}", 0.001 * ((i % 3) - 1), i) for i in range(250)]
+    rows += [_mk(i + 251, f"Q{i:02d}", 0.0005 * (i + 1), i + 250) for i in range(15)]
+    b = fr.backtest(fr.load_rows(rows), "CORRECTION_X", 10, jump_k=50.0)  # jump_k haut : pas de coupure de segment
+    assert b["n_parts"] == 265
+    assert len(b["crossings"]) >= 1
+    assert b["true_alerts"] >= 1
+    assert all(lt >= 1 for lt in b["lead_times"])
+
+
+def test_backtest_quiet_series_no_alert():
+    rows = [_mk(i + 1, f"P{i:02d}", 0.001 * ((i % 3) - 1), i) for i in range(40)]
+    b = fr.backtest(fr.load_rows(rows), "CORRECTION_X", 10)
+    assert b["true_alerts"] == 0 and b["false_alerts"] == 0
+
+
+@real_data
+def test_backtest_real_runs():
+    b = fr.backtest(fr.load_csv(CSV), "CORRECTION_X", 10)
+    assert b["n_parts"] >= 50
+    assert b["false_alerts"] >= 0  # structure saine, pas d'exception

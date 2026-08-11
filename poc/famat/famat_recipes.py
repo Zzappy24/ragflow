@@ -3,6 +3,8 @@
 Module autonome : seules dépendances duckdb, matplotlib, pymysql.
 Cuit dans l'image sandbox custom ET utilisé hors ligne pour les tests.
 """
+import statistics
+
 import duckdb
 
 _EVENTS_SCHEMA = "seq BIGINT, serial VARCHAR, chapter INTEGER, cle VARCHAR, value_num DOUBLE, ts TIMESTAMP"
@@ -127,3 +129,64 @@ def drift(con, cle: str, chapter: int, k_sigma: float = 3.0, jump_k: float = 5.0
     return {"cle": cle, "chapter": chapter, "n_parts": len(s), "mean": mean,
             "sigma": sigma, "lcl": lcl, "ucl": ucl, "series": s,
             "segments": segments, "current": current}
+
+
+def backtest(con, cle: str, chapter: int, k_sigma: float = 3.0, horizon: int = 5,
+             min_train: int = 10, window: int = 10, jump_k: float = 5.0) -> dict:
+    """Rejeu chronologique : à chaque pièce, limites et régression sur le passé seul.
+
+    La pente est estimée sur les `window` derniers points du segment courant :
+    c'est le taux de dérive ACTUEL — une régression sur tout le segment noierait
+    une dérive récente dans l'historique stable et n'alerterait jamais à temps.
+    """
+    s = series(con, cle, chapter, jump_k)
+    values = [p["value"] for p in s]
+    segs = [p["segment_id"] for p in s]
+    n = len(s)
+    alerts = []
+    for i in range(min_train, n):
+        past = values[: i + 1]
+        mean = statistics.fmean(past)
+        sigma = statistics.stdev(past) if len(past) > 1 else 0.0
+        if sigma == 0:
+            continue
+        lcl, ucl = mean - k_sigma * sigma, mean + k_sigma * sigma
+        if not (lcl <= values[i] <= ucl):
+            continue  # déjà dehors : trop tard pour "anticiper"
+        seg_pts = [(s[j]["part_index"], values[j]) for j in range(i + 1) if segs[j] == segs[i]]
+        seg_pts = seg_pts[-window:]
+        if len(seg_pts) < 3:
+            continue
+        xs = [p[0] for p in seg_pts]
+        ys = [p[1] for p in seg_pts]
+        mx, my = statistics.fmean(xs), statistics.fmean(ys)
+        den = sum((x - mx) ** 2 for x in xs)
+        if den == 0:
+            continue
+        slope = sum((x - mx) * (y - my) for x, y in zip(xs, ys)) / den
+        predicted = values[i] + slope * horizon
+        if predicted > ucl or predicted < lcl:
+            alerts.append({"part_index": s[i]["part_index"], "predicted_crossing_at": predicted})
+
+    # Franchissements réels (limites finales, calculées sur toute la série)
+    mean_all = statistics.fmean(values)
+    sigma_all = statistics.stdev(values) if n > 1 else 0.0
+    lcl_all, ucl_all = mean_all - k_sigma * sigma_all, mean_all + k_sigma * sigma_all
+    crossings = [s[i]["part_index"] for i in range(n)
+                 if sigma_all > 0 and not (lcl_all <= values[i] <= ucl_all)]
+
+    true_alerts, false_alerts, lead_times = 0, 0, []
+    matched = set()
+    for a in alerts:
+        hit = next((c for c in crossings
+                    if a["part_index"] < c <= a["part_index"] + horizon and c not in matched), None)
+        if hit is not None:
+            true_alerts += 1
+            matched.add(hit)
+            lead_times.append(hit - a["part_index"])
+        else:
+            false_alerts += 1
+    return {"cle": cle, "chapter": chapter, "n_parts": n, "alerts": alerts,
+            "crossings": crossings, "true_alerts": true_alerts,
+            "false_alerts": false_alerts, "lead_times": lead_times,
+            "missed_crossings": len([c for c in crossings if c not in matched])}
