@@ -153,3 +153,30 @@ def test_backtest_real_runs():
     b = fr.backtest(fr.load_csv(CSV), "CORRECTION_X", 10)
     assert b["n_parts"] >= 50
     assert b["false_alerts"] >= 0  # structure saine, pas d'exception
+
+
+def test_temperature_restarts_synthetic():
+    rows = [
+        # S1 : chapitres 1,2,3 puis retour à 1 (1 redémarrage), temp élevée avant
+        (1, "S1", 1, "COTR_X", 0.0, "2026-01-01 10:00:00"),
+        (2, "S1", 2, "COTR_X", 0.0, "2026-01-01 10:01:00"),
+        (3, "S1", None, "TEMP_PIECE", 24.0, "2026-01-01 10:02:00"),
+        (4, "S1", 3, "COTR_X", 0.0, "2026-01-01 10:03:00"),
+        (5, "S1", 1, "COTR_X", 0.0, "2026-01-01 10:04:00"),  # <- redémarrage
+        # S2 : progression monotone, temp basse, aucun redémarrage
+        (6, "S2", 1, "COTR_X", 0.0, "2026-01-01 11:00:00"),
+        (7, "S2", None, "TEMP_PIECE", 17.0, "2026-01-01 11:01:00"),
+        (8, "S2", 2, "COTR_X", 0.0, "2026-01-01 11:02:00"),
+    ]
+    t = fr.temperature_restarts(fr.load_rows(rows))
+    assert t["n_restarts"] == 1
+    assert t["n_serials_with_restart"] == 1
+    assert t["mean_temp_at_restart"] == pytest.approx(24.0)
+
+
+@real_data
+def test_temperature_restarts_real():
+    t = fr.temperature_restarts(fr.load_csv(CSV))
+    assert t["n_serials_with_restart"] == 94          # invariant profilé : 94/94
+    assert 400 <= t["n_restarts"] <= 600              # ~5.4 × 94
+    assert 14 <= t["mean_temp_overall"] <= 26

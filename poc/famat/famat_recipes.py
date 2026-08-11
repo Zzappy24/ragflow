@@ -190,3 +190,61 @@ def backtest(con, cle: str, chapter: int, k_sigma: float = 3.0, horizon: int = 5
             "crossings": crossings, "true_alerts": true_alerts,
             "false_alerts": false_alerts, "lead_times": lead_times,
             "missed_crossings": len([c for c in crossings if c not in matched])}
+
+
+def temperature_restarts(con) -> dict:
+    """Redémarrages (chapitre décroissant) et température pièce associée."""
+    row = con.execute(
+        """
+        WITH chap AS (
+            SELECT serial, seq, ts, chapter,
+                   LAG(chapter) OVER (PARTITION BY serial ORDER BY seq) AS prev_chapter
+            FROM events WHERE chapter IS NOT NULL
+        ),
+        restarts AS (
+            SELECT serial, seq, ts FROM chap
+            WHERE prev_chapter IS NOT NULL AND chapter < prev_chapter
+        ),
+        temp_at AS (
+            SELECT r.serial, r.seq,
+                   (SELECT e.value_num FROM events e
+                    WHERE e.cle = 'TEMP_PIECE' AND e.serial = r.serial AND e.seq < r.seq
+                    ORDER BY e.seq DESC LIMIT 1) AS temp
+            FROM restarts r
+        ),
+        per_serial AS (
+            SELECT e.serial,
+                   (SELECT count(*) FROM restarts r WHERE r.serial = e.serial)  AS restarts,
+                   avg(CASE WHEN e.cle = 'TEMP_PIECE' THEN e.value_num END)     AS mean_temp
+            FROM events e GROUP BY e.serial
+        )
+        SELECT
+            (SELECT count(*) FROM restarts),
+            (SELECT count(DISTINCT serial) FROM restarts),
+            (SELECT avg(temp) FROM temp_at),
+            (SELECT avg(value_num) FROM events WHERE cle = 'TEMP_PIECE'),
+            (SELECT corr(restarts, mean_temp) FROM per_serial WHERE mean_temp IS NOT NULL)
+        """
+    ).fetchone()
+    per_serial = [
+        {"serial": r[0], "restarts": int(r[1]), "mean_temp": r[2]}
+        for r in con.execute(
+            """
+            WITH chap AS (
+                SELECT serial, seq,
+                       LAG(chapter) OVER (PARTITION BY serial ORDER BY seq) AS prev_chapter,
+                       chapter
+                FROM events WHERE chapter IS NOT NULL
+            )
+            SELECT e.serial,
+                   count(CASE WHEN c.prev_chapter IS NOT NULL AND c.chapter < c.prev_chapter THEN 1 END),
+                   avg(CASE WHEN e.cle = 'TEMP_PIECE' THEN e.value_num END)
+            FROM events e
+            LEFT JOIN chap c ON c.serial = e.serial AND c.seq = e.seq
+            GROUP BY e.serial ORDER BY e.serial
+            """
+        ).fetchall()
+    ]
+    return {"n_restarts": int(row[0]), "n_serials_with_restart": int(row[1]),
+            "mean_temp_at_restart": row[2], "mean_temp_overall": row[3],
+            "corr_restarts_temp": row[4], "per_serial": per_serial}
