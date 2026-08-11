@@ -79,8 +79,29 @@ async def _prepare_container(name: str, language: SupportLanguage) -> bool:
     return False
 
 
-async def create_container(name: str, language: SupportLanguage) -> bool:
-    """Asynchronously create a container"""
+# CUSTOM B2B SaaS — Podman tmpfs compat (POC FAMAT)
+# Docker Engine accepts `uid=`/`gid=` as inline --tmpfs sub-options to pre-own the mount for the
+# unprivileged `nobody` (65534) user the sandbox runs as. Podman's docker-compatible API rejects
+# those sub-options outright ("unknown mount option \"uid=65534\": invalid mount option"), which
+# left the whole container pool at 0/N on Podman-backed hosts. `mode=1777` (world-writable +
+# sticky bit) is accepted by both engines and gives `nobody` the same effective write access to
+# /workspace and /tmp, verified empirically with `docker exec ... touch /workspace/testfile`
+# (Python image) and `docker exec ... cp -a /app/node_modules /workspace/` (Node.js image) — both
+# succeed under the `mode=1777` mount. Docker Engine stays on the original `uid=`/`gid=` mount as
+# the nominal path; the `mode=1777` variant is only used as a retry when the nominal creation
+# fails with that specific Podman error, so behavior on real Docker Engine is unchanged.
+_PODMAN_TMPFS_UID_ERROR_MARKERS = ("unknown mount option", "invalid mount option")
+
+
+def _is_podman_tmpfs_uid_error(stderr: str) -> bool:
+    lowered = (stderr or "").lower()
+    return all(marker in lowered for marker in _PODMAN_TMPFS_UID_ERROR_MARKERS)
+
+
+def _build_create_args(name: str, language: SupportLanguage, *, podman_compat: bool = False) -> list[str]:
+    workspace_tmpfs = "/workspace:rw,exec,size=100M,mode=1777" if podman_compat else "/workspace:rw,exec,size=100M,uid=65534,gid=65534"
+    tmp_tmpfs = "/tmp:rw,exec,size=50M,mode=1777" if podman_compat else "/tmp:rw,exec,size=50M"
+
     create_args = [
         "docker",
         "run",
@@ -90,9 +111,9 @@ async def create_container(name: str, language: SupportLanguage) -> bool:
         name,
         "--read-only",
         "--tmpfs",
-        "/workspace:rw,exec,size=100M,uid=65534,gid=65534",
+        workspace_tmpfs,
         "--tmpfs",
-        "/tmp:rw,exec,size=50M",
+        tmp_tmpfs,
         "--user",
         "nobody",
         "--workdir",
@@ -119,10 +140,26 @@ async def create_container(name: str, language: SupportLanguage) -> bool:
     elif language == SupportLanguage.NODEJS:
         create_args.append(os.getenv("SANDBOX_BASE_NODEJS_IMAGE", "sandbox-base-nodejs:latest"))
 
+    return create_args
+
+
+async def create_container(name: str, language: SupportLanguage) -> bool:
+    """Asynchronously create a container"""
+    create_args = _build_create_args(name, language)
     logger.info(f"Sandbox config:\n\t {create_args}")
 
     try:
         return_code, _, stderr = await async_run_command(*create_args, timeout=10)
+        if return_code != 0 and _is_podman_tmpfs_uid_error(stderr):
+            # CUSTOM B2B SaaS — Podman tmpfs compat (POC FAMAT): retry once with the
+            # mode=1777 tmpfs fallback (see comment above _PODMAN_TMPFS_UID_ERROR_MARKERS).
+            logger.warning(f"⚠️ Container {name} creation failed on uid=/gid= tmpfs mount option ({stderr.strip()}); retrying with Podman-compatible mode=1777 tmpfs")
+            with contextlib.suppress(Exception):
+                await async_run_command("docker", "rm", "-f", name, timeout=5)
+            create_args = _build_create_args(name, language, podman_compat=True)
+            logger.info(f"Sandbox config (podman compat retry):\n\t {create_args}")
+            return_code, _, stderr = await async_run_command(*create_args, timeout=10)
+
         if return_code != 0:
             logger.error(f"❌ Container creation failed {name}: {stderr}")
             return False
