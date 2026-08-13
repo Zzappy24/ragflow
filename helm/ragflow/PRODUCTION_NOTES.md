@@ -392,12 +392,14 @@ kubectl -n rag-new2 get pod <api-pod-name> \
 
 `values-alterai.yaml` sets `networkPolicy.enabled: false` at the **platform**
 level (ragflow ↔ mariadb/redis/infinity policies are off). The sandbox's own
-default-deny NetworkPolicy (`sandbox.networkPolicy`, always rendered
-regardless of the platform flag) is a **different, separate** set of
-resources — but it is only as good as the CNI actually enforcing
-NetworkPolicy objects at all. This was never observed live on `rag-new2`
-(deduced from the chart, not confirmed in prod) — confirm before trusting
-sandbox isolation:
+default-deny NetworkPolicy template is gated by the separate
+`sandbox.networkPolicy.enabled` flag, which is `true` only because it
+defaults to `true` in `values.yaml` and `values-alterai.yaml` never overrides
+it — so it is rendered today, but it is one values change away from silently
+not being rendered at all. Either way, a rendered NetworkPolicy is only as
+good as the CNI actually enforcing NetworkPolicy objects. This was never
+observed live on `rag-new2` (deduced from the chart, not confirmed in prod)
+— confirm before trusting sandbox isolation:
 
 ```bash
 # Pick a service that should be UNREACHABLE from a sandbox Job, e.g. the
@@ -436,9 +438,17 @@ notes):
 -- can differ from what's assumed below.
 DESCRIBE system_settings;
 
-INSERT INTO system_settings(name, value) VALUES ('sandbox.provider_type', 'k8s')
+-- `source` and `data_type` are NOT NULL with no default (see SystemSettings
+-- in api/db/db_models.py) — omitting them fails with ERROR 1364 in strict
+-- mode. Values follow the existing pattern in conf/system_settings.json
+-- (sandbox.provider_type: source "variable"/data_type "string";
+-- sandbox.self_managed: source "variable"/data_type "json" — sandbox.k8s
+-- follows the same "json" pattern as the other sandbox.* provider configs).
+INSERT INTO system_settings(name, source, data_type, value)
+  VALUES ('sandbox.provider_type', 'variable', 'string', 'k8s')
   ON DUPLICATE KEY UPDATE value='k8s';
-INSERT INTO system_settings(name, value) VALUES ('sandbox.k8s',
+INSERT INTO system_settings(name, source, data_type, value)
+  VALUES ('sandbox.k8s', 'variable', 'json',
   '{"namespace":"rag-sandbox","kubeconfig_path":"","image":"harbor.cylndata.cyllene.pro/data/ragflow-sandbox-python:<tag>","memory_limit":"1Gi","cpu_limit":"1","timeout":120}')
   ON DUPLICATE KEY UPDATE value=VALUES(value);
 ```
