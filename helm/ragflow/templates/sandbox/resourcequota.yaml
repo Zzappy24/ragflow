@@ -1,0 +1,12 @@
+{{- if .Values.sandbox.enabled }}
+apiVersion: v1
+kind: ResourceQuota
+metadata:
+  name: ragflow-sandbox-quota
+  namespace: {{ .Values.sandbox.namespace.name }}
+spec:
+  hard:
+    limits.memory: {{ .Values.sandbox.quota.memory }}
+    limits.cpu: {{ .Values.sandbox.quota.cpu | quote }}
+    pods: {{ .Values.sandbox.quota.pods | quote }}
+{{- end }}

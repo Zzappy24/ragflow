@@ -1,0 +1,31 @@
+{{- if and .Values.sandbox.enabled .Values.sandbox.networkPolicy.enabled }}
+apiVersion: networking.k8s.io/v1
+kind: NetworkPolicy
+metadata:
+  name: ragflow-sandbox-default-deny
+  namespace: {{ .Values.sandbox.namespace.name }}
+spec:
+  podSelector: {}
+  policyTypes: ["Ingress", "Egress"]
+  egress:
+    - to:
+        - namespaceSelector: {}
+          podSelector:
+            matchLabels:
+              k8s-app: kube-dns
+      ports:
+        - { port: 53, protocol: UDP }
+        - { port: 53, protocol: TCP }
+    - to:
+        - namespaceSelector:
+            matchLabels:
+              kubernetes.io/metadata.name: {{ .Values.sandbox.networkPolicy.minioNamespace }}
+          podSelector:
+            matchLabels:
+{{ toYaml .Values.sandbox.networkPolicy.minioPodSelector | indent 14 }}
+      ports:
+        - { port: {{ .Values.sandbox.networkPolicy.minioPort }}, protocol: TCP }
+{{- with .Values.sandbox.networkPolicy.extraEgress }}
+{{ toYaml . | indent 4 }}
+{{- end }}
+{{- end }}
