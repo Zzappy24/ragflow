@@ -354,12 +354,46 @@ sandbox:
       v1.min.io/tenant: minio
 ```
 
-This step is now a **verification + tag bump**, not authoring from scratch:
+**Correction (found during final review, task-8):** `sandbox.image`/
+`sandbox.limits` in this values block are **not consumed by any template**
+under `helm/ragflow/templates/sandbox/` — grep confirms only
+`namespace.yaml`, `rbac.yaml`, `resourcequota.yaml`, and `networkpolicy.yaml`
+read `.Values.sandbox.*`, and none of them touch `sandbox.image` or
+`sandbox.limits`. They are **documentary only** — a human-readable record of
+"what image/limits we intend to run," not the source of truth. Bumping
+`sandbox.image.tag` here and syncing ArgoCD does **not** deploy the new
+image. The image that actually runs is whatever `image` key is stored in
+`system_settings.sandbox.k8s` (Step 6) — a Kubernetes `Job` manifest is built
+per-execution by `K8sProvider` from that config at request time, not from a
+Helm-rendered Deployment. **To roll out a new sandbox image: re-run the
+Step 6 SQL (or use the admin UI once the `k8s` provider is registered
+there) with the new tag — a values-file bump alone is a no-op for the
+running image.**
+
+This step is still worth doing as a **verification + tag bump** so the
+values file stays an accurate record, and because the pull-secret sub-step
+below is a real prerequisite:
 
 1. If the release tag differs from what's committed, bump
-   `sandbox.image.tag` in `values-alterai.yaml` and commit — otherwise
-   ArgoCD deploys the old image even though a new one exists in Harbor.
-2. Confirm the MinIO pod selector actually matches real pods (this was
+   `sandbox.image.tag` in `values-alterai.yaml` and commit, for
+   documentation purposes — remember this alone does not change the running
+   image (see correction above); you still need Step 6.
+2. **Harbor pull access.** Check whether the `data` Harbor project allows
+   anonymous pull. If it does not, the `rag-sandbox` namespace needs its own
+   copy of the pull secret — `rag-sandbox` is a separate namespace from
+   `rag-new2` and does not inherit `rag-new2`'s imagePullSecrets:
+
+   ```bash
+   kubectl get secret harbor-pull-secret -n rag-new2 -o yaml \
+     | sed 's/namespace: rag-new2/namespace: rag-sandbox/' \
+     | kubectl apply -f -
+   ```
+
+   Then set `"image_pull_secret":"harbor-pull-secret"` in the Step 6 JSON
+   payload so `K8sProvider` attaches it to every Job's `imagePullSecrets`.
+   Skipping this when anonymous pull is off produces `ImagePullBackOff` on
+   every sandbox Job.
+3. Confirm the MinIO pod selector actually matches real pods (this was
    deduced from the chart/Tenant CR, not observed live — confirm in prod
    before trusting the NetworkPolicy egress rule it feeds):
 
@@ -417,6 +451,19 @@ which means DNS tunneling remains a theoretical exfiltration path out of
 `rag-sandbox` even with a correctly enforced default-deny. Not a blocker for
 this rollout, but note it for the next hardening pass.
 
+Second residual limitation (found during final review, task-8): the
+NetworkPolicy egress rule opens the **entire** MinIO service on port 9000
+(`networkpolicy.yaml`'s `minioPodSelector`/`minioPort`), not just the
+specific bucket a sandboxed recipe is meant to read. Any code running in a
+sandbox Job can reach any bucket on that MinIO instance, including buckets
+with an anonymous/public-read policy belonging to a *different* tenant —
+the famat-poc bucket (Step 7) is itself public-read. This is a cross-tenant
+data-exposure gap, not just a theoretical one; not a blocker for this
+rollout (the sandbox provider's audience is currently the platform's own
+recipes, not adversarial tenant code), but it must be closed — narrower
+per-bucket policies or a proxy in front of MinIO — before the sandbox is
+exposed to less-trusted workloads.
+
 ### Step 5 — Test RBAC négatif/positif
 
 ```bash
@@ -449,7 +496,7 @@ INSERT INTO system_settings(name, source, data_type, value)
   ON DUPLICATE KEY UPDATE value='k8s';
 INSERT INTO system_settings(name, source, data_type, value)
   VALUES ('sandbox.k8s', 'variable', 'json',
-  '{"namespace":"rag-sandbox","kubeconfig_path":"","image":"harbor.cylndata.cyllene.pro/data/ragflow-sandbox-python:<tag>","memory_limit":"1Gi","cpu_limit":"1","timeout":120}')
+  '{"namespace":"rag-sandbox","kubeconfig_path":"","image":"harbor.cylndata.cyllene.pro/data/ragflow-sandbox-python:<tag>","image_pull_secret":"harbor-pull-secret","memory_limit":"1Gi","cpu_limit":"1","timeout":120}')
   ON DUPLICATE KEY UPDATE value=VALUES(value);
 ```
 
@@ -457,6 +504,12 @@ INSERT INTO system_settings(name, source, data_type, value)
 in-cluster and uses the mounted SA token (Step 3), not an external
 kubeconfig. `timeout` is in seconds and must be ≥ the smoke-test latency
 measured in Step 9 (~7s warm) plus margin for a cold image pull.
+`image_pull_secret` must match the secret copied into `rag-sandbox` in
+Step 2 — omit the key entirely (rather than leave it an empty string) if
+the Harbor project allows anonymous pull and no secret was copied. **This
+is also the payload to re-run whenever the sandbox image is bumped** — see
+the Step 2 correction above; `values-alterai.yaml`'s `sandbox.image.tag`
+does not drive the running image.
 
 Debug note (no operational impact): pod log retrieval uses a raw HTTP call
 against the kubelet/API server rather than the k8s client SDK's streaming
