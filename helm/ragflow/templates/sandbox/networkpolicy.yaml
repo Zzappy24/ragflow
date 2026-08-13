@@ -9,7 +9,12 @@ spec:
   policyTypes: ["Ingress", "Egress"]
   egress:
     - to:
-        - namespaceSelector: {}
+        # Restrict to kube-system: {} would match k8s-app=kube-dns on a
+        # self-labelled pod in ANY namespace, giving untrusted sandbox
+        # code an egress target on a shared cluster.
+        - namespaceSelector:
+            matchLabels:
+              kubernetes.io/metadata.name: kube-system
           podSelector:
             matchLabels:
               k8s-app: kube-dns
