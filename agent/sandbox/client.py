@@ -99,7 +99,7 @@ def _load_provider_from_settings() -> None:
         # Initialize the provider
         if not provider.initialize(config):
             message = f"Failed to initialize sandbox provider: {provider_type}. Config keys: {list(config.keys())}"
-            if provider_type in {"local", "ssh"}:
+            if provider_type in {"local", "ssh", "k8s"}:  # CUSTOM B2B SaaS — provider sandbox k8s
                 raise SandboxProviderConfigError(message)
             logger.error(message)
             return
