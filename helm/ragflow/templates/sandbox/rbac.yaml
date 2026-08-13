@@ -14,6 +14,9 @@ rules:
   - apiGroups: [""]
     resources: ["pods/log"]
     verbs: ["get"]
+  - apiGroups: [""]  # CUSTOM B2B SaaS — provider sandbox k8s: _fetch_pod_events needs list_namespaced_event
+    resources: ["events"]
+    verbs: ["get", "list"]
 ---
 apiVersion: rbac.authorization.k8s.io/v1
 kind: RoleBinding

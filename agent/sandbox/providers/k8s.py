@@ -365,8 +365,11 @@ class K8sProvider(SandboxProvider):
                     # "b'...'" text, embedded newlines escaped as "\n") instead of the
                     # decoded string. Reading the raw urllib3 response ourselves
                     # sidesteps that deserialization path entirely.
+                    # limit_bytes caps the log read server-side, so we never pull an
+                    # oversized log into RAM before the len() check below rejects it
+                    # (belt-and-suspenders: the len() check stays as a second guard).
                     raw_response = self._core.read_namespaced_pod_log(
-                        pod_name, self.namespace, _preload_content=False
+                        pod_name, self.namespace, _preload_content=False, limit_bytes=_MAX_LOG_BYTES
                     )
                     raw_logs = raw_response.data.decode("utf-8", errors="replace") if raw_response else ""
                 except Exception as exc:
