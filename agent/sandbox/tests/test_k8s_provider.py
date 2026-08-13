@@ -71,7 +71,14 @@ def _provider(job_status="succeeded", logs=WRAPPED_OK):
                           status=SimpleNamespace(phase="Succeeded",
                                                  container_statuses=None))
     p._core.list_namespaced_pod.return_value = SimpleNamespace(items=[pod])
-    p._core.read_namespaced_pod_log.return_value = logs
+    # K8sProvider reads pod logs with _preload_content=False and decodes the
+    # raw urllib3 response itself (see k8s.py: some kubernetes-client /
+    # urllib3 combinations mis-deserialize this plain-text endpoint into the
+    # *repr* of the raw bytes when left to the client's own deserialization).
+    # Mimic that raw-response shape here instead of returning a bare string.
+    p._core.read_namespaced_pod_log.return_value = SimpleNamespace(
+        data=logs.encode("utf-8") if isinstance(logs, str) else logs
+    )
     return p
 
 

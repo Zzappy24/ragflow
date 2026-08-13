@@ -359,7 +359,16 @@ class K8sProvider(SandboxProvider):
             raw_logs = ""
             if pod_name:
                 try:
-                    raw_logs = self._core.read_namespaced_pod_log(pod_name, self.namespace) or ""
+                    # _preload_content=False + manual decode: some kubernetes-client /
+                    # urllib3 combinations mis-deserialize this endpoint's plain-text
+                    # response, yielding the *repr* of the raw bytes (literal
+                    # "b'...'" text, embedded newlines escaped as "\n") instead of the
+                    # decoded string. Reading the raw urllib3 response ourselves
+                    # sidesteps that deserialization path entirely.
+                    raw_response = self._core.read_namespaced_pod_log(
+                        pod_name, self.namespace, _preload_content=False
+                    )
+                    raw_logs = raw_response.data.decode("utf-8", errors="replace") if raw_response else ""
                 except Exception as exc:
                     logger.warning("K8sProvider: failed to read logs for pod %s: %s", pod_name, exc)
                     raw_logs = ""
