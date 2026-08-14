@@ -62,3 +62,20 @@ Dans le task executor, au moment du chunking (chemin `naive`/token-based en prio
 ## Hors scope
 
 Upload resumable multi-Go (tus/chunked) ; fichiers uploadés aux agents (chemin distinct) ; `MAX_FILE_NUM_PER_USER` ; optimisation du parsing lui-même (OCR long sur gros PDF — orthogonal).
+
+## Révision 2026-08-14 (post-exécution, qualité RAG d'abord)
+
+Suite à l'échange qualité/temps avec l'utilisateur (les specs clients denses de
+10-40 Mo de texte sont des inputs légitimes, et le temps d'embedding dépend du
+total de tokens — pas du nombre de chunks — donc l'adaptation ne fait pas gagner
+de temps d'embedding, seulement du volume de vecteurs) :
+
+- `MAX_CHUNKS_PER_DOC` : défaut 4096 → **16384** (déclenchement seulement au-delà
+  de ~130 Mo de texte pur à 512 tokens/chunk — les documents clients réels gardent
+  leur granularité intégrale ; la protection ne vise plus que le pathologique).
+- `ADAPTIVE_CHUNK_TOKEN_MAX` : défaut 2048 → **1024** (zone de bonne qualité
+  d'embedding ; la dilution se paie à chaque requête, le volume à l'ingestion).
+- **Overrides par KB** dans le `parser_config` : `adaptive_enabled`,
+  `adaptive_max_chunks`, `adaptive_token_max` — politique par workspace.
+- Le message d'adaptation **recommande le mode parent-child** ou le découpage du
+  fichier source (hiérarchie qualité documentée dans PRODUCTION_NOTES).

@@ -2,7 +2,6 @@ import { useHandleFilterSubmit } from '@/components/list-filter-bar/use-handle-f
 
 import message from '@/components/ui/message';
 import { RunningStatus } from '@/constants/knowledge';
-import { ResponseType } from '@/interfaces/database/base';
 import { IReferenceChunk } from '@/interfaces/database/chat';
 import { IChunk } from '@/interfaces/database/dataset';
 import {
@@ -65,6 +64,23 @@ export const enum DocumentApiAction {
   ParseDocument = 'parseDocument',
 }
 
+// séquentiel — décision spec (races duplicate_name/quota préexistantes côté
+// serveur ; monter à 3 = chantier futur conditionné au durcissement serveur)
+const UPLOAD_CONCURRENCY = 1;
+
+export interface IUploadFileResult {
+  name: string;
+  ok: boolean;
+  message?: string;
+}
+
+export interface IUploadDocumentResult {
+  code: number;
+  message: string;
+  data: IDocumentInfo[];
+  results: IUploadFileResult[];
+}
+
 export const useUploadDocument = () => {
   const queryClient = useQueryClient();
   const { id } = useParams();
@@ -74,40 +90,84 @@ export const useUploadDocument = () => {
     isPending: loading,
     mutateAsync,
   } = useMutation<
-    ResponseType<IDocumentInfo[]>,
+    IUploadDocumentResult,
     Error,
     { fileList: File[]; parserConfig?: Record<string, any> }
   >({
     mutationKey: [DocumentApiAction.UploadDocument],
     mutationFn: async ({ fileList, parserConfig }) => {
       if (!id) {
-        return { code: 500, message: 'Dataset ID is required' };
-      }
-      const formData = new FormData();
-      fileList.forEach((file: any) => {
-        formData.append('file', file);
-      });
-      if (parserConfig) {
-        formData.append('parser_config', JSON.stringify(parserConfig));
-      }
-
-      try {
-        const ret = await uploadDocument(id, formData);
-        const code = get(ret, 'code');
-
-        if (code === 0 || code === 500) {
-          queryClient.invalidateQueries({
-            queryKey: [DocumentApiAction.FetchDocumentList],
-          });
-        }
-        return ret;
-      } catch (error) {
-        console.warn(error);
         return {
           code: 500,
-          message: error + '',
+          message: 'Dataset ID is required',
+          data: [],
+          results: [],
         };
       }
+
+      // Un POST par fichier — voir UPLOAD_CONCURRENCY ci-dessus. Les fichiers
+      // sont traités par lots de cette taille (1 = séquentiel aujourd'hui) ;
+      // chaque fichier a son propre try/catch pour isoler un échec des
+      // autres. Monter UPLOAD_CONCURRENCY paralléliserait sans changer la
+      // forme du retour.
+      const results: IUploadFileResult[] = [];
+      const data: IDocumentInfo[] = [];
+      for (let i = 0; i < fileList.length; i += UPLOAD_CONCURRENCY) {
+        const batch = fileList.slice(i, i + UPLOAD_CONCURRENCY);
+        const batchResults = await Promise.all(
+          batch.map(async (file) => {
+            const formData = new FormData();
+            formData.append('file', file);
+            if (parserConfig) {
+              formData.append('parser_config', JSON.stringify(parserConfig));
+            }
+
+            try {
+              const ret = await uploadDocument(id, formData);
+              const code = get(ret, 'code');
+              const ok = code === 0;
+              const fileData = ok ? get(ret, 'data') : undefined;
+              return {
+                result: {
+                  name: file.name,
+                  ok,
+                  message: get(ret, 'message'),
+                } as IUploadFileResult,
+                data: Array.isArray(fileData) ? fileData : [],
+              };
+            } catch (error) {
+              console.warn(error);
+              return {
+                result: {
+                  name: file.name,
+                  ok: false,
+                  message: error + '',
+                } as IUploadFileResult,
+                data: [] as IDocumentInfo[],
+              };
+            }
+          }),
+        );
+
+        for (const { result, data: fileData } of batchResults) {
+          results.push(result);
+          data.push(...fileData);
+        }
+      }
+
+      queryClient.invalidateQueries({
+        queryKey: [DocumentApiAction.FetchDocumentList],
+      });
+
+      const failed = results.filter((r) => !r.ok);
+      return {
+        code: failed.length === 0 ? 0 : 500,
+        message: failed.length
+          ? `${failed.length}/${results.length} fichiers en échec`
+          : '',
+        data,
+        results,
+      };
     },
   });
 
