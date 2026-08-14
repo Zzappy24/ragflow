@@ -17,6 +17,9 @@ import time
 
 from rag.svr.task_executor_refactor.task_manager import TaskManager
 from rag.svr.task_executor_refactor.recording_context import timed_with_recording, get_recording_context, RecordingContext, set_recording_context, NullRecordingContext
+# CUSTOM B2B SaaS — adaptive chunking (CIA-10). Pure helper, imported here so
+# build_chunks can re-chunk oversized documents; see the marked block below.
+from rag.svr.adaptive_chunk import adaptive_settings, effective_chunk_token_num
 
 start_ts = time.time()
 
@@ -398,6 +401,68 @@ async def build_chunks(task, progress_callback):
         progress_callback(-1, "Internal server error while chunking: %s" % str(e).replace("'", ""))
         logging.exception("Chunking {}/{} got exception".format(task["location"], task["name"]))
         raise
+
+    # CUSTOM B2B SaaS — adaptive chunking (CIA-10). Two-pass : si le document
+    # produit plus de MAX_CHUNKS_PER_DOC chunks, on augmente chunk_token_num
+    # (borné par 90% du max_tokens du modèle d'embedding — au-delà les chunks
+    # seraient tronqués à l'encode, cf. truncate() plus bas) et on re-chunke UNE fois.
+    # La config de la KB n'est jamais modifiée. ADAPTIVE_CHUNK_SIZE=0 désactive.
+    try:
+        adaptive_enabled, max_chunks_per_doc, adaptive_hard_cap = adaptive_settings()
+        configured_chunk_token_num = parser_config_for_chunk.get("chunk_token_num", 0)
+        if adaptive_enabled and len(cks) > max_chunks_per_doc and configured_chunk_token_num > 0:
+            embd_max_tokens = 0
+            try:
+                task_embedding_id = task.get("embd_id")
+                if task_embedding_id:
+                    adaptive_embd_model_config = get_model_config_from_provider_instance(task["tenant_id"], LLMType.EMBEDDING, task_embedding_id)
+                else:
+                    adaptive_embd_model_config = get_tenant_default_model_by_type(task["tenant_id"], LLMType.EMBEDDING)
+                adaptive_embedding_model = LLMBundle(task["tenant_id"], adaptive_embd_model_config)
+                embd_max_tokens = adaptive_embedding_model.max_length
+            except Exception as e:
+                embd_max_tokens = 0
+                logging.debug("Adaptive chunking: could not resolve embedding model for tenant %s: %s", task["tenant_id"], e)
+
+            if embd_max_tokens > 0:
+                cap = min(adaptive_hard_cap, int(embd_max_tokens * 0.9))
+                new_chunk_token_num, reason = effective_chunk_token_num(
+                    configured_chunk_token_num,
+                    len(cks),
+                    embd_max_tokens,
+                    max_chunks=max_chunks_per_doc,
+                    hard_cap=adaptive_hard_cap,
+                )
+                if reason:
+                    progress_callback(msg=reason)
+                    parser_config_for_chunk["chunk_token_num"] = new_chunk_token_num
+                    async with chunk_limiter:
+                        cks = await thread_pool_exec(
+                            chunker.chunk,
+                            task["name"],
+                            binary=binary,
+                            from_page=task["from_page"],
+                            to_page=task["to_page"],
+                            lang=task_language,
+                            callback=progress_callback,
+                            kb_id=task["kb_id"],
+                            parser_config=parser_config_for_chunk,
+                            tenant_id=task["tenant_id"],
+                        )
+                    logging.info(
+                        "Adaptive re-chunk done for %s/%s: chunk_token_num %s -> %s, chunks now %s",
+                        task["location"],
+                        task["name"],
+                        configured_chunk_token_num,
+                        new_chunk_token_num,
+                        len(cks),
+                    )
+                if configured_chunk_token_num > cap:
+                    progress_callback(msg=f"chunk_token_num {configured_chunk_token_num} > capacité du modèle d'embedding {cap} : les chunks seront tronqués à l'encodage")
+    except TaskCanceledException:
+        raise
+    except Exception as e:
+        logging.exception("Adaptive chunking block failed for %s/%s, keeping first-pass chunks: %s", task["location"], task["name"], e)
 
     # Record raw chunks for comparison
     get_recording_context().record("raw_chunks", cks)
