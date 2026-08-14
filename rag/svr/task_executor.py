@@ -19,7 +19,7 @@ from rag.svr.task_executor_refactor.task_manager import TaskManager
 from rag.svr.task_executor_refactor.recording_context import timed_with_recording, get_recording_context, RecordingContext, set_recording_context, NullRecordingContext
 # CUSTOM B2B SaaS — adaptive chunking (CIA-10). Pure helper, imported here so
 # build_chunks can re-chunk oversized documents; see the marked block below.
-from rag.svr.adaptive_chunk import adaptive_settings, effective_chunk_token_num
+from rag.svr.adaptive_chunk import effective_chunk_token_num, resolve_adaptive_settings
 
 start_ts = time.time()
 
@@ -425,7 +425,10 @@ async def build_chunks(task, progress_callback):
     # global. L'adaptation two-pass, elle, ne se déclenche toujours que si
     # len(cks) > max_chunks_per_doc.
     try:
-        adaptive_enabled, max_chunks_per_doc, adaptive_hard_cap = adaptive_settings()
+        # Overrides par KB (adaptive_enabled / adaptive_max_chunks /
+        # adaptive_token_max dans le parser_config) par-dessus les env —
+        # politique par workspace, défauts qualité-d'abord (16384 / 1024).
+        adaptive_enabled, max_chunks_per_doc, adaptive_hard_cap = resolve_adaptive_settings(parser_config_for_chunk)
         configured_chunk_token_num = parser_config_for_chunk.get("chunk_token_num", 0)
         if adaptive_enabled and configured_chunk_token_num > 0:
             embd_max_tokens = 0

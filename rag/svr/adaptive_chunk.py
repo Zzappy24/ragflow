@@ -32,14 +32,55 @@ def adaptive_settings() -> tuple[bool, int, int]:
     """Read the three env knobs governing adaptive chunking.
 
     Returns (enabled, max_chunks_per_doc, hard_cap_tokens).
+
+    Défauts qualité-d'abord (révision 2026-08-14) : 16384 chunks avant
+    déclenchement (≈ >130 Mo de texte pur à 512 tokens/chunk — une spec client
+    Word/PDF dense garde sa granularité intégrale) et 1024 tokens de plafond
+    (zone de bonne qualité d'embedding bge-m3 ; à 2048 la dilution sémantique
+    coûte à chaque requête alors que le volume ne coûte qu'à l'ingestion).
     """
     enabled = os.environ.get("ADAPTIVE_CHUNK_SIZE", "1") not in ("0", "false", "False", "")
-    max_chunks = int(os.environ.get("MAX_CHUNKS_PER_DOC", "4096"))
-    hard_cap = int(os.environ.get("ADAPTIVE_CHUNK_TOKEN_MAX", "2048"))
+    max_chunks = int(os.environ.get("MAX_CHUNKS_PER_DOC", "16384"))
+    hard_cap = int(os.environ.get("ADAPTIVE_CHUNK_TOKEN_MAX", "1024"))
     return enabled, max_chunks, hard_cap
 
 
-def effective_chunk_token_num(configured: int, first_pass_chunks: int, embd_max_tokens: int, max_chunks: int = 4096, hard_cap: int = 2048) -> tuple[int, str | None]:
+def resolve_adaptive_settings(parser_config: dict | None) -> tuple[bool, int, int]:
+    """Env knobs overridden by per-KB keys from the dataset parser_config.
+
+    Reconnaît dans parser_config (posés par l'admin/API sur la KB) :
+      - adaptive_enabled: bool
+      - adaptive_max_chunks: int > 0
+      - adaptive_token_max: int > 0
+    Toute valeur absente ou invalide retombe sur l'env. Politique par
+    workspace/KB : une KB qualité-critique désactive ou relève son plafond,
+    une KB d'ingestion de masse serre.
+    """
+    enabled, max_chunks, hard_cap = adaptive_settings()
+    if not isinstance(parser_config, dict):
+        return enabled, max_chunks, hard_cap
+
+    override_enabled = parser_config.get("adaptive_enabled")
+    if isinstance(override_enabled, bool):
+        enabled = override_enabled
+
+    for key, current in (("adaptive_max_chunks", max_chunks), ("adaptive_token_max", hard_cap)):
+        raw = parser_config.get(key)
+        if raw is None:
+            continue
+        try:
+            value = int(raw)
+        except (TypeError, ValueError):
+            continue
+        if value > 0:
+            if key == "adaptive_max_chunks":
+                max_chunks = value
+            else:
+                hard_cap = value
+    return enabled, max_chunks, hard_cap
+
+
+def effective_chunk_token_num(configured: int, first_pass_chunks: int, embd_max_tokens: int, max_chunks: int = 16384, hard_cap: int = 1024) -> tuple[int, str | None]:
     """Retourne (chunk_token_num_effectif, raison|None).
 
     raison None => pas d'adaptation (first_pass_chunks <= max_chunks, ou configured
@@ -61,5 +102,9 @@ def effective_chunk_token_num(configured: int, first_pass_chunks: int, embd_max_
     if new <= configured:
         return configured, None
 
-    reason = f"document volumineux : {first_pass_chunks} chunks à {configured} tokens → taille portée à {new}"
+    reason = (
+        f"document volumineux : {first_pass_chunks} chunks à {configured} tokens → taille portée à {new}. "
+        "Pour une meilleure précision de recherche sur ce type de document, envisagez le mode "
+        "parent-child de la base de connaissances ou le découpage du fichier source."
+    )
     return new, reason

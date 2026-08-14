@@ -246,8 +246,21 @@ avec un `chunk_token_num` petit ne génère un nombre de chunks ingérable :
 | Env var | Défaut | Rôle |
 |---|---|---|
 | `ADAPTIVE_CHUNK_SIZE` | `"1"` (activé) | `"0"`/`"false"`/`"False"`/`""` désactive |
-| `MAX_CHUNKS_PER_DOC` | `4096` | seuil au-delà duquel le two-pass se déclenche |
-| `ADAPTIVE_CHUNK_TOKEN_MAX` | `2048` | plafond dur de la taille de chunk recalculée, en plus du plafond dérivé de `embd_max_tokens * 0.9` |
+| `MAX_CHUNKS_PER_DOC` | `16384` | seuil au-delà duquel le two-pass se déclenche (révision qualité-d'abord 2026-08-14 : à 512 tokens/chunk ≈ >130 Mo de texte pur — une spec client dense garde sa granularité intégrale ; 16k chunks ≈ 64 Mo de vecteurs, négligeable) |
+| `ADAPTIVE_CHUNK_TOKEN_MAX` | `1024` | plafond dur de la taille de chunk recalculée (zone de bonne qualité bge-m3 — la dilution sémantique se paie à chaque requête, le volume seulement à l'ingestion), en plus du plafond dérivé de `embd_max_tokens * 0.9` |
+
+**Overrides par KB** (clés du `parser_config` de la dataset, prioritaires sur
+les env — politique par workspace) : `adaptive_enabled` (bool),
+`adaptive_max_chunks` (int > 0), `adaptive_token_max` (int > 0). Une KB
+qualité-critique désactive ou relève son plafond ; une KB d'ingestion de masse
+serre. **Qualité RAG — hiérarchie des recommandations pour les documents à
+texte massif** : (1) découper le fichier source à l'ingestion (100-200 Mo par
+morceau) — granularité optimale, l'adaptatif ne se déclenche jamais ; (2) mode
+parent-child de la KB (enfants courts pour le matching précis, parents longs
+pour le contexte LLM) — le message d'adaptation le recommande explicitement ;
+(3) laisser l'adaptatif faire (filet de sécurité). L'`overlapped_percent` de la
+KB est préservé par l'adaptation — 10-15 % d'overlap atténue les pertes aux
+frontières des chunks agrandis.
 
 **Piège local dev — `MAX_CONTENT_LENGTH` n'est PAS repris par
 `scripts/dev_up.sh` / `dev_simple.sh`.** Ces scripts exportent `PYTHONPATH`,
@@ -282,7 +295,8 @@ exporté)** :
   dans `progress_msg` ET dans les logs du task executor (`document volumineux
   : 21232 chunks à 32 tokens → taille portée à 166`), le document se parse
   avec succès (`run: DONE`). **Nuance constatée** : le nombre de chunks final
-  observé était de 4496, soit ~10% au-dessus de `MAX_CHUNKS_PER_DOC` (4096) —
+  observé était de 4496, soit ~10% au-dessus du `MAX_CHUNKS_PER_DOC` en
+  vigueur lors de ce test (4096 ; défaut porté à 16384 depuis) —
   la formule `needed = ceil(configured * first_pass_chunks / max_chunks)` de
   `effective_chunk_token_num` suppose un nombre de chunks proportionnel
   linéairement à `1/chunk_token_num`, ce qui n'est qu'une approximation : le
