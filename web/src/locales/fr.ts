@@ -1897,6 +1897,10 @@ Exemple : Virtual Hosted Style`,
       fileTooLarge:
         '« {{name}} » a été refusé : il dépasse la taille maximale autorisée ({{limit}})',
       fileRejected: '« {{name}} » a été refusé',
+      uploadPartialFailed:
+        '{{failedCount}}/{{totalCount}} fichiers en échec : {{files}}',
+      uploadAllFailed:
+        'Échec du téléversement pour tous les fichiers : {{files}}',
     },
     flow: {
       cite: 'Citation',

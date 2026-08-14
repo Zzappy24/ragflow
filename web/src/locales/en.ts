@@ -1921,6 +1921,9 @@ Example: Virtual Hosted Style`,
       fileTooLarge:
         '"{{name}}" was rejected: it exceeds the maximum file size ({{limit}})',
       fileRejected: '"{{name}}" was rejected',
+      uploadPartialFailed:
+        '{{failedCount}}/{{totalCount}} files failed to upload: {{files}}',
+      uploadAllFailed: 'Upload failed for all files: {{files}}',
     },
     flow: {
       preprocess: {
