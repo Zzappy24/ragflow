@@ -372,6 +372,9 @@ These files contain custom multi-tenant code that will likely conflict with upst
 | `agent/sandbox/sandbox_base_image/python/Dockerfile` | `COPY famat_recipes.py /usr/local/lib/python3.11/site-packages/famat_recipes.py` — bakes the FAMAT POC analytics recipes into the sandbox Python image so `code_exec` can `import famat_recipes`. Grep `CUSTOM B2B SaaS — recettes FAMAT` |
 | `agent/sandbox/sandbox_base_image/python/requirements.txt` | `duckdb` + `pymysql` added for the FAMAT POC recipes (in-sandbox CSV/SQL analysis). Plain list, no code marker — see the `# CUSTOM B2B SaaS — duckdb+pymysql pour recettes FAMAT (POC)` comment line above the two packages in the file itself. |
 | `agent/sandbox/sandbox_base_image/python/famat_recipes.py` | GENERATED copy of `poc/famat/famat_recipes.py`, baked into the sandbox image via the Dockerfile above. Resync procedure documented in `poc/famat/README.md` — keep both files byte-identical modulo the `# GÉNÉRÉ` header on line 1. |
+| `agent/sandbox/client.py` | Provider `k8s` enregistré dans `provider_classes` + import, et dans le set `{"local", "ssh", "k8s"}` qui déclenche `SandboxProviderConfigError` sur un `initialize()` KO (sinon message trompeur "No sandbox provider configured"). Grep `CUSTOM B2B SaaS — provider sandbox k8s` |
+| `agent/sandbox/providers/k8s.py` + `agent/sandbox/security_shared.py` + `agent/sandbox/tests/` | Fichiers entièrement custom (provider Jobs K8s durcis + AST partagé + tests) — pas de conflit attendu, listés pour visibilité |
+| `admin/server/services.py` — `SandboxMgr` | Provider `k8s` enregistré dans les 4 registres (`PROVIDER_REGISTRY`, schemas de `get_provider_config_schema`, `provider_classes` de `set_config` et de `test_connection`) — sinon invisible/rejeté côté admin panel même si `agent/sandbox/client.py` le supporte. Grep `CUSTOM B2B SaaS — provider sandbox k8s` |
 
 ### Go server — upstream migration watch
 

@@ -1,0 +1,44 @@
+{{- if .Values.sandbox.enabled }}
+apiVersion: rbac.authorization.k8s.io/v1
+kind: Role
+metadata:
+  name: ragflow-sandbox-runner
+  namespace: {{ .Values.sandbox.namespace.name }}
+rules:
+  - apiGroups: ["batch"]
+    resources: ["jobs"]
+    verbs: ["create", "get", "list", "watch", "delete"]
+  - apiGroups: [""]
+    resources: ["pods"]
+    verbs: ["get", "list"]
+  - apiGroups: [""]
+    resources: ["pods/log"]
+    verbs: ["get"]
+  - apiGroups: [""]  # CUSTOM B2B SaaS — provider sandbox k8s: _fetch_pod_events needs list_namespaced_event
+    resources: ["events"]
+    verbs: ["get", "list"]
+---
+apiVersion: rbac.authorization.k8s.io/v1
+kind: RoleBinding
+metadata:
+  name: ragflow-sandbox-runner
+  namespace: {{ .Values.sandbox.namespace.name }}
+roleRef:
+  apiGroup: rbac.authorization.k8s.io
+  kind: Role
+  name: ragflow-sandbox-runner
+subjects:
+  # ragflow-api.fullname / ragflow-task-executor.fullname only interpolate
+  # .Release.Name (see charts/ragflow-{api,task-executor}/templates/
+  # _helpers.tpl) — they don't touch .Values at all, so calling them with
+  # the umbrella's root context "." resolves correctly (named templates are
+  # shared across the whole chart + subcharts in Helm 3; .Release is the
+  # same object everywhere). Confirmed by rendering the chart — see
+  # task-5-report.md for the exact `helm template` output.
+  - kind: ServiceAccount
+    name: {{ include "ragflow-api.fullname" . }}
+    namespace: {{ .Release.Namespace }}
+  - kind: ServiceAccount
+    name: {{ include "ragflow-task-executor.fullname" . }}
+    namespace: {{ .Release.Namespace }}
+{{- end }}

@@ -190,3 +190,40 @@ buildkit_build_prd:
         --opt build-arg:VERSION_INFO="${IMAGE_TAG}" \
         --output type=image,name=harbor.cylndata.cyllene.pro/${HARBOR_PROJECT}/${IMAGE_NAME}:${IMAGE_TAG},push=true,registry.insecure=true
   when: manual
+
+# =============================================================================
+#  kaniko_build_sandbox_python_prd
+#  -----------------------------------------------------------------------------
+#  Image d'exécution du provider sandbox k8s (Jobs éphémères dans rag-sandbox).
+#  python:3.11-slim + numpy/pandas/matplotlib/requests/duckdb/pymysql
+#  + famat_recipes (copie cuite — resync: poc/famat/README.md). ~600 MB.
+# =============================================================================
+kaniko_build_sandbox_python_prd:
+  stage: build_prd
+  tags:
+    - alterai-prod
+  script:
+      - |
+        if [ -n "$CI_COMMIT_TAG" ]; then
+          IMAGE_TAG="$CI_COMMIT_TAG"
+        else
+          IMAGE_TAG="$CI_COMMIT_SHORT_SHA"
+        fi
+      - set -x
+      - echo "{\"auths\":{\"harbor.cylndata.cyllene.pro\":{\"username\":\"$HARBOR_CYLNDATA_ROBOT_PRD\",\"password\":\"$HARBOR_CYLNDATA_ROBOT_PWD_PRD\"}}}" > /kaniko/.docker/config.json
+      - |
+        /kaniko/executor \
+          --cache=true \
+          --cache-repo "harbor.cylndata.cyllene.pro/${HARBOR_PROJECT}/ragflow-sandbox-python/cache" \
+          --compressed-caching=false \
+          --insecure=true \
+          --skip-tls-verify=true \
+          --snapshot-mode=redo \
+          --use-new-run \
+          --cleanup \
+          --push-retry=3 \
+          --build-arg NEED_MIRROR=0 \
+          --context "${CI_PROJECT_DIR}/agent/sandbox/sandbox_base_image/python" \
+          --dockerfile "${CI_PROJECT_DIR}/agent/sandbox/sandbox_base_image/python/Dockerfile" \
+          --destination "harbor.cylndata.cyllene.pro/${HARBOR_PROJECT}/ragflow-sandbox-python:${IMAGE_TAG}"
+  when: manual

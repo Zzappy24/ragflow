@@ -89,6 +89,10 @@ EXEMPT_GET: set[tuple[str, str]] = {
     # to api/apps/restful_apis/dify_retrieval_api.py. Same Dify-style apikey auth.
     ("api/apps/restful_apis/dify_retrieval_api.py", "retrieval"),
     ("api/apps/restful_apis/dify_retrieval_api.py", "retrieval_health_check"),
+    # X-Internal-Secret pattern (comme internal_llm_verify dans EXEMPT) — scan
+    # de stockage Infinity par tenant, appelé par le mgmt panel sans session
+    # utilisateur. Auth vérifiée dans le handler (_check_internal_secret).
+    ("api/apps/restful_apis/internal_api.py", "internal_infinity_storage"),
 }
 
 # Routes intentionally exempt from @require_permission.
