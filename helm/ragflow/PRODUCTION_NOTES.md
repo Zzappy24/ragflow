@@ -223,6 +223,76 @@ the kindnet loopback driver. On rook-ceph this is a no-op (volume is empty
 and root-writable), but we keep the init for portability and future-proofing
 when we move to a non-Ceph PV.
 
+### Limites d'upload (CIA-10)
+
+**Valeurs**
+
+| Paramètre | Où | Valeur |
+|---|---|---|
+| `global.maxContentLength` | `helm/ragflow/values.yaml` → injecté dans `ragflow-api` et `ragflow-task-executor` (`MAX_CONTENT_LENGTH`) | `"1073741824"` (1 GiB) |
+| `gateway.apiTimeout` | `helm/ragflow/values.yaml` → `templates/gateway-httproute.yaml`, route `/api/` + `/v1/` | `"900s"` (était 600s codé en dur, pour couvrir l'upload + le SSE chat) |
+| `docker/.env` (Docker Compose only) | `MAX_CONTENT_LENGTH=1073741824` | même valeur, décommentée |
+
+Le front borne aussi à 1 Go **avant** le POST (évite d'attendre la fin d'un
+transfert que le serveur va rejeter) : `web/src/constants/upload.ts` →
+`MAX_UPLOAD_FILE_SIZE_BYTES = 1024 * 1024 * 1024`. **Les deux valeurs (Helm +
+constante front) doivent être changées ensemble** — rien ne les garde en
+synchro automatiquement.
+
+**Chunking adaptatif two-pass** (`rag/svr/adaptive_chunk.py`, consommé dans
+`build_chunks` de `rag/svr/task_executor.py`) — évite qu'un très gros document
+avec un `chunk_token_num` petit ne génère un nombre de chunks ingérable :
+
+| Env var | Défaut | Rôle |
+|---|---|---|
+| `ADAPTIVE_CHUNK_SIZE` | `"1"` (activé) | `"0"`/`"false"`/`"False"`/`""` désactive |
+| `MAX_CHUNKS_PER_DOC` | `4096` | seuil au-delà duquel le two-pass se déclenche |
+| `ADAPTIVE_CHUNK_TOKEN_MAX` | `2048` | plafond dur de la taille de chunk recalculée, en plus du plafond dérivé de `embd_max_tokens * 0.9` |
+
+**Piège local dev — `MAX_CONTENT_LENGTH` n'est PAS repris par
+`scripts/dev_up.sh` / `dev_simple.sh`.** Ces scripts exportent `PYTHONPATH`,
+`DOC_ENGINE`, `ADMIN_JWT_SECRET`, `RSA_PASSPHRASE` puis sourcent `.env.local`
+— **jamais `docker/.env`**. La valeur `MAX_CONTENT_LENGTH=1073741824` de
+`docker/.env` n'est donc lue que par les conteneurs Docker Compose complets,
+pas par un serveur/task-executor lancé en local via ces scripts. Constaté en
+conditions réelles le 2026-08-14 : un stack dev démarré avant le merge de
+CIA-10 tournait toujours sans `MAX_CONTENT_LENGTH` dans son environnement
+(`ps eww <pid> | grep MAX_CONTENT_LENGTH` vide) — tout upload > 128 Mo (le
+défaut Quart codé dans `api/apps/__init__.py`) aurait été rejeté malgré le
+changement livré. Pour tester en local : `export
+MAX_CONTENT_LENGTH=1073741824` **avant** d'invoquer `dev_up.sh`/`dev_simple.sh`
+(la variable exportée dans le shell parent survit au `source .env.local`, qui
+ne la redéfinit pas). En K8s ce piège n'existe pas : la valeur vient de
+`global.maxContentLength` injectée directement dans les deployments.
+
+**Validation réelle (2026-08-14, stack dev relancée avec `MAX_CONTENT_LENGTH`
+exporté)** :
+- Upload d'un fichier de ~900 Mo (943 718 400 octets) via `curl -F` → `HTTP
+  200`, `code: 0`, document créé. ~17 s en local.
+- Upload d'un fichier de ~1,1 Go (1 153 433 600 octets) → rejet propre,
+  quasi instantané (< 0.1 s, coupé avant lecture complète du corps). **Le
+  rejet arrive en `HTTP 200` avec `{"code":100,"message":"<RequestEntityTooLarge
+  '413: Request Entity Too Large'>"}`**, pas en statut HTTP 413 brut — l'app
+  Quart encapsule systématiquement les erreurs dans une enveloppe JSON 200.
+  Le message contient bien la classe d'exception Werkzeug attendue, donc
+  détectable côté client/monitoring par pattern-matching sur `message`, pas
+  sur le status code HTTP.
+- Chunking adaptatif, e2e réel (KB `chunk_token_num=32`, doc texte varié
+  ~2 Mo, 21 232 chunks en 1re passe) : le message adaptatif apparaît bien
+  dans `progress_msg` ET dans les logs du task executor (`document volumineux
+  : 21232 chunks à 32 tokens → taille portée à 166`), le document se parse
+  avec succès (`run: DONE`). **Nuance constatée** : le nombre de chunks final
+  observé était de 4496, soit ~10% au-dessus de `MAX_CHUNKS_PER_DOC` (4096) —
+  la formule `needed = ceil(configured * first_pass_chunks / max_chunks)` de
+  `effective_chunk_token_num` suppose un nombre de chunks proportionnel
+  linéairement à `1/chunk_token_num`, ce qui n'est qu'une approximation : le
+  chunker respecte les frontières de ligne et ne découpe jamais au milieu,
+  donc le ratio réel dépend de la distribution des longueurs de ligne du
+  document. Le two-pass reste très efficace (21 232 → 4496, réduction ~79%)
+  mais **n'est pas une garantie stricte du plafond** — à garder en tête pour
+  du monitoring/alerting basé sur `MAX_CHUNKS_PER_DOC` (prévoir une marge,
+  pas une égalité stricte).
+
 ---
 
 ## Smoke test sequence (post first sync)
