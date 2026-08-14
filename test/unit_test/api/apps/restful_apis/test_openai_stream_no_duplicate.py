@@ -58,8 +58,11 @@ def _load_openai_api(monkeypatch):
     apps_mod.login_required = lambda func: func
     monkeypatch.setitem(sys.modules, "api.apps", apps_mod)
 
-    _stub(monkeypatch, "quart", Response=object, jsonify=lambda *a, **k: None)
+    _stub(monkeypatch, "quart", Response=object, jsonify=lambda *a, **k: None, g=SimpleNamespace())
     _stub(monkeypatch, "api.apps", current_user=SimpleNamespace(id="tenant-1"), login_required=lambda func: func)
+    # CUSTOM B2B SaaS: openai_api.py importe active_tenant_id (résolution
+    # workspace via quart.g) — stub aligné sur current_user.id ci-dessus.
+    _stub(monkeypatch, "api.utils.tenant_context", active_tenant_id=lambda: "tenant-1")
     # CUSTOM B2B SaaS: openai_api.py imports RBAC decorators from our extension.
     # Upstream's test stubs `api.apps` as a ModuleType (not a package), so
     # `from api.apps.extensions.rbac import require_permission, Permission`
