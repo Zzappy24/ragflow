@@ -249,7 +249,14 @@ export function FileUploader(props: FileUploaderProps) {
             toast.error(
               t('fileManager.fileTooLarge', {
                 name: file.name,
-                limit: MAX_UPLOAD_FILE_SIZE_LABEL,
+                // CUSTOM B2B SaaS: localize the unit label instead of the
+                // raw TS constant (which is a fixed French '1 Go' literal
+                // and would leak into the English UI as-is). The constant
+                // stays as the i18n default value fallback.
+                limit: t(
+                  'fileManager.maxFileSizeValue',
+                  MAX_UPLOAD_FILE_SIZE_LABEL,
+                ),
               }),
             );
           } else {

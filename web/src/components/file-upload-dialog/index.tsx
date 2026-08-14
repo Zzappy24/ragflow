@@ -286,7 +286,12 @@ export function FileUploadDialog({
           <DialogTitle>{t('fileManager.uploadFile')}</DialogTitle>
           <DialogDescription>
             {t('fileManager.maxFileSizeLabel', {
-              limit: MAX_UPLOAD_FILE_SIZE_LABEL,
+              // CUSTOM B2B SaaS: localize the unit label instead of the raw
+              // TS constant (fixed French '1 Go' literal) — see file-uploader.tsx.
+              limit: t(
+                'fileManager.maxFileSizeValue',
+                MAX_UPLOAD_FILE_SIZE_LABEL,
+              ),
             })}
           </DialogDescription>
         </DialogHeader>
