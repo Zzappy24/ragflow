@@ -403,6 +403,11 @@ export default function WorkspaceModelsPage({ wsId }: { wsId?: string }) {
           <Form.Item name="max_tokens" label="Max Tokens" initialValue={8192}>
             <InputNumber min={1} style={{ width: '100%' }} />
           </Form.Item>
+          <Form.Item name="is_tools" label="Function calling (tools)" valuePropName="checked"
+            initialValue={false}
+            extra="Requis pour les composants Agent (tool calling). À activer pour les modèles chat qui supportent les function calls — sinon l'Agent n'appellera jamais ses outils.">
+            <Switch />
+          </Form.Item>
         </Form>
       </Modal>
 
@@ -426,6 +431,17 @@ export default function WorkspaceModelsPage({ wsId }: { wsId?: string }) {
           </Form.Item>
           <Form.Item name="max_tokens" label="Max Tokens">
             <InputNumber min={1} style={{ width: '100%' }} />
+          </Form.Item>
+          <Form.Item name="is_tools" label="Function calling (tools)"
+            extra="Laisser vide pour conserver la valeur actuelle.">
+            <Select
+              allowClear
+              placeholder="Conserver la valeur actuelle"
+              options={[
+                { value: true, label: 'Activé' },
+                { value: false, label: 'Désactivé' },
+              ]}
+            />
           </Form.Item>
         </Form>
       </Modal>
