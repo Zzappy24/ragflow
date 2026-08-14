@@ -34,7 +34,8 @@
 ## Volet B — Lot illimité : un POST par fichier
 
 Refactor de `useUploadDocument` (`web/src/hooks/use-document-request.ts`) :
-- Une requête `uploadDocument` **par fichier**, concurrence limitée (3 simultanées), `parser_config` répété sur chaque requête.
+- Une requête `uploadDocument` **par fichier**, **séquentielle** (concurrence = 1, constante front ajustable), `parser_config` répété sur chaque requête.
+- **Décision concurrence (question utilisateur)** : la logique serveur n'est PAS touchée, mais un lot parallèle augmenterait la probabilité de deux races check-then-act préexistantes : `duplicate_name()` (query-loop, `api/db/services/__init__.py:45` — deux uploads parallèles du même nom peuvent obtenir le même `nom(1).ext`) et le contrôle de quota stockage du fork. Le but de CIA-10 (taille de lot illimitée) est entièrement atteint en séquentiel → concurrence 1 par défaut, zéro risque nouveau. Passer à 3 = chantier ultérieur conditionné au durcissement de `duplicate_name` (contrainte d'unicité + retry).
 - Agrégation : le lot continue si un fichier échoue ; résultat final = liste `{fichier → ok/erreur}` remontée à l'UI (le composant d'upload affiche l'état par fichier) ; invalidation du cache une fois le lot terminé.
 - **Contrainte fork** : `uploadDocument` de `web/src/services/knowledge-service.ts` utilise `axios` direct + header `X-Workspace-Id` (piège documenté CLAUDE.md) — le refactor ne touche PAS ce chemin, il ne change que l'appelant.
 - Effet : la taille du lot n'a plus aucune limite HTTP ; seule la limite unitaire s'applique.
