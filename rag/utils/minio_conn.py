@@ -197,6 +197,36 @@ class RAGFlowMinio:
         )
         return None
 
+    # CUSTOM B2B SaaS — streamed download (perf). `get()` charge le blob
+    # ENTIER en RAM (r.read()) : un download de 4 Go = 4 Go dans le pod api
+    # + des secondes de lecture. get_stream() rend un générateur de chunks
+    # (8 Mo) : mémoire constante, et le caller peut yield entre deux chunks.
+    # Retourne None si l'objet est introuvable/inaccessible.
+    @use_default_bucket
+    @use_prefix_path
+    def get_stream(self, bucket, filename, chunk_size=8 * 1024 * 1024, tenant_id=None):
+        try:
+            r = self.conn.get_object(bucket, filename)
+        except Exception as e:
+            logging.warning(f"get_stream: cannot open {bucket}/{filename}: {e}")
+            return None
+
+        def _iter():
+            try:
+                while True:
+                    chunk = r.read(chunk_size)
+                    if not chunk:
+                        break
+                    yield chunk
+            finally:
+                try:
+                    r.close()
+                    r.release_conn()
+                except Exception:
+                    pass
+
+        return _iter()
+
     @use_default_bucket
     @use_prefix_path
     def obj_exist(self, bucket, filename, tenant_id=None):

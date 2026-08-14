@@ -25,6 +25,8 @@ from peewee import OperationalError
 from pydantic import BaseModel, Field, validator
 from quart import request, send_file
 
+from api.utils.blob_stream import stream_blob_response
+
 from api.db import FileType
 from api.db.db_models import APIToken, Document, File, Task
 from api.db.joint_services.tenant_model_service import get_model_config_by_id, get_model_config_from_provider_instance, get_tenant_default_model_by_type
@@ -320,17 +322,12 @@ async def download(tenant_id, dataset_id, document_id):
         return get_error_data_result(message=f"The dataset not own the document {document_id}.")
     # The process of downloading
     doc_id, doc_location = File2DocumentService.get_storage_address(doc_id=document_id)  # minio address
-    file_stream = settings.STORAGE_IMPL.get(doc_id, doc_location)
-    if not file_stream:
+    # CUSTOM B2B SaaS — streamed download (api/utils/blob_stream.py) : la
+    # lecture sync du blob entier gelait l'event-loop du pod api.
+    resp = await stream_blob_response(doc_id, doc_location, doc[0].name)
+    if resp is None:
         return construct_json_result(message="This file is empty.", code=RetCode.DATA_ERROR)
-    file = BytesIO(file_stream)
-    # Use send_file with a proper filename and MIME type
-    return await send_file(
-        file,
-        as_attachment=True,
-        attachment_filename=doc[0].name,
-        mimetype="application/octet-stream",  # Set a default MIME type
-    )
+    return resp
 
 
 @manager.route("/documents/<document_id>", methods=["GET"])  # noqa: F821
@@ -367,17 +364,12 @@ async def download_doc(document_id):
         return get_error_data_result(message="You do not have access to this document.")
     # The process of downloading
     doc_id, doc_location = File2DocumentService.get_storage_address(doc_id=document_id)  # minio address
-    file_stream = settings.STORAGE_IMPL.get(doc_id, doc_location)
-    if not file_stream:
+    # CUSTOM B2B SaaS — streamed download (api/utils/blob_stream.py) : la
+    # lecture sync du blob entier gelait l'event-loop du pod api.
+    resp = await stream_blob_response(doc_id, doc_location, doc[0].name)
+    if resp is None:
         return construct_json_result(message="This file is empty.", code=RetCode.DATA_ERROR)
-    file = BytesIO(file_stream)
-    # Use send_file with a proper filename and MIME type
-    return await send_file(
-        file,
-        as_attachment=True,
-        attachment_filename=doc[0].name,
-        mimetype="application/octet-stream",  # Set a default MIME type
-    )
+    return resp
 
 
 
