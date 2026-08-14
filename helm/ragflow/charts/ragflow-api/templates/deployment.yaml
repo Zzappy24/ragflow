@@ -160,6 +160,8 @@ spec:
             # PYTHONPATH must point at the repo root inside the image.
             - name: PYTHONPATH
               value: "/ragflow"
+            - name: MAX_CONTENT_LENGTH
+              value: {{ .Values.global.maxContentLength | default "1073741824" | quote }}
 
           resources:
             {{- toYaml .Values.resources | nindent 12 }}

@@ -63,6 +63,16 @@ global:
   # sandbox provider is active.
   sandboxTokenAutomount: false
 
+  # Taille max d'un fichier uploadé (HTTP body Quart + validation DOC_MAXIMUM_SIZE).
+  # Lue par ragflow-api ET ragflow-task-executor (common/settings.py). 1 GiB.
+  maxContentLength: "1073741824"
+
+# --- gateway -------------------------------------------------------------
+gateway:
+  # Timeout de la route /api|/v1 — uploads volumineux (1 GiB à ~10 Mbps ≈ 14 min → 900s
+  # couvre un lien correct) ET streaming SSE. Était hardcodé 600s.
+  apiTimeout: "900s"
+
 # --- ragflow-api -------------------------------------------------------------
 # K8s-native: 1 worker per pod, scale through replica count. See
 # `charts/ragflow-api/values.yaml` for rationale.

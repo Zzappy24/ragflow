@@ -137,6 +137,8 @@ spec:
               valueFrom: { fieldRef: { fieldPath: status.podIP }}
             - name: PYTHONPATH
               value: "/ragflow"
+            - name: MAX_CONTENT_LENGTH
+              value: {{ .Values.global.maxContentLength | default "1073741824" | quote }}
             - name: TASK_EXECUTOR_METRICS_PORT
               value: "9381"
             # DEVICE controls whether DeepDoc / pip_install_torch picks GPU.
