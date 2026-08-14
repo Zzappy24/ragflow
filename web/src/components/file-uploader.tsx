@@ -5,6 +5,7 @@
 import { FileText, FolderUp, LucideTrash2, Upload } from 'lucide-react';
 import * as React from 'react';
 import Dropzone, {
+  ErrorCode,
   type DropzoneProps,
   type FileRejection,
 } from 'react-dropzone';
@@ -13,6 +14,10 @@ import { toast } from 'sonner';
 import { Button } from '@/components/ui/button';
 import { Progress } from '@/components/ui/progress';
 import { Tabs, TabsContent, TabsList, TabsTrigger } from '@/components/ui/tabs';
+import {
+  MAX_UPLOAD_FILE_SIZE_BYTES,
+  MAX_UPLOAD_FILE_SIZE_LABEL,
+} from '@/constants/upload';
 import { useControllableState } from '@/hooks/use-controllable-state';
 import { cn, formatBytes } from '@/lib/utils';
 import { useTranslation } from 'react-i18next';
@@ -143,7 +148,7 @@ interface FileUploaderProps extends Omit<
   /**
    * Maximum file size for the uploader.
    * @type number | undefined
-   * @default 1024 * 1024 * 2 // 2MB
+   * @default MAX_UPLOAD_FILE_SIZE_BYTES // 1GB
    * @example maxSize={1024 * 1024 * 2} // 2MB
    */
   maxSize?: DropzoneProps['maxSize'];
@@ -187,7 +192,7 @@ export function FileUploader(props: FileUploaderProps) {
     accept = {
       'image/*': [],
     },
-    maxSize = 1024 * 1024 * 10000000,
+    maxSize = MAX_UPLOAD_FILE_SIZE_BYTES,
     maxFileCount = 100000000000,
     multiple = false,
     disabled = false,
@@ -235,8 +240,21 @@ export function FileUploader(props: FileUploaderProps) {
       setFiles(updatedFiles);
 
       if (rejectedFiles.length > 0) {
-        rejectedFiles.forEach(({ file }) => {
-          toast.error(`File ${file.name} was rejected`);
+        rejectedFiles.forEach(({ file, errors }) => {
+          const isTooLarge = errors.some(
+            (error) => error.code === ErrorCode.FileTooLarge,
+          );
+
+          if (isTooLarge) {
+            toast.error(
+              t('fileManager.fileTooLarge', {
+                name: file.name,
+                limit: MAX_UPLOAD_FILE_SIZE_LABEL,
+              }),
+            );
+          } else {
+            toast.error(t('fileManager.fileRejected', { name: file.name }));
+          }
         });
       }
 
@@ -258,7 +276,7 @@ export function FileUploader(props: FileUploaderProps) {
         });
       }
     },
-    [files, maxFileCount, multiple, onUpload, setFiles],
+    [files, maxFileCount, multiple, onUpload, setFiles, t],
   );
 
   const onDrop = React.useCallback(

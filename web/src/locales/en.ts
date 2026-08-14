@@ -1917,6 +1917,10 @@ Example: Virtual Hosted Style`,
         'Each file must not exceed 10MB, and the total number of files must not exceed 128.',
       destinationFolder: 'Destination folder',
       pleaseUploadAtLeastOneFile: 'Please upload at least one file',
+      maxFileSizeLabel: 'Max file size per file: {{limit}}',
+      fileTooLarge:
+        '"{{name}}" was rejected: it exceeds the maximum file size ({{limit}})',
+      fileRejected: '"{{name}}" was rejected',
     },
     flow: {
       preprocess: {

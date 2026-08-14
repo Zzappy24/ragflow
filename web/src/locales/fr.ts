@@ -1893,6 +1893,10 @@ Exemple : Virtual Hosted Style`,
         'Chaque fichier ne doit pas dépasser 10 Mo, et le nombre total de fichiers ne doit pas dépasser 128.',
       destinationFolder: 'Dossier de destination',
       pleaseUploadAtLeastOneFile: 'Veuillez téléverser au moins un fichier',
+      maxFileSizeLabel: 'Taille max par fichier : {{limit}}',
+      fileTooLarge:
+        '« {{name}} » a été refusé : il dépasse la taille maximale autorisée ({{limit}})',
+      fileRejected: '« {{name}} » a été refusé',
     },
     flow: {
       cite: 'Citation',
