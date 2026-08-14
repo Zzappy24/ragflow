@@ -19,6 +19,9 @@ global:
     - name: harbor-pull-secret
   env:
     INTERNAL_API_SECRET: "bb147273319ee168e9825b94842ad048ba9d8e569164c4cbd90b0dfd97ffef06"
+  # k8s sandbox provider is enabled below — task-executor needs its SA
+  # token in-cluster to create/watch/delete sandbox Jobs.
+  sandboxTokenAutomount: true
 externalSecrets:
   enabled: false
 
@@ -285,6 +288,30 @@ monitoring:
 
 networkPolicy:
   enabled: false
+
+# k8s sandbox provider — CodeExec tool runs as one-shot Jobs in their own
+# namespace, isolated by RBAC + NetworkPolicy + ResourceQuota (see
+# helm/ragflow/templates/sandbox/*.yaml).
+sandbox:
+  enabled: true
+  image:
+    repository: "harbor.cylndata.cyllene.pro/data/ragflow-sandbox-python"
+    tag: "v0.9.6"          # aligned with global.imageTag above
+  networkPolicy:
+    minioNamespace: "rag-new2"
+    # minio-operator labels tenant pods `v1.min.io/tenant: <tenant-name>`
+    # (NOT `app: minio` — that's only the values.yaml generic placeholder).
+    # Confirmed against this same chart's templates/minio-tenant.yaml
+    # (Tenant CR `metadata.name: minio`) and the existing egress rule in
+    # templates/networkpolicy.yaml ("4a. api -> ... MinIO" block), both of
+    # which already select MinIO pods with `v1.min.io/tenant: minio`.
+    # `app: null` un-sets the values.yaml default key — Helm deep-merges
+    # nested maps across -f files, so without this both `app: minio` and
+    # `v1.min.io/tenant: minio` would end up required together (matchLabels
+    # is AND semantics) and the rule would never match any real pod.
+    minioPodSelector:
+      app: null
+      v1.min.io/tenant: minio
 
 ragflow-frontend:
   enabled: true

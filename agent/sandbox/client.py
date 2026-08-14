@@ -78,6 +78,7 @@ def _load_provider_from_settings() -> None:
             LocalProvider,
             SSHProvider,
         )
+        from agent.sandbox.providers.k8s import K8sProvider  # CUSTOM B2B SaaS — provider sandbox k8s
 
         provider_classes = {
             "self_managed": SelfManagedProvider,
@@ -85,6 +86,7 @@ def _load_provider_from_settings() -> None:
             "e2b": E2BProvider,
             "local": LocalProvider,
             "ssh": SSHProvider,
+            "k8s": K8sProvider,  # CUSTOM B2B SaaS — provider sandbox k8s
         }
 
         if provider_type not in provider_classes:
@@ -97,7 +99,7 @@ def _load_provider_from_settings() -> None:
         # Initialize the provider
         if not provider.initialize(config):
             message = f"Failed to initialize sandbox provider: {provider_type}. Config keys: {list(config.keys())}"
-            if provider_type in {"local", "ssh"}:
+            if provider_type in {"local", "ssh", "k8s"}:  # CUSTOM B2B SaaS — provider sandbox k8s
                 raise SandboxProviderConfigError(message)
             logger.error(message)
             return

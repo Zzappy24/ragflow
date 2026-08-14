@@ -9,6 +9,8 @@ ENV MATPLOTLIBRC=/usr/local/etc/matplotlibrc
 
 COPY requirements.txt .
 COPY matplotlibrc /usr/local/etc/matplotlibrc
+# CUSTOM B2B SaaS — recettes FAMAT cuites dans l'image sandbox (POC dérive process)
+COPY famat_recipes.py /usr/local/lib/python3.11/site-packages/famat_recipes.py
 
 RUN if [ "$NEED_MIRROR" = 1 ]; then \
         grep -rl 'deb.debian.org' /etc/apt/ | xargs sed -i 's|http[s]*://deb.debian.org|https://mirrors.tuna.tsinghua.edu.cn|g'; \
