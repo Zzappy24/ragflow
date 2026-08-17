@@ -65,6 +65,36 @@ def _get_ws_tenant(ws_id: str) -> str:
     return ws.tenant_id
 
 
+def _encode_api_key_preserving_tools(tenant_id: str, factory: str, stored: str,
+                                     raw_api_key: str, is_tools: bool | None) -> str:
+    """Encode api_key with the is_tools flag (TenantLLMService payload format).
+
+    is_tools lives INSIDE the api_key column as a JSON payload
+    ({"api_key": ..., "is_tools": ...}) decoded at inference time by
+    TenantLLMService._decode_api_key_config. Two rules:
+    - is_tools explicitly given → encode it.
+    - is_tools omitted → preserve the flag already stored on the existing row
+      (a plain api_key overwrite must not silently drop it).
+    """
+    from api.db.db_models import DB, TenantLLM
+    from api.db.services.tenant_llm_service import TenantLLMService
+
+    if is_tools is None:
+        with DB.connection_context():
+            row = (
+                TenantLLM.select(TenantLLM.api_key)
+                .where(
+                    TenantLLM.tenant_id == tenant_id,
+                    TenantLLM.llm_factory == factory,
+                    TenantLLM.llm_name == stored,
+                )
+                .first()
+            )
+        if row:
+            _, is_tools, _ = TenantLLMService._decode_api_key_config(row.api_key or "")
+    return TenantLLMService._encode_api_key_config(raw_api_key, is_tools)
+
+
 def _fetch_stored_row(tenant_id: str, factory: str, stored: str) -> dict | None:
     """Re-fetch a tenant_llm row directly, WITHOUT the LLMFactories join.
 
@@ -165,7 +195,9 @@ def add_workspace_provider(
         "llm_factory": body.llm_factory,
         "llm_name": stored,
         "model_type": body.model_type,
-        "api_key": body.api_key or "x",
+        "api_key": _encode_api_key_preserving_tools(
+            tenant_id, body.llm_factory, stored, body.api_key or "x", body.is_tools
+        ),
         "api_base": body.api_base or "",
         "max_tokens": body.max_tokens,
     }
@@ -213,17 +245,44 @@ def update_workspace_provider(
     body: WsLlmProviderUpdate,
     user_id: str = Depends(get_current_user_id),
 ):
-    """Update an existing LLM model configuration (api_key, api_base, max_tokens)."""
+    """Update an existing LLM model configuration (api_key, api_base, max_tokens, is_tools)."""
     require_ws_admin(ws_id, user_id)
     tenant_id = _get_ws_tenant(ws_id)
 
     from api.db.services.tenant_llm_service import TenantLLMService
-    from api.db.db_models import TenantLLM
+    from api.db.db_models import DB, TenantLLM
 
     stored = _stored_name(factory, llm_name)
     update_data = body.model_dump(exclude_none=True)
     if not update_data:
         raise HTTPException(status_code=400, detail="Nothing to update")
+
+    # is_tools is not a tenant_llm column — it rides inside the api_key
+    # payload. Re-encode whenever either field is touched, preserving the
+    # stored flag when only api_key changes (and the stored key when only
+    # is_tools changes).
+    is_tools = update_data.pop("is_tools", None)
+    if is_tools is not None or "api_key" in update_data:
+        raw_key = update_data.get("api_key")
+        if raw_key is None:
+            with DB.connection_context():
+                existing_row = (
+                    TenantLLM.select(TenantLLM.api_key)
+                    .where(
+                        TenantLLM.tenant_id == tenant_id,
+                        TenantLLM.llm_factory == factory,
+                        TenantLLM.llm_name == stored,
+                    )
+                    .first()
+                )
+            if not existing_row:
+                raise HTTPException(status_code=404, detail="Model not found")
+            raw_key, _, _ = TenantLLMService._decode_api_key_config(existing_row.api_key or "")
+        update_data["api_key"] = _encode_api_key_preserving_tools(
+            tenant_id, factory, stored, raw_key or "", is_tools
+        )
+        if not update_data:
+            raise HTTPException(status_code=400, detail="Nothing to update")
 
     updated = TenantLLMService.filter_update(
         [

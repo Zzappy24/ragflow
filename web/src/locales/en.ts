@@ -559,7 +559,7 @@ Example: A 1 KB message with 1024-dim embedding uses ~9 KB. The 5 MB default lim
       changeSpecificCategory: 'Change specific category',
       uploadTitle: 'Drag and drop your file here to upload',
       uploadDescription:
-        'Supports single or batch file upload. For a locally deployed RAGFlow: the total file size limit per upload is 1GB, with a batch upload limit of 32 files. There is no cap on the total number of files per account. For cloud.ragflow.io, the total file size limit per upload is 10MB, with each file not exceeding 10MB and a maximum of 128 files per account.',
+        'Supports single or batch file upload. For a locally deployed RAGFlow: max 1 GB per file, unlimited number of files. For cloud.ragflow.io, the total file size limit per upload is 10MB, with each file not exceeding 10MB and a maximum of 128 files per account.',
       chunk: 'Chunk',
       bulk: 'Bulk',
       cancel: 'Cancel',
@@ -1917,6 +1917,14 @@ Example: Virtual Hosted Style`,
         'Each file must not exceed 10MB, and the total number of files must not exceed 128.',
       destinationFolder: 'Destination folder',
       pleaseUploadAtLeastOneFile: 'Please upload at least one file',
+      maxFileSizeLabel: 'Max file size per file: {{limit}}',
+      maxFileSizeValue: '1 GB',
+      fileTooLarge:
+        '"{{name}}" was rejected: it exceeds the maximum file size ({{limit}})',
+      fileRejected: '"{{name}}" was rejected',
+      uploadPartialFailed:
+        '{{failedCount}}/{{totalCount}} files failed to upload: {{files}}',
+      uploadAllFailed: 'Upload failed for all files: {{files}}',
     },
     flow: {
       preprocess: {

@@ -301,25 +301,31 @@ async def download(tenant_id: str = None, file_id: str = None):
             return get_error_data_result(message=result)
 
         file = result
-        blob = await thread_pool_exec(settings.STORAGE_IMPL.get, file.parent_id, file.location)
-        if not blob:
-            b, n = File2DocumentService.get_storage_address(file_id=file_id)
-            blob = await thread_pool_exec(settings.STORAGE_IMPL.get, b, n)
-        if not blob:
-            logging.warning(
-                "Download failed: empty blob after primary+fallback lookup (tenant_id=%s, file_id=%s)",
-                tenant_id,
-                file_id,
-            )
-            return get_error_data_result(message="This file is empty.")
-
-        response = await make_response(blob)
         ext = re.search(r"\.([^.]+)$", file.name.lower())
         ext = ext.group(1) if ext else None
         content_type = None
         if ext:
             fallback_prefix = "image" if file.type == FileType.VISUAL.value else "application"
             content_type = CONTENT_TYPE_MAP.get(ext, f"{fallback_prefix}/{ext}")
+
+        # CUSTOM B2B SaaS — streamed download (api/utils/blob_stream.py) :
+        # l'ancienne version chargeait le blob entier en RAM (make_response
+        # sur bytes) — un fichier de plusieurs Go doublait la mémoire du pod
+        # et retardait le premier octet. Ici : chunks de 8 Mo, mémoire
+        # constante, fallback sur l'adresse File2Document conservé.
+        from api.utils.blob_stream import stream_blob_response
+        response = await stream_blob_response(file.parent_id, file.location, file.name, content_type)
+        if response is None:
+            b, n = File2DocumentService.get_storage_address(file_id=file_id)
+            response = await stream_blob_response(b, n, file.name, content_type)
+        if response is None:
+            logging.warning(
+                "Download failed: object not found after primary+fallback lookup (tenant_id=%s, file_id=%s)",
+                tenant_id,
+                file_id,
+            )
+            return get_error_data_result(message="This file is empty.")
+
         apply_safe_file_response_headers(response, content_type, ext)
         return response
     except Exception as e:

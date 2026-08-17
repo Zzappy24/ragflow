@@ -2,6 +2,7 @@ import { ButtonLoading } from '@/components/ui/button';
 import {
   Dialog,
   DialogContent,
+  DialogDescription,
   DialogFooter,
   DialogHeader,
   DialogTitle,
@@ -13,6 +14,10 @@ import {
   SelectTrigger,
   SelectValue,
 } from '@/components/ui/select';
+import {
+  MAX_UPLOAD_FILE_SIZE_BYTES,
+  MAX_UPLOAD_FILE_SIZE_LABEL,
+} from '@/constants/upload';
 import { IModalProps } from '@/interfaces/common';
 import { extractTableColumns, isTableFile } from '@/utils/table-column-extract';
 import { zodResolver } from '@hookform/resolvers/zod';
@@ -178,6 +183,7 @@ function UploadForm({
                 handleFilesChange(files);
               }}
               accept={{}}
+              maxSize={MAX_UPLOAD_FILE_SIZE_BYTES}
               data-testid="dataset-upload-dropzone"
             />
           )}
@@ -278,6 +284,16 @@ export function FileUploadDialog({
       >
         <DialogHeader>
           <DialogTitle>{t('fileManager.uploadFile')}</DialogTitle>
+          <DialogDescription>
+            {t('fileManager.maxFileSizeLabel', {
+              // CUSTOM B2B SaaS: localize the unit label instead of the raw
+              // TS constant (fixed French '1 Go' literal) — see file-uploader.tsx.
+              limit: t(
+                'fileManager.maxFileSizeValue',
+                MAX_UPLOAD_FILE_SIZE_LABEL,
+              ),
+            })}
+          </DialogDescription>
         </DialogHeader>
         <UploadForm
           submit={onOk!}

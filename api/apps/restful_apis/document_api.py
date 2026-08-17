@@ -21,6 +21,8 @@ import re
 from pathlib import Path
 
 from quart import request, make_response,send_file
+
+from api.utils.blob_stream import stream_blob_response
 from peewee import OperationalError
 from pydantic import ValidationError
 
@@ -594,6 +596,25 @@ async def _upload_local_documents(kb, tenant_id):
             msg = f"File name must be {FILE_NAME_LEN_LIMIT} bytes or less."
             logging.error(msg)
             return get_error_data_result(message=msg, code=RetCode.ARGUMENT_ERROR)
+
+    # CUSTOM B2B SaaS — storage quota enforcement (CIA-9 phase 2).
+    # Plafond de stockage org (max_storage_gb) vérifié à l'upload.
+    # Taille entrante = somme des fichiers du batch (seek/tell sur le spool,
+    # position restaurée pour ne pas perturber la sauvegarde en aval).
+    incoming_bytes = 0
+    for file_obj in file_objs:
+        try:
+            pos = file_obj.stream.tell()
+            file_obj.stream.seek(0, 2)
+            incoming_bytes += file_obj.stream.tell()
+            file_obj.stream.seek(pos)
+        except (OSError, AttributeError):
+            pass  # flux non seekable : on laisse passer, le quota rattrapera au prochain upload
+    from api.db.services.quota_service import check_storage_quota
+    allowed, quota_msg = await thread_pool_exec(check_storage_quota, kb.tenant_id, incoming_bytes)
+    if not allowed:
+        logging.warning(f"upload refused (storage quota): {quota_msg}")
+        return get_error_data_result(message=quota_msg, code=RetCode.PERMISSION_ERROR)
 
     # Parse optional parser_config overrides from form data
     parser_config_override = None
@@ -2095,17 +2116,13 @@ async def download(dataset_id, document_id):
         return get_error_data_result(message=f"The dataset not own the document {document_id}.")
     # The process of downloading
     doc_id, doc_location = File2DocumentService.get_storage_address(doc_id=document_id)  # minio address
-    file_stream = settings.STORAGE_IMPL.get(doc_id, doc_location)
-    if not file_stream:
+    # CUSTOM B2B SaaS — streamed download (api/utils/blob_stream.py) : la
+    # lecture sync du blob entier gelait l'event-loop du pod (1 worker
+    # async) pendant tout le download et dupliquait le fichier en RAM.
+    resp = await stream_blob_response(doc_id, doc_location, doc[0].name, _mimetype_for_document(doc[0]))
+    if resp is None:
         return construct_json_result(message="This file is empty.", code=RetCode.DATA_ERROR)
-    file = BytesIO(file_stream)
-    # Use send_file with a proper filename and MIME type
-    return await send_file(
-        file,
-        as_attachment=True,
-        attachment_filename=doc[0].name,
-        mimetype=_mimetype_for_document(doc[0]),
-    )
+    return resp
 
 @manager.route("/documents/<document_id>", methods=["GET"])  # noqa: F821
 @login_required
@@ -2153,14 +2170,10 @@ async def download_document(document_id):
         return get_error_data_result(message=f"The dataset not own the document {document_id}.")
     # The process of downloading
     doc_id, doc_location = File2DocumentService.get_storage_address(doc_id=document_id)  # minio address
-    file_stream = settings.STORAGE_IMPL.get(doc_id, doc_location)
-    if not file_stream:
+    # CUSTOM B2B SaaS — streamed download (api/utils/blob_stream.py) : la
+    # lecture sync du blob entier gelait l'event-loop du pod (1 worker
+    # async) pendant tout le download et dupliquait le fichier en RAM.
+    resp = await stream_blob_response(doc_id, doc_location, doc[0].name, _mimetype_for_document(doc[0]))
+    if resp is None:
         return construct_json_result(message="This file is empty.", code=RetCode.DATA_ERROR)
-    file = BytesIO(file_stream)
-    # Use send_file with a proper filename and MIME type
-    return await send_file(
-        file,
-        as_attachment=True,
-        attachment_filename=doc[0].name,
-        mimetype=_mimetype_for_document(doc[0]),
-    )
+    return resp

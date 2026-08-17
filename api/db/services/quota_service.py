@@ -35,6 +35,57 @@ def check_quota(org_id: str, resource_type: str) -> tuple[bool, str]:
     return True, ""
 
 
+def check_storage_quota(kb_tenant_id: str, incoming_bytes: int) -> tuple[bool, str]:
+    """CIA-9 phase 2 — enforcement du plafond de stockage org à l'upload.
+
+    Compare ``fichiers (SUM(document.size), temps réel) + index Infinity
+    (dernier relevé connu, best-effort) + fichiers entrants`` au
+    ``max_storage_gb`` de l'org.
+
+    L'index est inclus en best-effort : on lit le cache du scan (rempli par
+    l'endpoint interne, ~15 min de fraîcheur) sans JAMAIS déclencher de
+    scan à l'upload (latence nulle). Pas de relevé disponible → on dégrade
+    en fichiers-seul (jamais de blocage à tort sur une mesure absente).
+    Tenant personnel (hors workspace) : pas de quota.
+    """
+    from api.db.services.workspace_service import WorkspaceService
+    from api.db.services.org_service import OrgService
+
+    ws = WorkspaceService.get_by_tenant_id(kb_tenant_id)
+    if not ws:
+        return True, ""  # tenant personnel — pas de quota org
+    e, org = OrgService.get_by_id(ws.org_id)
+    if not e or not org or not org.max_storage_gb:
+        return True, ""
+    max_bytes = int(org.max_storage_gb) * 1024 ** 3
+    minio_bytes = OrgService.get_minio_storage_bytes(org.id)
+
+    # Index Infinity : dernier relevé connu pour les tenants de l'org.
+    # Import lazy — ce module est aussi importé par le mgmt-backend, qui ne
+    # doit jamais toucher le SDK infinity (get_cached ne scanne pas).
+    infinity_bytes = 0
+    try:
+        from api.db.db_models import Workspace
+        from api.db.services.infinity_storage_scan import cached_bytes_for_tenants
+        tenant_ids = [
+            w.tenant_id for w in Workspace.select().where(
+                (Workspace.org_id == org.id) & (Workspace.status == "1")
+            )
+        ]
+        infinity_bytes = cached_bytes_for_tenants(tenant_ids) or 0
+    except Exception:
+        logging.warning("check_storage_quota: relevé Infinity indisponible", exc_info=True)
+
+    if minio_bytes + infinity_bytes + int(incoming_bytes or 0) > max_bytes:
+        used_gb = (minio_bytes + infinity_bytes) / 1024 ** 3
+        return False, (
+            f"Storage quota exceeded: {used_gb:.2f} GB used "
+            f"(files + vector index) of {org.max_storage_gb} GB. Contact "
+            f"your administrator to raise the organisation storage limit."
+        )
+    return True, ""
+
+
 # ---------------------------------------------------------------------------
 # Token quota
 # ---------------------------------------------------------------------------

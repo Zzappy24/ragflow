@@ -165,3 +165,38 @@ async def internal_llm_verify():
     except Exception as e:
         logging.exception("verify failed")
         return get_result(data={"ok": False, "message": str(e)})
+
+
+# =============================================================================
+# CIA-9 — Infinity storage usage per tenant/KB (service-to-service).
+#
+# The slim management image does not ship the infinity SDK. The actual scan
+# lives in api/db/services/infinity_storage_scan.py (neutral module, shared
+# with the upload quota enforcement in quota_service); this route only adds
+# the X-Internal-Secret auth + TTL cache + thread offload.
+# =============================================================================
+import time as _time
+
+from api.db.services import infinity_storage_scan as _storage_scan
+
+
+@manager.route("/internal/storage/infinity", methods=["GET"])  # noqa: F821
+async def internal_infinity_storage():
+    """Per-tenant/KB Infinity storage usage. Auth: X-Internal-Secret."""
+    ok, err = _check_internal_secret()
+    if not ok:
+        return get_error_data_result(message=err, code=401)
+
+    ttl = int(os.environ.get("INTERNAL_STORAGE_SCAN_TTL", "900"))
+    force = request.args.get("refresh") == "1"
+    if not force:
+        cached = _storage_scan.get_cached(max_age_s=ttl)
+        if cached is not None:
+            return get_result(data=cached)
+
+    try:
+        data = await asyncio.to_thread(_storage_scan.scan)
+    except Exception as e:
+        logging.exception("infinity storage scan failed")
+        return get_error_data_result(message=f"scan failed: {e}")
+    return get_result(data=data)

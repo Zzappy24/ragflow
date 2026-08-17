@@ -209,6 +209,11 @@ class WsLlmProviderAdd(BaseModel):
     api_key: str | None = Field(default=None)
     api_base: str | None = Field(default=None, max_length=255)
     max_tokens: int = Field(default=8192, ge=1)
+    # Function-calling capability flag. Encoded into the api_key column
+    # (TenantLLMService._encode_api_key_config) — without it, ad-hoc chat
+    # models (no `llm` catalog row) default to is_tools=False and the Agent
+    # component silently never calls its tools.
+    is_tools: bool | None = Field(default=None)
 
 
 class WsLlmProviderResponse(BaseModel):
@@ -225,6 +230,7 @@ class WsLlmProviderUpdate(BaseModel):
     api_key: str | None = None
     api_base: str | None = None
     max_tokens: int | None = Field(default=None, ge=1)
+    is_tools: bool | None = None
 
 
 class WsLlmVerifyRequest(BaseModel):

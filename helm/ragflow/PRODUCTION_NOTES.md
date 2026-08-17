@@ -223,6 +223,90 @@ the kindnet loopback driver. On rook-ceph this is a no-op (volume is empty
 and root-writable), but we keep the init for portability and future-proofing
 when we move to a non-Ceph PV.
 
+### Limites d'upload (CIA-10)
+
+**Valeurs**
+
+| Paramètre | Où | Valeur |
+|---|---|---|
+| `global.maxContentLength` | `helm/ragflow/values.yaml` → injecté dans `ragflow-api` et `ragflow-task-executor` (`MAX_CONTENT_LENGTH`) | `"1073741824"` (1 GiB) |
+| `gateway.apiTimeout` | `helm/ragflow/values.yaml` → `templates/gateway-httproute.yaml`, route `/api/` + `/v1/` | `"900s"` (était 600s codé en dur, pour couvrir l'upload + le SSE chat) |
+| `docker/.env` (Docker Compose only) | `MAX_CONTENT_LENGTH=1073741824` | même valeur, décommentée |
+
+Le front borne aussi à 1 Go **avant** le POST (évite d'attendre la fin d'un
+transfert que le serveur va rejeter) : `web/src/constants/upload.ts` →
+`MAX_UPLOAD_FILE_SIZE_BYTES = 1024 * 1024 * 1024`. **Les deux valeurs (Helm +
+constante front) doivent être changées ensemble** — rien ne les garde en
+synchro automatiquement.
+
+**Chunking adaptatif two-pass** (`rag/svr/adaptive_chunk.py`, consommé dans
+`build_chunks` de `rag/svr/task_executor.py`) — évite qu'un très gros document
+avec un `chunk_token_num` petit ne génère un nombre de chunks ingérable :
+
+| Env var | Défaut | Rôle |
+|---|---|---|
+| `ADAPTIVE_CHUNK_SIZE` | `"1"` (activé) | `"0"`/`"false"`/`"False"`/`""` désactive |
+| `MAX_CHUNKS_PER_DOC` | `16384` | seuil au-delà duquel le two-pass se déclenche (révision qualité-d'abord 2026-08-14 : à 512 tokens/chunk ≈ >130 Mo de texte pur — une spec client dense garde sa granularité intégrale ; 16k chunks ≈ 64 Mo de vecteurs, négligeable) |
+| `ADAPTIVE_CHUNK_TOKEN_MAX` | `1024` | plafond dur de la taille de chunk recalculée (zone de bonne qualité bge-m3 — la dilution sémantique se paie à chaque requête, le volume seulement à l'ingestion), en plus du plafond dérivé de `embd_max_tokens * 0.9` |
+
+**Overrides par KB** (clés du `parser_config` de la dataset, prioritaires sur
+les env — politique par workspace) : `adaptive_enabled` (bool),
+`adaptive_max_chunks` (int > 0), `adaptive_token_max` (int > 0). Une KB
+qualité-critique désactive ou relève son plafond ; une KB d'ingestion de masse
+serre. **Qualité RAG — hiérarchie des recommandations pour les documents à
+texte massif** : (1) découper le fichier source à l'ingestion (100-200 Mo par
+morceau) — granularité optimale, l'adaptatif ne se déclenche jamais ; (2) mode
+parent-child de la KB (enfants courts pour le matching précis, parents longs
+pour le contexte LLM) — le message d'adaptation le recommande explicitement ;
+(3) laisser l'adaptatif faire (filet de sécurité). L'`overlapped_percent` de la
+KB est préservé par l'adaptation — 10-15 % d'overlap atténue les pertes aux
+frontières des chunks agrandis.
+
+**Piège local dev — `MAX_CONTENT_LENGTH` n'est PAS repris par
+`scripts/dev_up.sh` / `dev_simple.sh`.** Ces scripts exportent `PYTHONPATH`,
+`DOC_ENGINE`, `ADMIN_JWT_SECRET`, `RSA_PASSPHRASE` puis sourcent `.env.local`
+— **jamais `docker/.env`**. La valeur `MAX_CONTENT_LENGTH=1073741824` de
+`docker/.env` n'est donc lue que par les conteneurs Docker Compose complets,
+pas par un serveur/task-executor lancé en local via ces scripts. Constaté en
+conditions réelles le 2026-08-14 : un stack dev démarré avant le merge de
+CIA-10 tournait toujours sans `MAX_CONTENT_LENGTH` dans son environnement
+(`ps eww <pid> | grep MAX_CONTENT_LENGTH` vide) — tout upload > 128 Mo (le
+défaut Quart codé dans `api/apps/__init__.py`) aurait été rejeté malgré le
+changement livré. Pour tester en local : `export
+MAX_CONTENT_LENGTH=1073741824` **avant** d'invoquer `dev_up.sh`/`dev_simple.sh`
+(la variable exportée dans le shell parent survit au `source .env.local`, qui
+ne la redéfinit pas). En K8s ce piège n'existe pas : la valeur vient de
+`global.maxContentLength` injectée directement dans les deployments.
+
+**Validation réelle (2026-08-14, stack dev relancée avec `MAX_CONTENT_LENGTH`
+exporté)** :
+- Upload d'un fichier de ~900 Mo (943 718 400 octets) via `curl -F` → `HTTP
+  200`, `code: 0`, document créé. ~17 s en local.
+- Upload d'un fichier de ~1,1 Go (1 153 433 600 octets) → rejet propre,
+  quasi instantané (< 0.1 s, coupé avant lecture complète du corps). **Le
+  rejet arrive en `HTTP 200` avec `{"code":100,"message":"<RequestEntityTooLarge
+  '413: Request Entity Too Large'>"}`**, pas en statut HTTP 413 brut — l'app
+  Quart encapsule systématiquement les erreurs dans une enveloppe JSON 200.
+  Le message contient bien la classe d'exception Werkzeug attendue, donc
+  détectable côté client/monitoring par pattern-matching sur `message`, pas
+  sur le status code HTTP.
+- Chunking adaptatif, e2e réel (KB `chunk_token_num=32`, doc texte varié
+  ~2 Mo, 21 232 chunks en 1re passe) : le message adaptatif apparaît bien
+  dans `progress_msg` ET dans les logs du task executor (`document volumineux
+  : 21232 chunks à 32 tokens → taille portée à 166`), le document se parse
+  avec succès (`run: DONE`). **Nuance constatée** : le nombre de chunks final
+  observé était de 4496, soit ~10% au-dessus du `MAX_CHUNKS_PER_DOC` en
+  vigueur lors de ce test (4096 ; défaut porté à 16384 depuis) —
+  la formule `needed = ceil(configured * first_pass_chunks / max_chunks)` de
+  `effective_chunk_token_num` suppose un nombre de chunks proportionnel
+  linéairement à `1/chunk_token_num`, ce qui n'est qu'une approximation : le
+  chunker respecte les frontières de ligne et ne découpe jamais au milieu,
+  donc le ratio réel dépend de la distribution des longueurs de ligne du
+  document. Le two-pass reste très efficace (21 232 → 4496, réduction ~79%)
+  mais **n'est pas une garantie stricte du plafond** — à garder en tête pour
+  du monitoring/alerting basé sur `MAX_CHUNKS_PER_DOC` (prévoir une marge,
+  pas une égalité stricte).
+
 ---
 
 ## Smoke test sequence (post first sync)
@@ -300,6 +384,271 @@ Things to alert on / dashboard once we're live:
 | Infinity disk > 80% | We're at single-replica, no compaction headroom |
 | MariaDB Galera state ≠ `Synced` on any node | Split-brain risk |
 | Cross-namespace traffic to `ragflow` from anywhere except `envoy-gateway` | NetworkPolicy bypass |
+
+---
+
+## Sandbox k8s — prod rollout runbook (`rag-new2`)
+
+Rollout of the k8s sandbox provider (`code_exec` tool runs as one-shot Jobs in
+the isolated `rag-sandbox` namespace, see `helm/ragflow/templates/sandbox/*.yaml`)
+onto the alterai prod cluster. This section is the runbook written **before**
+the operation (task-8-brief.md Step 1). The actual run (Step 2, done live with
+the user) records real command output in the task report, not here.
+
+Prerequisite reading: `poc/famat/README.md` (FAMAT POC context/data),
+`docs/roadmap-multitenant-saas.md` (why sandbox exists), and the "Known traps"
++ "Pre-flight" sections above — the sandbox namespace inherits the same
+cluster (Vault, storage class, NetworkPolicy caveats).
+
+### Step 1 — Image
+
+Trigger the manual CI job that builds the sandbox runtime image:
+
+```bash
+# GitLab UI → CI/CD → Pipelines → run job `kaniko_build_sandbox_python_prd`
+# (tag = the release tag you're rolling out, e.g. v0.9.6)
+```
+
+Verify the image landed in Harbor:
+
+```bash
+kubectl run -it --rm imgcheck --image=alpine --restart=Never -- sh -c \
+  "wget -qO- http://harbor.cylndata.cyllene.pro/v2/data/ragflow-sandbox-python/tags/list"
+# Expect the release tag in the "tags" array.
+```
+
+### Step 2 — Values (verification, not authoring)
+
+`values-alterai.yaml` already has the sandbox block committed:
+
+```yaml
+global:
+  sandboxTokenAutomount: true
+networkPolicy:
+  enabled: false
+sandbox:
+  enabled: true
+  image:
+    repository: "harbor.cylndata.cyllene.pro/data/ragflow-sandbox-python"
+    tag: "v0.9.6"
+  networkPolicy:
+    minioNamespace: "rag-new2"
+    minioPodSelector:
+      app: null            # deep-merge fix — do NOT remove, see inline comment
+      v1.min.io/tenant: minio
+```
+
+**Correction (found during final review, task-8):** `sandbox.image`/
+`sandbox.limits` in this values block are **not consumed by any template**
+under `helm/ragflow/templates/sandbox/` — grep confirms only
+`namespace.yaml`, `rbac.yaml`, `resourcequota.yaml`, and `networkpolicy.yaml`
+read `.Values.sandbox.*`, and none of them touch `sandbox.image` or
+`sandbox.limits`. They are **documentary only** — a human-readable record of
+"what image/limits we intend to run," not the source of truth. Bumping
+`sandbox.image.tag` here and syncing ArgoCD does **not** deploy the new
+image. The image that actually runs is whatever `image` key is stored in
+`system_settings.sandbox.k8s` (Step 6) — a Kubernetes `Job` manifest is built
+per-execution by `K8sProvider` from that config at request time, not from a
+Helm-rendered Deployment. **To roll out a new sandbox image: re-run the
+Step 6 SQL (or use the admin UI once the `k8s` provider is registered
+there) with the new tag — a values-file bump alone is a no-op for the
+running image.**
+
+This step is still worth doing as a **verification + tag bump** so the
+values file stays an accurate record, and because the pull-secret sub-step
+below is a real prerequisite:
+
+1. If the release tag differs from what's committed, bump
+   `sandbox.image.tag` in `values-alterai.yaml` and commit, for
+   documentation purposes — remember this alone does not change the running
+   image (see correction above); you still need Step 6.
+2. **Harbor pull access.** Check whether the `data` Harbor project allows
+   anonymous pull. If it does not, the `rag-sandbox` namespace needs its own
+   copy of the pull secret — `rag-sandbox` is a separate namespace from
+   `rag-new2` and does not inherit `rag-new2`'s imagePullSecrets:
+
+   ```bash
+   kubectl get secret harbor-pull-secret -n rag-new2 -o yaml \
+     | sed 's/namespace: rag-new2/namespace: rag-sandbox/' \
+     | kubectl apply -f -
+   ```
+
+   Then set `"image_pull_secret":"harbor-pull-secret"` in the Step 6 JSON
+   payload so `K8sProvider` attaches it to every Job's `imagePullSecrets`.
+   Skipping this when anonymous pull is off produces `ImagePullBackOff` on
+   every sandbox Job.
+3. Confirm the MinIO pod selector actually matches real pods (this was
+   deduced from the chart/Tenant CR, not observed live — confirm in prod
+   before trusting the NetworkPolicy egress rule it feeds):
+
+   ```bash
+   kubectl -n rag-new2 get pods -l v1.min.io/tenant=minio --show-labels
+   # Expect at least one Running pod; confirm the label key/value match
+   # networkPolicy.minioPodSelector above exactly.
+   ```
+
+   If the label differs, fix `minioPodSelector` in `values-alterai.yaml`
+   (keep the `app: null` line as-is — it un-sets a values.yaml default key
+   so Helm's deep-merge doesn't AND it together with `v1.min.io/tenant`,
+   which would make the selector match nothing).
+
+### Step 3 — Déploiement
+
+Sync ArgoCD app `rag-new2`, then verify:
+
+```bash
+# Namespace + RBAC objects created
+kubectl -n rag-sandbox get role,rolebinding,networkpolicy,resourcequota
+
+# api / task-executor pods restarted with the SA token mounted
+kubectl -n rag-new2 get pod <api-pod-name> \
+  -o jsonpath='{.spec.automountServiceAccountToken}'
+# → true
+```
+
+### Step 4 — NetworkPolicy CNI enforcement check (CRITICAL — new, not in original design)
+
+`values-alterai.yaml` sets `networkPolicy.enabled: false` at the **platform**
+level (ragflow ↔ mariadb/redis/infinity policies are off). The sandbox's own
+default-deny NetworkPolicy template is gated by the separate
+`sandbox.networkPolicy.enabled` flag, which is `true` only because it
+defaults to `true` in `values.yaml` and `values-alterai.yaml` never overrides
+it — so it is rendered today, but it is one values change away from silently
+not being rendered at all. Either way, a rendered NetworkPolicy is only as
+good as the CNI actually enforcing NetworkPolicy objects. This was never
+observed live on `rag-new2` (deduced from the chart, not confirmed in prod)
+— confirm before trusting sandbox isolation:
+
+```bash
+# Pick a service that should be UNREACHABLE from a sandbox Job, e.g. the
+# ragflow-api ClusterIP service in rag-new2.
+kubectl run np-test -n rag-sandbox --rm -it --image=busybox --restart=Never -- \
+  wget -T3 -qO- http://<a-forbidden-service>.rag-new2.svc.cluster.local
+# MUST fail (timeout/refused). If it returns a response body, the CNI is
+# not enforcing NetworkPolicy and the sandbox default-deny is a no-op —
+# stop the rollout and escalate before proceeding to Step 5.
+```
+
+Residual limitation to document regardless of outcome: DNS (port 53,
+restricted to `kube-system`) is deliberately left open for name resolution,
+which means DNS tunneling remains a theoretical exfiltration path out of
+`rag-sandbox` even with a correctly enforced default-deny. Not a blocker for
+this rollout, but note it for the next hardening pass.
+
+Second residual limitation (found during final review, task-8): the
+NetworkPolicy egress rule opens the **entire** MinIO service on port 9000
+(`networkpolicy.yaml`'s `minioPodSelector`/`minioPort`), not just the
+specific bucket a sandboxed recipe is meant to read. Any code running in a
+sandbox Job can reach any bucket on that MinIO instance, including buckets
+with an anonymous/public-read policy belonging to a *different* tenant —
+the famat-poc bucket (Step 7) is itself public-read. This is a cross-tenant
+data-exposure gap, not just a theoretical one; not a blocker for this
+rollout (the sandbox provider's audience is currently the platform's own
+recipes, not adversarial tenant code), but it must be closed — narrower
+per-bucket policies or a proxy in front of MinIO — before the sandbox is
+exposed to less-trusted workloads.
+
+### Step 5 — Test RBAC négatif/positif
+
+```bash
+SA=system:serviceaccount:rag-new2:<nom-SA-api-rendu>
+kubectl auth can-i create jobs -n rag-sandbox --as=$SA     # yes
+kubectl auth can-i create pods -n rag-new2 --as=$SA        # no
+kubectl auth can-i delete jobs -n rag-new2 --as=$SA        # no
+```
+
+### Step 6 — Config provider
+
+Via the admin page (Sandbox settings) if the mgmt server is deployed;
+otherwise direct SQL through the ephemeral MariaDB client pod (secret
+`ragflow-mariadb-app`, db `ragflow`, user `ragflow` — see cluster access
+notes):
+
+```sql
+-- Check the real schema first — columns and any create/update date columns
+-- can differ from what's assumed below.
+DESCRIBE system_settings;
+
+-- `source` and `data_type` are NOT NULL with no default (see SystemSettings
+-- in api/db/db_models.py) — omitting them fails with ERROR 1364 in strict
+-- mode. Values follow the existing pattern in conf/system_settings.json
+-- (sandbox.provider_type: source "variable"/data_type "string";
+-- sandbox.self_managed: source "variable"/data_type "json" — sandbox.k8s
+-- follows the same "json" pattern as the other sandbox.* provider configs).
+INSERT INTO system_settings(name, source, data_type, value)
+  VALUES ('sandbox.provider_type', 'variable', 'string', 'k8s')
+  ON DUPLICATE KEY UPDATE value='k8s';
+INSERT INTO system_settings(name, source, data_type, value)
+  VALUES ('sandbox.k8s', 'variable', 'json',
+  '{"namespace":"rag-sandbox","kubeconfig_path":"","image":"harbor.cylndata.cyllene.pro/data/ragflow-sandbox-python:<tag>","image_pull_secret":"harbor-pull-secret","memory_limit":"1Gi","cpu_limit":"1","timeout":120}')
+  ON DUPLICATE KEY UPDATE value=VALUES(value);
+```
+
+`kubeconfig_path` is intentionally empty string — the provider runs
+in-cluster and uses the mounted SA token (Step 3), not an external
+kubeconfig. `timeout` is in seconds and must be ≥ the smoke-test latency
+measured in Step 9 (~7s warm) plus margin for a cold image pull.
+`image_pull_secret` must match the secret copied into `rag-sandbox` in
+Step 2 — omit the key entirely (rather than leave it an empty string) if
+the Harbor project allows anonymous pull and no secret was copied. **This
+is also the payload to re-run whenever the sandbox image is bumped** — see
+the Step 2 correction above; `values-alterai.yaml`'s `sandbox.image.tag`
+does not drive the running image.
+
+Debug note (no operational impact): pod log retrieval uses a raw HTTP call
+against the kubelet/API server rather than the k8s client SDK's streaming
+helper (fix from an earlier task in this chantier). Mentioned here only so
+it's not mistaken for a bug if you're reading logs code while debugging a
+stuck Job.
+
+### Step 7 — Données FAMAT
+
+Upload the CSV into `rag-new2`'s MinIO (bucket `famat-poc`, port-forward +
+the boto3 script from the POC — see `poc/famat/README.md`). Note the
+internal URL:
+
+```
+http://<svc-minio>.rag-new2.svc:9000/famat-poc/Payload-20260526.csv
+```
+
+### Step 8 — Canvas
+
+Import `poc/famat/famat_agent_canvas.json` into the target tenant, replace
+the prompt's `DATA_URL` with the internal MinIO URL from Step 7, and
+configure the workspace LLM (qwen-code via LiteLLM, `is_tools: true` — now
+settable through the admin API).
+
+### Step 9 — Smoke final
+
+Run the 3 recipes in chat from the platform. While a run executes:
+
+```bash
+kubectl -n rag-sandbox get jobs -w
+# Jobs should appear and disappear as each recipe executes.
+```
+
+Expected latency (measured in kind during an earlier task): **~7s per
+execution once the image is warm** on the node. On the very first run after
+rollout (or after a node reschedule), add the time for the sandbox image to
+pull — it's ~600MB, so budget extra time before declaring a hung Job.
+
+Confirm the SPC cards render correctly in the chat for all 3 recipes.
+
+### Step 10 — Rollback
+
+```bash
+# values-alterai.yaml
+sandbox:
+  enabled: false
+global:
+  sandboxTokenAutomount: false
+# → commit, sync ArgoCD app `rag-new2`.
+```
+
+Returns to the pre-rollout state with no residue. The `rag-sandbox`
+namespace itself can be left in place — leftover RBAC/NetworkPolicy/quota
+objects in an empty namespace are inert and cheap to keep around for the
+next attempt.
 
 ---
 

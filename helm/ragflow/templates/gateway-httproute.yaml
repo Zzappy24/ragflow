@@ -35,9 +35,10 @@ spec:
         - path:
             type: PathPrefix
             value: /v1/
-      # Higher per-route timeout for SSE streaming (chat completions).
+      # Higher per-route timeout for SSE streaming (chat completions) and
+      # large uploads (global.maxContentLength). Was hardcoded 600s.
       timeouts:
-        request: 600s
+        request: {{ .Values.gateway.apiTimeout | default "900s" }}
       backendRefs:
         - name: {{ .Release.Name }}-api
           port: 80

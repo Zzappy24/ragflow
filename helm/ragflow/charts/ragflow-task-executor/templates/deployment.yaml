@@ -34,6 +34,11 @@ spec:
         prometheus.io/path: "/metrics"
     spec:
       serviceAccountName: {{ include "ragflow-task-executor.fullname" . }}
+      # Pod-level field wins over the SA-level `automountServiceAccountToken:
+      # false` set in serviceaccount.yaml. Stays false unless the k8s
+      # sandbox provider is enabled (global.sandboxTokenAutomount) — see
+      # helm/ragflow/templates/sandbox/rbac.yaml.
+      automountServiceAccountToken: {{ .Values.global.sandboxTokenAutomount | default false }}
       {{- with .Values.global.imagePullSecrets }}
       imagePullSecrets:
         {{- toYaml . | nindent 8 }}
@@ -132,6 +137,8 @@ spec:
               valueFrom: { fieldRef: { fieldPath: status.podIP }}
             - name: PYTHONPATH
               value: "/ragflow"
+            - name: MAX_CONTENT_LENGTH
+              value: {{ .Values.global.maxContentLength | default "1073741824" | quote }}
             - name: TASK_EXECUTOR_METRICS_PORT
               value: "9381"
             # DEVICE controls whether DeepDoc / pip_install_torch picks GPU.

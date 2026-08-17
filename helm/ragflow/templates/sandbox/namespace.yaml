@@ -1,0 +1,9 @@
+{{- if and .Values.sandbox.enabled .Values.sandbox.namespace.create }}
+apiVersion: v1
+kind: Namespace
+metadata:
+  name: {{ .Values.sandbox.namespace.name }}
+  labels:
+    app.kubernetes.io/part-of: ragflow
+    ragflow.io/component: sandbox
+{{- end }}

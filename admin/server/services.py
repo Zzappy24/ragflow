@@ -482,6 +482,12 @@ class SandboxMgr:
             "description": "E2B Cloud - Code Execution Sandboxes",
             "tags": ["saas", "fast", "global"],
         },
+        # CUSTOM B2B SaaS — provider sandbox k8s
+        "k8s": {
+            "name": "Kubernetes",
+            "description": "Run sandboxed code as ephemeral, hardened Kubernetes Jobs.",
+            "tags": ["k8s", "kubernetes", "self-hosted", "secure"],
+        },
     }
 
     @staticmethod
@@ -505,6 +511,7 @@ class SandboxMgr:
             AliyunCodeInterpreterProvider,
             E2BProvider,
         )
+        from agent.sandbox.providers.k8s import K8sProvider  # CUSTOM B2B SaaS — provider sandbox k8s
 
         schemas = {
             "local": LocalProvider.get_config_schema(),
@@ -512,6 +519,7 @@ class SandboxMgr:
             "ssh": SSHProvider.get_config_schema(),
             "aliyun_codeinterpreter": AliyunCodeInterpreterProvider.get_config_schema(),
             "e2b": E2BProvider.get_config_schema(),
+            "k8s": K8sProvider.get_config_schema(),  # CUSTOM B2B SaaS — provider sandbox k8s
         }
 
         if provider_id not in schemas:
@@ -578,6 +586,7 @@ class SandboxMgr:
             AliyunCodeInterpreterProvider,
             E2BProvider,
         )
+        from agent.sandbox.providers.k8s import K8sProvider  # CUSTOM B2B SaaS — provider sandbox k8s
 
         try:
             # Validate provider type
@@ -621,6 +630,7 @@ class SandboxMgr:
                 "ssh": SSHProvider,
                 "aliyun_codeinterpreter": AliyunCodeInterpreterProvider,
                 "e2b": E2BProvider,
+                "k8s": K8sProvider,  # CUSTOM B2B SaaS — provider sandbox k8s
             }
             provider = provider_classes[provider_type]()
             is_valid, error_msg = provider.validate_config(config)
@@ -668,6 +678,7 @@ class SandboxMgr:
                 AliyunCodeInterpreterProvider,
                 E2BProvider,
             )
+            from agent.sandbox.providers.k8s import K8sProvider  # CUSTOM B2B SaaS — provider sandbox k8s
 
             # Instantiate provider based on type
             provider_classes = {
@@ -676,6 +687,7 @@ class SandboxMgr:
                 "ssh": SSHProvider,
                 "aliyun_codeinterpreter": AliyunCodeInterpreterProvider,
                 "e2b": E2BProvider,
+                "k8s": K8sProvider,  # CUSTOM B2B SaaS — provider sandbox k8s
             }
 
             if provider_type not in provider_classes:

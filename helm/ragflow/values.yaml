@@ -53,6 +53,26 @@ global:
   security:
     restricted: false
 
+  # Pod-level automountServiceAccountToken override for ragflow-api and
+  # ragflow-task-executor. Both SAs are created with
+  # `automountServiceAccountToken: false` (least privilege — neither
+  # normally talks to the K8s API). The k8s sandbox provider needs the
+  # task-executor pod to hold its SA token in-cluster to create/watch/
+  # delete sandbox Jobs (see sandbox.enabled below) — the pod-level field
+  # wins over the SA-level field, so flip this to true only when the
+  # sandbox provider is active.
+  sandboxTokenAutomount: false
+
+  # Taille max d'un fichier uploadé (HTTP body Quart + validation DOC_MAXIMUM_SIZE).
+  # Lue par ragflow-api ET ragflow-task-executor (common/settings.py). 1 GiB.
+  maxContentLength: "1073741824"
+
+# --- gateway -------------------------------------------------------------
+gateway:
+  # Timeout de la route /api|/v1 — uploads volumineux (1 GiB à ~10 Mbps ≈ 14 min → 900s
+  # couvre un lien correct) ET streaming SSE. Était hardcodé 600s.
+  apiTimeout: "900s"
+
 # --- ragflow-api -------------------------------------------------------------
 # K8s-native: 1 worker per pod, scale through replica count. See
 # `charts/ragflow-api/values.yaml` for rationale.
@@ -225,3 +245,37 @@ security:
 # suite (`test/multitenant/`) for the contract.
 audit:
   retentionDays: 365
+
+# --- sandbox (k8s code-execution provider) ------------------------------------
+# Namespace + RBAC + NetworkPolicy + ResourceQuota for the k8s sandbox
+# provider (agent CodeExec tool: one-shot Jobs, isolated from the rest of
+# the cluster). `enabled: false` renders NONE of templates/sandbox/* — this
+# is the default until the provider is wired into task-executor.
+sandbox:
+  enabled: false
+  namespace:
+    name: "rag-sandbox"
+    create: true
+  image:
+    repository: ""        # ex prod: harbor.cylndata.cyllene.pro/data/ragflow-sandbox-python
+    tag: ""
+  limits:
+    memory: "1Gi"
+    cpu: "1"
+  quota:
+    memory: "8Gi"
+    cpu: "8"
+    pods: "20"
+  networkPolicy:
+    enabled: true
+    # Namespace + pod selector of the platform's MinIO service (egress
+    # allowed so sandboxed code can read/write workspace files). Generic
+    # placeholder here — see values-alterai.yaml for the real cluster
+    # selector (minio-operator labels pods `v1.min.io/tenant: <tenant>`,
+    # confirmed against templates/minio-tenant.yaml + templates/
+    # networkpolicy.yaml in this same chart).
+    minioNamespace: "rag-new2"
+    minioPodSelector:
+      app: minio
+    minioPort: 9000
+    extraEgress: []       # extra egress blocks (future FAMAT base)

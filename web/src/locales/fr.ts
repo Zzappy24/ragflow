@@ -438,7 +438,7 @@ export default {
       changeSpecificCategory: 'Changer de catégorie spécifique',
       uploadTitle: 'Glissez-déposez votre fichier ici pour le téléverser',
       uploadDescription:
-        "Prise en charge du téléversement unique ou en lot. Pour RAGFlow en local : 1 Go max par téléversement, jusqu'à 32 fichiers. Pour cloud.ragflow.io : 10 Mo max par fichier uploadDescription128 fichiers au total.",
+        'Prise en charge du téléversement unique ou en lot. Pour RAGFlow en local : 1 Go max par fichier, nombre de fichiers illimité. Pour cloud.ragflow.io : 10 Mo max par fichier, avec un maximum de 128 fichiers au total.',
       chunk: 'Segment',
       bulk: 'En masse',
       cancel: 'Annuler',
@@ -1893,6 +1893,15 @@ Exemple : Virtual Hosted Style`,
         'Chaque fichier ne doit pas dépasser 10 Mo, et le nombre total de fichiers ne doit pas dépasser 128.',
       destinationFolder: 'Dossier de destination',
       pleaseUploadAtLeastOneFile: 'Veuillez téléverser au moins un fichier',
+      maxFileSizeLabel: 'Taille max par fichier : {{limit}}',
+      maxFileSizeValue: '1 Go',
+      fileTooLarge:
+        '« {{name}} » a été refusé : il dépasse la taille maximale autorisée ({{limit}})',
+      fileRejected: '« {{name}} » a été refusé',
+      uploadPartialFailed:
+        '{{failedCount}}/{{totalCount}} fichiers en échec : {{files}}',
+      uploadAllFailed:
+        'Échec du téléversement pour tous les fichiers : {{files}}',
     },
     flow: {
       cite: 'Citation',

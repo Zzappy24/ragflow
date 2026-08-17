@@ -39,6 +39,11 @@ spec:
         prometheus.io/path: "/metrics"
     spec:
       serviceAccountName: {{ include "ragflow-api.fullname" . }}
+      # Pod-level field wins over the SA-level `automountServiceAccountToken:
+      # false` set in serviceaccount.yaml. Stays false unless the k8s
+      # sandbox provider is enabled (global.sandboxTokenAutomount) — see
+      # helm/ragflow/templates/sandbox/rbac.yaml.
+      automountServiceAccountToken: {{ .Values.global.sandboxTokenAutomount | default false }}
       {{- with .Values.global.imagePullSecrets }}
       imagePullSecrets:
         {{- toYaml . | nindent 8 }}
@@ -155,6 +160,8 @@ spec:
             # PYTHONPATH must point at the repo root inside the image.
             - name: PYTHONPATH
               value: "/ragflow"
+            - name: MAX_CONTENT_LENGTH
+              value: {{ .Values.global.maxContentLength | default "1073741824" | quote }}
 
           resources:
             {{- toYaml .Values.resources | nindent 12 }}
