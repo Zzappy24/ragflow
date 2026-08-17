@@ -20,6 +20,7 @@ from datetime import timedelta
 
 from agent.tools.base import ToolParamBase, ToolBase, ToolMeta
 from api.db import FileType
+from api.db.services.file2document_service import File2DocumentService
 from api.db.services.file_service import FileService
 from common import settings
 
@@ -85,6 +86,10 @@ class GetFile(ToolBase, ABC):
             return msg
 
         tenant_id = self._canvas.get_tenant_id()
+        if not tenant_id:
+            msg = "get_file: could not resolve the workspace for this file lookup."
+            self.set_output("formalized_content", msg)
+            return msg
 
         try:
             files = list(FileService.query(name=name, tenant_id=tenant_id))
@@ -126,36 +131,35 @@ class GetFile(ToolBase, ABC):
         return msg
 
     def _presigned_url(self, f) -> str:
-        # Regular (non-KB) workspace Files are stored in a per-user bucket
-        # named "<created_by>-downloads", under a key equal to the File's id
-        # (FileService.upload_info sets location = get_uuid() and uses it as
-        # both the File.id and the storage key — see FileService.get_blob).
-        bucket = f"{f.created_by}-downloads"
-        key = f.id
+        # Files-manager files are stored under bucket=parent_id, key=location
+        # (api/apps/services/file_api_service.py::upload_file, ~line 88:
+        # `settings.STORAGE_IMPL.put(last_folder.id, location, blob)`). This is
+        # the primary address the download route itself tries first
+        # (api/apps/restful_apis/file_api.py, ~line 317:
+        # `stream_blob_response(file.parent_id, file.location, ...)`).
+        #
+        # If no object actually lives at that address, fall back the same way
+        # the download route does: File2DocumentService.get_storage_address(file_id=...)
+        # returns (file.parent_id, file.location) for LOCAL-sourced files, or
+        # (doc.kb_id, doc.location) for KB-sourced files
+        # (api/db/services/file2document_service.py::get_storage_address, lines 83-96).
+        bucket, key = f.parent_id, f.location
+
+        try:
+            exists = settings.STORAGE_IMPL.obj_exist(bucket, key)
+        except Exception:
+            logging.exception(f"get_file: obj_exist check failed for {bucket}/{key}")
+            exists = False
+
+        if not exists:
+            try:
+                bucket, key = File2DocumentService.get_storage_address(file_id=f.id)
+            except Exception:
+                logging.exception(f"get_file: fallback storage address lookup failed for file id={f.id}")
+
         expires = timedelta(seconds=self._param.url_expires_s)
-
-        sandbox_endpoint = os.environ.get("SANDBOX_PRESIGN_ENDPOINT")
-        if sandbox_endpoint:
-            # Lazy import: only needed when a secondary, sandbox-facing MinIO
-            # endpoint is configured, so importing this module never requires
-            # minio to be importable/configured.
-            from minio import Minio
-            from rag.utils.minio_conn import _build_minio_http_client
-
-            secure = settings.MINIO.get("secure", False)
-            if isinstance(secure, str):
-                secure = secure.lower() in ("true", "1", "yes")
-            client = Minio(
-                sandbox_endpoint,
-                access_key=settings.MINIO["user"],
-                secret_key=settings.MINIO["password"],
-                secure=secure,
-                region=settings.MINIO.get("region", None) or None,
-                http_client=_build_minio_http_client(),
-            )
-            return client.get_presigned_url("GET", bucket, key, expires)
-
-        return settings.STORAGE_IMPL.get_presigned_url(bucket, key, expires)
+        sandbox_endpoint = os.environ.get("SANDBOX_PRESIGN_ENDPOINT") or None
+        return settings.STORAGE_IMPL.get_presigned_url(bucket, key, expires, endpoint_override=sandbox_endpoint)
 
     def thoughts(self) -> str:
         return "Looking up the file and generating a short-lived URL..."
