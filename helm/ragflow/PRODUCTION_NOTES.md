@@ -406,7 +406,7 @@ Trigger the manual CI job that builds the sandbox runtime image:
 
 ```bash
 # GitLab UI → CI/CD → Pipelines → run job `kaniko_build_sandbox_python_prd`
-# (tag = the release tag you're rolling out, e.g. v0.9.6)
+# (tag = the release tag you're rolling out, e.g. v0.9.7)
 ```
 
 Verify the image landed in Harbor:
@@ -430,7 +430,7 @@ sandbox:
   enabled: true
   image:
     repository: "harbor.cylndata.cyllene.pro/data/ragflow-sandbox-python"
-    tag: "v0.9.6"
+    tag: "v0.9.7"
   networkPolicy:
     minioNamespace: "rag-new2"
     minioPodSelector:
