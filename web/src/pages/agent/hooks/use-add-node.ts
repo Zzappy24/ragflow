@@ -23,6 +23,7 @@ import {
   initialEmailValues,
   initialExeSqlValues,
   initialExtractorValues,
+  initialGetFileValues,
   initialGithubValues,
   initialGoogleScholarValues,
   initialGoogleValues,
@@ -151,6 +152,7 @@ export const useInitializeOperatorParams = () => {
       [Operator.GoogleScholar]: initialGoogleScholarValues,
       [Operator.SearXNG]: initialSearXNGValues,
       [Operator.GitHub]: initialGithubValues,
+      [Operator.GetFile]: initialGetFileValues,
       [Operator.ExeSQL]: initialExeSqlValues,
       // CUSTOM B2B SaaS
       [Operator.RenderDocxTemplate]: initialRenderDocxTemplateValues,

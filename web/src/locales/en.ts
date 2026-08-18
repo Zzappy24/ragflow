@@ -2341,6 +2341,10 @@ Best for: Documents with flowing, contextually connected content — such as boo
         'A component that performs SQL queries on a relational database, supporting querying from MySQL, PostgreSQL, or MariaDB.',
       // CUSTOM B2B SaaS
       renderDocxTemplate: 'Render DOCX template',
+      getFile: 'Get File',
+      getFileUrlExpiresS: 'URL validity duration (seconds)',
+      getFileUrlExpiresSTip:
+        'Gives the agent access to a file uploaded to the workspace Files. The generated download link stays valid for this many seconds (60-3600, default 900).',
       dbType: 'Database type',
       database: 'Database',
       username: 'Username',

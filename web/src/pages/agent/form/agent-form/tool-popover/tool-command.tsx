@@ -51,7 +51,7 @@ const Menus = [
   // CUSTOM B2B SaaS — workspace document generation tools.
   {
     label: 'Documents',
-    list: [Operator.RenderDocxTemplate],
+    list: [Operator.RenderDocxTemplate, Operator.GetFile],
   },
 ];
 

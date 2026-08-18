@@ -474,6 +474,17 @@ export const initialRenderDocxTemplateValues = {
   },
 };
 
+// get_file tool defaults — mirrors agent/tools/get_file.py::GetFileParam.
+// `name` (the file to look up) is supplied by the LLM at call time, not
+// configured at design time, so the only user-facing setting is how long
+// the generated download URL stays valid.
+export const initialGetFileValues = {
+  url_expires_s: 900,
+  outputs: {
+    formalized_content: { value: '', type: 'string' },
+  },
+};
+
 export const initialAgentValues = {
   ...initialLlmBaseValues,
   description: '',
