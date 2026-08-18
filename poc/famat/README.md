@@ -4,15 +4,43 @@ Spec : docs/superpowers/specs/2026-08-11-famat-drift-agent-poc-design.md
 Données : `data/Payload-20260526.csv` (JAMAIS commité — .gitignore).
 Tests : `uv run --with duckdb python -m pytest poc/famat/tests/ -v`
 
-## Source de données (Task 10 — révisée)
+## Source de données (Task 2 du chantier get_file — révisée)
+
+**Chemin nominal (retenu depuis Task 2)** : le CSV est uploadé dans les **Files** du
+workspace `famat-poc-task11` (pas un dataset/KB) via `POST /api/v1/files`
+(multipart, header `X-Workspace-Id` sur l'id du workspace). Le canvas appelle
+D'ABORD le tool d'agent `get_file` (`agent/tools/get_file.py`, param `name`) avec
+`name="Payload-20260526.csv"` : il fait `FileService.query(name=..., tenant_id=<tenant
+du canvas>)`, puis renvoie une URL présignée interne à courte durée de vie (900 s par
+défaut) pointant sur le stockage MinIO/S3 réel du fichier. Le prompt (`system_prompt.md`)
+insère ensuite cette URL dans le code exécuté par `code_exec` :
+`con = fr.load_url("<url renvoyée par get_file>")` — jamais une URL réutilisée d'une
+question précédente, elle expire. Ce chemin fonctionne sans ouverture de flux réseau
+supplémentaire côté prod : `get_file` route la présignature via
+`SANDBOX_PRESIGN_ENDPOINT` (`http://host.containers.internal:9000` en dev — cf.
+`STORAGE_IMPL.get_presigned_url(..., endpoint_override=...)`) pour que l'URL soit
+atteignable depuis le conteneur sandbox, symétrique à la solution "bucket public"
+ci-dessous mais sans policy anonyme.
+
+Procédure d'upload utilisée (Task 2) :
+
+```bash
+curl -X POST http://127.0.0.1:9380/api/v1/files \
+  -H "Authorization: <token>" \
+  -H "X-Workspace-Id: <workspace_id>" \
+  -F "file=@poc/famat/data/Payload-20260526.csv"
+```
+
+## Legacy POC — bucket MinIO public (Task 10, abandonné en Task 2)
 
 La base Cyllene (webhook `WebhookMesure`) n'est pas accessible depuis ce poste (flux réseau
 à ouvrir côté prod, cf. `docs/superpowers/plans/2026-08-11-famat-drift-agent-poc.md` § Task 10).
-Le POC charge donc le même CSV via
-HTTP depuis le MinIO du stack dev, par `famat_recipes.load_url(url)` (télécharge vers un
-fichier temporaire puis délègue à `load_csv()` — même table `events`, même schéma).
+Avant Task 2, le POC chargeait le même CSV via une URL HTTP publique sur un bucket
+MinIO dédié (`famat-poc`, policy anonyme `s3:GetObject`), directe et non expirante —
+remplacée par le chemin Files + `get_file` ci-dessus (une URL par question, à courte
+durée de vie, pas de bucket public). Conservé ici pour mémoire de la procédure :
 
-### Procédure d'upload MinIO
+### Procédure d'upload MinIO (legacy)
 
 Credentials MinIO du stack dev : `docker/.env` (`MINIO_USER`, `MINIO_PASSWORD`), **jamais
 copiés en clair ici**. Bucket `famat-poc`, objet `Payload-20260526.csv`, policy anonyme en
@@ -39,7 +67,7 @@ s3.put_bucket_policy(Bucket=bucket, Policy=json.dumps({
 EOF
 ```
 
-### URL retenue
+### URL retenue (legacy)
 
 Depuis le host, MinIO est publié sur `localhost:9000`. Depuis le conteneur sandbox (réseau
 podman par défaut, backend Podman derrière la socket `docker` — cf. § Task 8 ci-dessous), les
@@ -53,22 +81,16 @@ assertion `rows == 90375`) :
 | `http://<gateway podman, 10.88.0.1>:9000/...` | OK — `rows: 90375` (fonctionne aussi, non retenue car testée en 3e) |
 
 Les trois candidates aboutissent sur cette machine (backend Podman avec VM unique) ; le brief
-demande de retenir la première testée dans l'ordre, donc :
+demande de retenir la première testée dans l'ordre, donc (legacy — n'est plus utilisée par le
+canvas depuis Task 2) :
 
 ```
 DATA_URL = http://host.containers.internal:9000/famat-poc/Payload-20260526.csv
 ```
 
-Utilisation depuis un canvas/recette :
-
-```python
-import famat_recipes as fr
-con = fr.load_url("http://host.containers.internal:9000/famat-poc/Payload-20260526.csv")
-```
-
 ### Bascule future vers `load_db()` (base Cyllene)
 
-Quand les flux réseau prod seront ouverts, remplacer `fr.load_url(DATA_URL)` par
+Quand les flux réseau prod seront ouverts, remplacer `fr.load_url(<url get_file>)` par
 `fr.load_db(host, port, user, password, database)` (implémentation documentée mais NON codée,
 cf. `docs/superpowers/plans/2026-08-11-famat-drift-agent-poc.md` § Task 10) dans le
 prompt/composant qui appelle la recette — signature et table `events` identiques, aucun
