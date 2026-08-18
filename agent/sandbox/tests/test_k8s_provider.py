@@ -133,6 +133,41 @@ def test_initialize_without_lib_or_cluster_returns_false():
     assert ok is False
 
 
+# --- GitOps env precedence (SANDBOX_IMAGE & co injectés par le chart) --------
+# initialize() pose les attributs AVANT le probe cluster : on peut asserter la
+# résolution env-vs-config sans cluster (le retour False vient du probe).
+
+
+def test_initialize_env_overrides_config(monkeypatch):
+    monkeypatch.setenv("SANDBOX_IMAGE", "harbor.example/sbx:v9.9.9")
+    monkeypatch.setenv("SANDBOX_NAMESPACE", "rag-sandbox-env")
+    monkeypatch.setenv("SANDBOX_IMAGE_PULL_SECRET", "harbor-pull-secret")
+    p = K8sProvider()
+    p.initialize({"namespace": "rag-sandbox", "image": "old:v1", "image_pull_secret": "stale"})
+    assert p.image == "harbor.example/sbx:v9.9.9"
+    assert p.namespace == "rag-sandbox-env"
+    assert p.image_pull_secret == "harbor-pull-secret"
+
+
+def test_initialize_falls_back_to_config_without_env(monkeypatch):
+    for var in ("SANDBOX_IMAGE", "SANDBOX_NAMESPACE", "SANDBOX_IMAGE_PULL_SECRET"):
+        monkeypatch.delenv(var, raising=False)
+    p = K8sProvider()
+    p.initialize({"namespace": "ns-db", "image": "db:v1", "image_pull_secret": "db-secret"})
+    assert p.image == "db:v1"
+    assert p.namespace == "ns-db"
+    assert p.image_pull_secret == "db-secret"
+
+
+def test_initialize_env_image_satisfies_required_image(monkeypatch):
+    # Config DB minimale (sans image) + env posée par le chart → l'image
+    # requise vient de l'env, le check "image is required" ne refuse plus.
+    monkeypatch.setenv("SANDBOX_IMAGE", "harbor.example/sbx:v1")
+    p = K8sProvider()
+    p.initialize({"namespace": "rag-sandbox"})
+    assert p.image == "harbor.example/sbx:v1"
+
+
 def test_execute_success_collects_artifacts_from_directory_when_main_returns_string():
     # Exercises the real directory-scan contract end-to-end: build the actual
     # wrapper via build_k8s_python_wrapper and run it in a real subprocess

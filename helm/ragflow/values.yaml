@@ -259,6 +259,11 @@ sandbox:
   image:
     repository: ""        # ex prod: harbor.cylndata.cyllene.pro/data/ragflow-sandbox-python
     tag: ""
+  # Name of the imagePullSecret (in the sandbox namespace) referenced by the
+  # sandbox Jobs. Provisioning is separate: rendered by templates/sandbox/
+  # externalsecret-pull.yaml when externalSecrets.enabled, otherwise created
+  # out-of-band (one-time copy — see PRODUCTION_NOTES.md).
+  imagePullSecret: ""
   limits:
     memory: "1Gi"
     cpu: "1"

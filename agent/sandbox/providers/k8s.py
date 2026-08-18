@@ -8,6 +8,7 @@ Aucun import kubernetes au niveau module : lazy dans initialize().
 import base64
 import json
 import logging
+import os
 import time
 import uuid
 from typing import Any, Dict, List, Optional
@@ -204,14 +205,21 @@ class K8sProvider(SandboxProvider):
         self._core = None
 
     def initialize(self, config: Dict[str, Any]) -> bool:
-        """Initialize the provider: validate config, load kube config, probe the cluster."""
-        self.namespace = str(config.get("namespace") or "rag-sandbox")
-        self.image = str(config.get("image") or "")
+        """Initialize the provider: validate config, load kube config, probe the cluster.
+
+        Image, pull secret and namespace are GitOps-managed: the env vars
+        (injected by the Helm chart from values `sandbox.*`) take precedence
+        over the DB config, so a values bump + ArgoCD sync rolls the sandbox
+        image exactly like every other image. The DB config remains the
+        fallback for setups without the chart (dev, admin panel).
+        """
+        self.namespace = str(os.environ.get("SANDBOX_NAMESPACE") or config.get("namespace") or "rag-sandbox")
+        self.image = str(os.environ.get("SANDBOX_IMAGE") or config.get("image") or "")
         self.memory_limit = str(config.get("memory_limit") or "1Gi")
         self.cpu_limit = str(config.get("cpu_limit") or "1")
         self.timeout_max = int(config.get("timeout") or 120)
         self.kubeconfig_path = str(config.get("kubeconfig_path") or "")
-        self.image_pull_secret = str(config.get("image_pull_secret") or "")
+        self.image_pull_secret = str(os.environ.get("SANDBOX_IMAGE_PULL_SECRET") or config.get("image_pull_secret") or "")
         self.node_selector = dict(config.get("node_selector") or {})
         self.ttl_seconds_after_finished = int(config.get("ttl_seconds_after_finished") or 300)
         self._initialized = False
