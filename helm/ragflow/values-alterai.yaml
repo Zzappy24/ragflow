@@ -297,6 +297,10 @@ sandbox:
   image:
     repository: "harbor.cylndata.cyllene.pro/data/ragflow-sandbox-python"
     tag: "v0.9.7"          # aligned with global.imageTag above
+  # harbor-pull-secret is copied once into rag-sandbox out-of-band
+  # (externalSecrets disabled on this cluster) — this is only the NAME the
+  # sandbox Jobs reference.
+  imagePullSecret: "harbor-pull-secret"
   networkPolicy:
     minioNamespace: "rag-new2"
     # minio-operator labels tenant pods `v1.min.io/tenant: <tenant-name>`

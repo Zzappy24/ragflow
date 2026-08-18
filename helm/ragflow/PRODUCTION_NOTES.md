@@ -438,34 +438,27 @@ sandbox:
       v1.min.io/tenant: minio
 ```
 
-**Correction (found during final review, task-8):** `sandbox.image`/
-`sandbox.limits` in this values block are **not consumed by any template**
-under `helm/ragflow/templates/sandbox/` — grep confirms only
-`namespace.yaml`, `rbac.yaml`, `resourcequota.yaml`, and `networkpolicy.yaml`
-read `.Values.sandbox.*`, and none of them touch `sandbox.image` or
-`sandbox.limits`. They are **documentary only** — a human-readable record of
-"what image/limits we intend to run," not the source of truth. Bumping
-`sandbox.image.tag` here and syncing ArgoCD does **not** deploy the new
-image. The image that actually runs is whatever `image` key is stored in
-`system_settings.sandbox.k8s` (Step 6) — a Kubernetes `Job` manifest is built
-per-execution by `K8sProvider` from that config at request time, not from a
-Helm-rendered Deployment. **To roll out a new sandbox image: re-run the
-Step 6 SQL (or use the admin UI once the `k8s` provider is registered
-there) with the new tag — a values-file bump alone is a no-op for the
-running image.**
+**GitOps image lifecycle (supersedes the earlier task-8 "documentary only"
+correction):** `sandbox.image.*`, `sandbox.namespace.name` and
+`sandbox.imagePullSecret` ARE now consumed — `templates/configmap-app.yaml`
+renders them as `SANDBOX_IMAGE` / `SANDBOX_NAMESPACE` /
+`SANDBOX_IMAGE_PULL_SECRET` in the shared app ConfigMap (envFrom on both
+api and task-executor), and `K8sProvider.initialize()` gives these envs
+precedence over the `system_settings.sandbox.k8s` DB config. Both
+deployments roll on every Helm revision (`helm.sh/release-revision`
+annotation), so **bumping `sandbox.image.tag` + ArgoCD sync rolls the
+sandbox image exactly like every other image** — the Step 6 SQL is a
+one-time bootstrap, never re-run for image bumps.
 
-This step is still worth doing as a **verification + tag bump** so the
-values file stays an accurate record, and because the pull-secret sub-step
-below is a real prerequisite:
-
-1. If the release tag differs from what's committed, bump
-   `sandbox.image.tag` in `values-alterai.yaml` and commit, for
-   documentation purposes — remember this alone does not change the running
-   image (see correction above); you still need Step 6.
-2. **Harbor pull access.** Check whether the `data` Harbor project allows
-   anonymous pull. If it does not, the `rag-sandbox` namespace needs its own
-   copy of the pull secret — `rag-sandbox` is a separate namespace from
-   `rag-new2` and does not inherit `rag-new2`'s imagePullSecrets:
+1. Bump `sandbox.image.tag` in `values-alterai.yaml` alongside the other
+   image tags of the release.
+2. **Harbor pull access.** The `data` Harbor project requires auth, and
+   `rag-sandbox` is a separate namespace from `rag-new2` — it does not
+   inherit its imagePullSecrets. Two provisioning paths:
+   - `externalSecrets.enabled: true` (Vault clusters): nothing to do —
+     `templates/sandbox/externalsecret-pull.yaml` replicates
+     `harbor-pull-secret` into the sandbox namespace automatically.
+   - `externalSecrets.enabled: false` (alterai today): one-time manual copy:
 
    ```bash
    kubectl get secret harbor-pull-secret -n rag-new2 -o yaml \
@@ -473,10 +466,10 @@ below is a real prerequisite:
      | kubectl apply -f -
    ```
 
-   Then set `"image_pull_secret":"harbor-pull-secret"` in the Step 6 JSON
-   payload so `K8sProvider` attaches it to every Job's `imagePullSecrets`.
-   Skipping this when anonymous pull is off produces `ImagePullBackOff` on
-   every sandbox Job.
+   Either way, `sandbox.imagePullSecret: "harbor-pull-secret"` in values is
+   the NAME the Jobs reference (→ `SANDBOX_IMAGE_PULL_SECRET`). A missing
+   secret with auth-required Harbor produces `ImagePullBackOff` on every
+   sandbox Job.
 3. Confirm the MinIO pod selector actually matches real pods (this was
    deduced from the chart/Tenant CR, not observed live — confirm in prod
    before trusting the NetworkPolicy egress rule it feeds):
@@ -580,7 +573,7 @@ INSERT INTO system_settings(name, source, data_type, value)
   ON DUPLICATE KEY UPDATE value='k8s';
 INSERT INTO system_settings(name, source, data_type, value)
   VALUES ('sandbox.k8s', 'variable', 'json',
-  '{"namespace":"rag-sandbox","kubeconfig_path":"","image":"harbor.cylndata.cyllene.pro/data/ragflow-sandbox-python:<tag>","image_pull_secret":"harbor-pull-secret","memory_limit":"1Gi","cpu_limit":"1","timeout":120}')
+  '{"kubeconfig_path":"","memory_limit":"1Gi","cpu_limit":"1","timeout":120}')
   ON DUPLICATE KEY UPDATE value=VALUES(value);
 ```
 
@@ -588,12 +581,14 @@ INSERT INTO system_settings(name, source, data_type, value)
 in-cluster and uses the mounted SA token (Step 3), not an external
 kubeconfig. `timeout` is in seconds and must be ≥ the smoke-test latency
 measured in Step 9 (~7s warm) plus margin for a cold image pull.
-`image_pull_secret` must match the secret copied into `rag-sandbox` in
-Step 2 — omit the key entirely (rather than leave it an empty string) if
-the Harbor project allows anonymous pull and no secret was copied. **This
-is also the payload to re-run whenever the sandbox image is bumped** — see
-the Step 2 correction above; `values-alterai.yaml`'s `sandbox.image.tag`
-does not drive the running image.
+**Image, namespace and pull secret are deliberately ABSENT from this JSON**
+— they come from the chart-injected envs (`SANDBOX_IMAGE`,
+`SANDBOX_NAMESPACE`, `SANDBOX_IMAGE_PULL_SECRET`, see Step 2), which take
+precedence over any value here. This SQL is a **one-time bootstrap**
+(provider selection + resource limits); image bumps go through
+`values-alterai.yaml` + ArgoCD like every other image. Setting `image` here
+still works as a fallback for chartless setups (local dev, admin panel) but
+is ignored whenever the env is present.
 
 Debug note (no operational impact): pod log retrieval uses a raw HTTP call
 against the kubelet/API server rather than the k8s client SDK's streaming

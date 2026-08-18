@@ -73,6 +73,20 @@ data:
   VLLM_EMBED_MODEL: {{ .Values.vllm.embedModel | quote }}
   VLLM_RERANK_MODEL: {{ .Values.vllm.rerankModel | quote }}
 
+  {{- if .Values.sandbox.enabled }}
+  # --- sandbox k8s provider (GitOps-managed image) -------------------------
+  # The provider (agent/sandbox/providers/k8s.py) reads these envs with
+  # precedence over its DB config (system_settings sandbox.k8s): bumping
+  # sandbox.image.tag in values + ArgoCD sync rolls the sandbox image like
+  # every other image — no SQL to touch. The one-time SQL bootstrap only
+  # sets provider_type=k8s + resource limits.
+  SANDBOX_IMAGE: "{{ .Values.sandbox.image.repository }}:{{ .Values.sandbox.image.tag }}"
+  SANDBOX_NAMESPACE: {{ .Values.sandbox.namespace.name | quote }}
+  {{- with .Values.sandbox.imagePullSecret }}
+  SANDBOX_IMAGE_PULL_SECRET: {{ . | quote }}
+  {{- end }}
+  {{- end }}
+
   # --- pool sizes (see CLAUDE.md project_k8s_env_vars memo) ----------------
   DB_POOL_SIZE: "16"
   REDIS_POOL_SIZE: "32"
