@@ -453,6 +453,13 @@ interface OrgStats {
   };
 }
 
+interface StorageBreakdown {
+  workspaces: { ws_id: string; name: string; minio_bytes: number; doc_count: number; infinity_bytes: number | null }[];
+  users: { user_id: string; email?: string; nickname?: string; minio_bytes: number; doc_count: number }[];
+  groups: { group_id: string; name: string; workspace: string; dataset_count: number; minio_bytes: number; infinity_bytes: number | null }[];
+  infinity_available: boolean;
+}
+
 interface WsQuota {
   workspace_id: string;
   workspace_name: string;
@@ -504,6 +511,19 @@ export default function OrgDetailPage() {
   const [savingQuota, setSavingQuota] = useState(false);
   const [resourceForm, setResourceForm] = useState<{ max_users: number; max_workspaces: number; max_datasets: number; max_documents: number; max_storage_gb: number } | null>(null);
   const [savingResources, setSavingResources] = useState(false);
+  // CIA-9 — ventilation stockage. IMPÉRATIF : ces hooks vivent ICI, avant les
+  // returns conditionnels (spinner/not-found) — sinon React #310 ("rendered
+  // more hooks than during the previous render") au chargement de l'org.
+  const [storageDetail, setStorageDetail] = useState<StorageBreakdown | null>(null);
+  const [storageLoading, setStorageLoading] = useState(false);
+  const loadStorageDetail = () => {
+    if (!orgId || storageLoading) return;
+    setStorageLoading(true);
+    api.get(`/orgs/${orgId}/storage`)
+      .then((r) => setStorageDetail(r.data))
+      .catch(() => message.error('Ventilation stockage indisponible'))
+      .finally(() => setStorageLoading(false));
+  };
   const [codeForm] = Form.useForm();
   const [codeLoading, setCodeLoading] = useState(true);
   const [codeError, setCodeError] = useState(false);
@@ -686,22 +706,6 @@ export default function OrgDetailPage() {
     return `${Math.round(b / 1024)} Ko`;
   };
   const storage = stats?.storage;
-  interface StorageBreakdown {
-    workspaces: { ws_id: string; name: string; minio_bytes: number; doc_count: number; infinity_bytes: number | null }[];
-    users: { user_id: string; email?: string; nickname?: string; minio_bytes: number; doc_count: number }[];
-    groups: { group_id: string; name: string; workspace: string; dataset_count: number; minio_bytes: number; infinity_bytes: number | null }[];
-    infinity_available: boolean;
-  }
-  const [storageDetail, setStorageDetail] = useState<StorageBreakdown | null>(null);
-  const [storageLoading, setStorageLoading] = useState(false);
-  const loadStorageDetail = () => {
-    if (!orgId || storageLoading) return;
-    setStorageLoading(true);
-    api.get(`/orgs/${orgId}/storage`)
-      .then((r) => setStorageDetail(r.data))
-      .catch(() => message.error('Ventilation stockage indisponible'))
-      .finally(() => setStorageLoading(false));
-  };
 
   return (
     <div>

@@ -2162,6 +2162,10 @@ Exemple : Virtual Hosted Style`,
       exeSQL: 'ExeSQL',
       // CUSTOM B2B SaaS
       renderDocxTemplate: 'Rendu DOCX (template Word)',
+      getFile: 'Lire un fichier',
+      getFileUrlExpiresS: "Durée de validité de l'URL (secondes)",
+      getFileUrlExpiresSTip:
+        "Donne à l'agent l'accès à un fichier uploadé dans les Files du workspace. Le lien de téléchargement généré reste valide pendant cette durée (60 à 3600 secondes, 900 par défaut).",
       exeSQLDescription:
         'Un composant qui exécute des requêtes SQL sur une base de données relationnelle, supportant MySQL, PostgreSQL ou MariaDB.',
       dbType: 'Type de base de données',

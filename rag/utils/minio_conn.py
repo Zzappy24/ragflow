@@ -258,9 +258,33 @@ class RAGFlowMinio:
             logging.exception(f"bucket_exist {bucket} got exception")
             return False
 
+    # CUSTOM B2B SaaS — get_file presign endpoint override. `agent/tools/get_file.py`
+    # needs to hand a presigned URL to a sandbox/code_exec runtime that reaches
+    # MinIO through a different (sandbox-facing) endpoint than the API pod does.
+    # `bucket`/`fnm` are already remapped by @use_default_bucket/@use_prefix_path
+    # by the time the body runs, so signing with the override client still
+    # targets the correct physical (bucket, key) in single-bucket/prefix-path mode.
     @use_default_bucket
     @use_prefix_path
-    def get_presigned_url(self, bucket, fnm, expires, tenant_id=None):
+    def get_presigned_url(self, bucket, fnm, expires, tenant_id=None, endpoint_override=None):
+        if endpoint_override:
+            try:
+                secure = settings.MINIO.get("secure", False)
+                if isinstance(secure, str):
+                    secure = secure.lower() in ("true", "1", "yes")
+                client = Minio(
+                    endpoint_override,
+                    access_key=settings.MINIO["user"],
+                    secret_key=settings.MINIO["password"],
+                    secure=secure,
+                    region=settings.MINIO.get("region", None) or None,
+                    http_client=_build_minio_http_client(),
+                )
+                return client.get_presigned_url("GET", bucket, fnm, expires)
+            except Exception:
+                logging.exception(f"Fail to get_presigned (endpoint_override={endpoint_override}) {bucket}/{fnm}:")
+                return None
+
         for _ in range(10):
             try:
                 return self.conn.get_presigned_url("GET", bucket, fnm, expires)

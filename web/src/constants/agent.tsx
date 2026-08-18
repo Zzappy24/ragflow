@@ -130,6 +130,9 @@ export enum Operator {
   RenderDocxTemplate = 'RenderDocxTemplate',
   ExitLoop = 'ExitLoop',
   ExcelProcessor = 'ExcelProcessor',
+  // Agent tool — presigned URL for a file uploaded to the workspace Files.
+  // Backend: agent/tools/get_file.py (component_name = "GetFile").
+  GetFile = 'GetFile',
 }
 
 export enum ComparisonOperator {

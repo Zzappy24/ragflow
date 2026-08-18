@@ -5,6 +5,7 @@ import CrawlerForm from './crawler-form';
 import DuckDuckGoForm from './duckduckgo-form';
 import EmailForm from './email-form';
 import ExeSQLForm from './exesql-form';
+import GetFileForm from './get-file-form';
 import GithubForm from './github-form';
 import GoogleForm from './google-form';
 import GoogleScholarForm from './google-scholar-form';
@@ -37,4 +38,5 @@ export const ToolFormConfigMap = {
   [Operator.WenCai]: WenCaiForm,
   [Operator.SearXNG]: SearXNGForm,
   [Operator.KeenableSearch]: KeenableForm,
+  [Operator.GetFile]: GetFileForm,
 };
