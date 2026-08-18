@@ -314,6 +314,33 @@ def _extract_tenant_id(kwargs):
         return None
 
 
+def _is_superuser_without_workspace(user_id: str) -> bool:
+    """Superuser bypass for routes hit without any workspace context.
+
+    Mirror of the has_permission() bypass (including the SUPERUSER_BYPASS
+    audit trail) for the no-tenant path — fail closed on any error.
+    """
+    try:
+        from api.db.services.user_service import UserService
+        e, user = UserService.get_by_id(user_id)
+        if not (e and user and user.is_superuser):
+            return False
+        try:
+            from api.db.services.audit_service import AuditService
+            AuditService.record(
+                user_id=user_id,
+                actor_email=getattr(user, "email", "") or "",
+                action="SUPERUSER_BYPASS",
+                resource_type="tenant",
+                resource_id="(no-workspace-context)",
+            )
+        except Exception:
+            pass
+        return True
+    except Exception:
+        return False
+
+
 def require_permission(permission: Permission):
     """
     Use AFTER @login_required or @token_required.
@@ -339,7 +366,20 @@ def require_permission(permission: Permission):
                     return await result
                 return result
             if not tenant_id:
-                # Authenticated user but no workspace context — deny.
+                # Authenticated user but no workspace context. Superusers keep
+                # their global bypass here too (admin scripts / CLI without
+                # X-Workspace-Id) — before this check, the bypass only lived in
+                # has_permission(), unreachable without tenant_id, so a
+                # superuser got 403 on every @require_permission route unless
+                # a workspace header was set (bug découvert chantier get_file,
+                # 2026-08-18). Audité comme le bypass nominal. Tout autre
+                # utilisateur sans workspace : fail closed, comme avant.
+                if _is_superuser_without_workspace(user_id):
+                    result = func(*args, **kwargs)
+                    import inspect
+                    if inspect.iscoroutine(result):
+                        return await result
+                    return result
                 return get_json_result(
                     data=False, message=f"Permission denied: {permission.value}", code=403
                 )
