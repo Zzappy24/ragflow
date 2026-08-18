@@ -652,6 +652,43 @@ next attempt.
 
 ---
 
+## Tool get_file (Files → sandbox)
+
+The `get_file` tool enables sandboxed workflows to download files from the
+platform's file storage via presigned URLs. The flow:
+
+1. **Operator uploads** a file in Files UI → lands in MinIO under the workspace tenant.
+2. **Agent requests** the file via the `get_file` tool (e.g., in a code recipe).
+3. **get_file presigns** a 15-minute temporary URL pointing to the file's MinIO location.
+4. **Sandbox fetches** the URL and processes the file locally (no streaming back to the API pod).
+
+**Configuration:**
+
+- `SANDBOX_PRESIGN_ENDPOINT` (env var): Controls the hostname:port in the presigned URL.
+  - **In production (K8s)**: Leave **empty** (`""` or unset). The internal MinIO endpoint
+    configured in `service_conf.yaml` (e.g., `http://ragflow-minio.rag-new2.svc:9000`) is
+    already reachable from the sandbox namespace.
+  - **In local dev** (native API pod + containerized sandbox): Set to the **machine's LAN IP**
+    (e.g., `192.168.1.100:9000`), NOT `host.containers.internal`. The sandbox container cannot
+    resolve the Docker host's virtual interface name; it needs a real routable IP.
+  - **Format**: `host:port` **without** `http://` or `https://` scheme. MinIO SDK (minio-py)
+    prepends the scheme based on TLS settings.
+
+**TTL:** 15 minutes (hardcoded in `agent/tools/get_file.py`). If a recipe needs longer
+(e.g., a large file download + slow analysis), increase `TTL_SECONDS` in the tool source
+and rebuild the sandbox image.
+
+**Implementation notes:**
+
+- URL presigning happens in `rag/utils/minio_conn.py:RAGFlowMinio.get_presigned_url()`,
+  after bucket/path remapping by the `@use_default_bucket` and `@use_prefix_path` decorators.
+  The `endpoint_override` logic stays **inside** those decorators so single-bucket/prefix-path
+  deployments sign the correct physical address.
+- Do **not** move the override logic outside the decorators or create a standalone `Minio()` client
+  in `get_file.py`. Upstream merges may nudge this pattern; resist them.
+
+---
+
 ## Upstream merge — check this file
 
 When we merge from upstream and any of these change, this doc lies:
