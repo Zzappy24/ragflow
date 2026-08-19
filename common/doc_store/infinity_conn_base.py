@@ -22,6 +22,7 @@ import json
 import threading
 import time
 from abc import abstractmethod
+from contextlib import contextmanager
 from typing import Callable, TypeVar
 
 import infinity
@@ -218,6 +219,82 @@ def _retry_on_txn_conflict(
         is_retryable=_is_txn_conflict_error, label="txn conflict",
         logger=logger, max_attempts=max_attempts, base_delay_ms=base_delay_ms,
     )
+
+
+# CUSTOM B2B SaaS — per-table distributed write semaphore.
+# Infinity (v0.7.0-dev5, unchanged through v0.7.3) cannot absorb many
+# concurrent writers on ONE table: every insert is really a DELETE (upsert
+# by id) + INSERT, concurrent deletes abort each other ("NewTxn conflict"),
+# small concurrent inserts fragment segments until compaction loops forever,
+# and the retry churn leaks server sessions up to TOO_MANY_CONNECTIONS
+# (incident prod 2026-08-19: 962-doc ingestion, 12 writer threads, one
+# table). The semaphore caps concurrent writers PER TABLE cluster-wide
+# (default 2 — enough to pipeline, low enough to keep Infinity orderly):
+# excess writers wait for a slot instead of stampeding the engine. Fail-open
+# by design: no Redis → no throttle (never blocks writes on a Redis outage).
+# Tunables: INFINITY_TABLE_WRITE_SLOTS (0 disables), INFINITY_TABLE_WRITE_SLOT_TTL_S
+# (crash protection: a slot held by a dead pod frees itself after the TTL).
+_WRITE_SLOTS = _int_env("INFINITY_TABLE_WRITE_SLOTS", 2)
+_WRITE_SLOT_TTL_S = _int_env("INFINITY_TABLE_WRITE_SLOT_TTL_S", 120)
+_WRITE_SLOT_LOG_EVERY_S = 30.0
+
+
+def _get_write_redis():
+    """Redis client for the write semaphore — lazy import, None if unavailable."""
+    try:
+        from rag.utils.redis_conn import REDIS_CONN
+        return REDIS_CONN.REDIS
+    except Exception:
+        return None
+
+
+@contextmanager
+def _table_write_slot(table_name: str, logger: logging.Logger | None = None,
+                      slots: int | None = None, ttl_s: int | None = None,
+                      redis_client=None):
+    log = logger or logging.getLogger(__name__)
+    n_slots = _WRITE_SLOTS if slots is None else slots
+    client = redis_client if redis_client is not None else _get_write_redis()
+    if client is None or n_slots <= 0:
+        yield  # fail-open
+        return
+    try:
+        from valkey.lock import Lock as _RedisLock  # le projet utilise valkey
+    except Exception:
+        try:
+            from redis.lock import Lock as _RedisLock
+        except Exception:
+            yield
+            return
+    ttl = _WRITE_SLOT_TTL_S if ttl_s is None else ttl_s
+    waited = 0.0
+    next_log = _WRITE_SLOT_LOG_EVERY_S
+    while True:
+        for slot in range(n_slots):
+            lock = _RedisLock(client, f"infwr:{table_name}:{slot}",
+                              timeout=ttl, blocking_timeout=0)
+            try:
+                acquired = lock.acquire()
+            except Exception as exc:
+                # Redis flaky mid-flight → fail-open rather than block writes.
+                log.warning("INFINITY write slot: redis unavailable (%s) — proceeding unthrottled", exc)
+                yield
+                return
+            if acquired:
+                try:
+                    yield
+                finally:
+                    try:
+                        lock.release()
+                    except Exception:
+                        pass  # TTL expired mid-write — slot already reclaimed
+                return
+        sleep_for = 0.1 + random.uniform(0, 0.2)
+        waited += sleep_for
+        if waited >= next_log:
+            log.info("INFINITY write slot: still waiting on %s (%.0fs)", table_name, waited)
+            next_log += _WRITE_SLOT_LOG_EVERY_S
+        time.sleep(sleep_for)
 
 
 class InfinityConnectionBase(DocStoreConnection):
@@ -723,8 +800,9 @@ class InfinityConnectionBase(DocStoreConnection):
             filter = self.equivalent_condition_to_str(condition, table_instance)
             self.logger.debug(f"INFINITY delete table {table_name}, filter {filter}.")
             # CUSTOM B2B SaaS — Infinity delete conflict retry + per-table
-            # serialization (see _retry_on_txn_conflict above).
-            with _delete_lock(table_name):
+            # serialization (process-local striped lock + cluster-wide write
+            # slot; see _retry_on_txn_conflict/_table_write_slot above).
+            with _table_write_slot(table_name, self.logger), _delete_lock(table_name):
                 res = _retry_on_txn_conflict(
                     f"delete({table_name})",
                     lambda: table_instance.delete(filter),

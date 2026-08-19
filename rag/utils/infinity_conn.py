@@ -23,7 +23,11 @@ from common.decorator import singleton
 import pandas as pd
 from common.constants import PAGERANK_FLD, TAG_FLD
 from common.doc_store.doc_store_base import MatchExpr, MatchTextExpr, MatchDenseExpr, FusionExpr, OrderByExpr
-from common.doc_store.infinity_conn_base import InfinityConnectionBase
+from common.doc_store.infinity_conn_base import (
+    InfinityConnectionBase,
+    _retry_on_txn_conflict,
+    _table_write_slot,
+)
 
 
 @singleton
@@ -482,11 +486,23 @@ class InfinityConnection(InfinityConnectionBase):
             ids = ["'{}'".format(d["id"]) for d in docs]
             str_ids = ", ".join(ids)
             str_filter = f"id IN ({str_ids})"
-            table_instance.delete(str_filter)
-            # for doc in documents:
-            #     logger.info(f"insert position_int: {doc['position_int']}")
-            # logger.info(f"InfinityConnection.insert {json.dumps(documents)}")
-            table_instance.insert(docs)
+            # CUSTOM B2B SaaS — per-table write semaphore + txn-conflict retry.
+            # The upsert pair (DELETE by id + INSERT) is what stampedes
+            # Infinity when many writers target one table — keep both calls
+            # under the same slot so they stay adjacent, and retry aborted
+            # transactions with jittered backoff (aborted txn = nothing
+            # written, replays are safe).
+            with _table_write_slot(table_name, self.logger):
+                _retry_on_txn_conflict(
+                    f"upsert_delete({table_name})",
+                    lambda: table_instance.delete(str_filter),
+                    logger=self.logger,
+                )
+                _retry_on_txn_conflict(
+                    f"insert({table_name})",
+                    lambda: table_instance.insert(docs),
+                    logger=self.logger,
+                )
         finally:
             self.connPool.release_conn(inf_conn)
         self.logger.debug(f"INFINITY inserted into {table_name} {str_ids}.")

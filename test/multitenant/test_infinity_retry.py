@@ -65,6 +65,7 @@ try:
     _retry_on_meta_contention = _mod._retry_on_meta_contention
     _retry_on_txn_conflict = _mod._retry_on_txn_conflict
     _delete_lock = _mod._delete_lock
+    _table_write_slot = _mod._table_write_slot
 finally:
     # Restore sys.modules so we don't leak MagicMocks into later tests.
     for _m, _orig in _saved.items():
@@ -210,3 +211,79 @@ class TestRetryOnTxnConflict:
         assert _delete_lock("ragflow_a_b") is _delete_lock("ragflow_a_b")
         lock = _delete_lock("ragflow_a_b")
         assert hasattr(lock, "acquire") and hasattr(lock, "release")
+
+
+class _FakeRedis:
+    """Mimics the redis-py surface used by redis.lock.Lock (SET NX PX + Lua
+    release/extend scripts) — enough to exercise slot acquisition for real."""
+
+    def __init__(self):
+        self.store = {}
+
+    def set(self, name, value, nx=False, px=None, ex=None):
+        if nx and name in self.store:
+            return None
+        self.store[name] = value
+        return True
+
+    def register_script(self, script):
+        fake = self
+
+        class _Script:
+            def __call__(self, keys=(), args=(), client=None):
+                # release script: compare token then delete — approximate by
+                # deleting unconditionally (tokens are unique per Lock).
+                # NB: valkey's Lock caches the registered script at CLASS
+                # level (first client wins) but passes `client=` at each
+                # call — always honor it, never the closure.
+                target = client if client is not None else fake
+                for k in keys:
+                    target.store.pop(k, None)
+                return 1
+
+        return _Script()
+
+
+class TestTableWriteSlot:
+    """Contract of the per-table distributed write semaphore (CUSTOM B2B
+    SaaS). Caps concurrent writers per Infinity table cluster-wide; fail-open
+    without Redis."""
+
+    def test_fail_open_without_redis(self):
+        # redis_client=None + _get_write_redis() mocked away by module-load
+        # MagicMocks would still return a truthy mock — pass an explicit
+        # sentinel path instead: slots=0 disables, and client=None fails open.
+        entered = False
+        with _table_write_slot("t", slots=0, redis_client=None):
+            entered = True
+        assert entered
+
+    def test_acquires_and_releases_slot(self):
+        r = _FakeRedis()
+        with _table_write_slot("ragflow_t", slots=2, ttl_s=30, redis_client=r):
+            assert any(k.startswith("infwr:ragflow_t:") for k in r.store)
+        assert not any(k.startswith("infwr:ragflow_t:") for k in r.store)
+
+    def test_second_writer_takes_next_slot(self):
+        r = _FakeRedis()
+        with _table_write_slot("t", slots=2, ttl_s=30, redis_client=r):
+            with _table_write_slot("t", slots=2, ttl_s=30, redis_client=r):
+                assert "infwr:t:0" in r.store and "infwr:t:1" in r.store
+        assert "infwr:t:0" not in r.store and "infwr:t:1" not in r.store
+
+    def test_tables_do_not_contend(self):
+        r = _FakeRedis()
+        with _table_write_slot("t1", slots=1, ttl_s=30, redis_client=r):
+            with _table_write_slot("t2", slots=1, ttl_s=30, redis_client=r):
+                assert "infwr:t1:0" in r.store and "infwr:t2:0" in r.store
+
+    def test_redis_error_fails_open(self):
+        class _Broken:
+            def set(self, *a, **k):
+                raise ConnectionError("redis down")
+            def register_script(self, s):
+                return lambda **k: 1
+        entered = False
+        with _table_write_slot("t", slots=1, ttl_s=30, redis_client=_Broken()):
+            entered = True
+        assert entered
