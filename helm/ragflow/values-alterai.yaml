@@ -7,7 +7,7 @@
 global:
   imageRegistry: "harbor.cylndata.cyllene.pro"
   imageRepository: "data/ragflow"
-  imageTag: "v0.9.8"
+  imageTag: "v0.9.9"
   hostname: "ragflow.cyllene.cloud"
   # HTTPS actif depuis 2026-07-13 : listeners 443 sur le Gateway partagé
   # (envoy-gateway-system), certs Let's Encrypt via cert-manager gateway-shim.
