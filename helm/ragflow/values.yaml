@@ -136,6 +136,7 @@ mariadb:
   replicas: 2
   galera: true
   metrics: true
+  maxUserConnections: 300   # voir commentaire dans mariadb-cluster.yaml
   rootPasswordSecretRef: "ragflow-mariadb-root"
   databaseSecretRef: "ragflow-mariadb-app"
   resources:

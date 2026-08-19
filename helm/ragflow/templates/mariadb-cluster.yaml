@@ -23,6 +23,12 @@ spec:
     name: {{ .Values.mariadb.databaseSecretRef }}
     key: password
   database: ragflow
+  # Per-user connection cap. Operator default is far too low (20) for our
+  # topology: 3 task-executors × DB_POOL_SIZE(16) + api pods can exceed it
+  # under bulk ingestion — every excess connection fails parses with
+  # "(1226) exceeded max_user_connections" (seen 2026-08-19, CRAG batch).
+  # Keep below myCnf max_connections (500) so root/exporter always connect.
+  maxUserConnections: {{ .Values.mariadb.maxUserConnections | default 300 }}
 
   # Galera replication — 3 nodes is the minimum for split-brain protection
   # (quorum = 2). Bumping to 5 buys nothing for a workload our size.
