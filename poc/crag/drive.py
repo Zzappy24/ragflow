@@ -28,6 +28,7 @@ import csv
 import json
 import sys
 import time
+from concurrent.futures import ThreadPoolExecutor
 from pathlib import Path
 
 import requests
@@ -154,6 +155,7 @@ def main() -> int:
                     help="pas de filtre document_ids (mesure corpus entier)")
     ap.add_argument("--page-size", type=int, default=10, help="chunks retournés")
     ap.add_argument("--similarity-threshold", type=float, default=0.1)
+    ap.add_argument("--workers", type=int, default=4, help="questions traitées en parallèle")
     args = ap.parse_args()
 
     base = args.ragflow_url.rstrip("/")
@@ -162,43 +164,66 @@ def main() -> int:
     name_to_id = list_documents(base, args.ragflow_key, args.dataset_id)
     print(f"{len(name_to_id)} documents dans le dataset {args.dataset_id}")
 
-    n = n_missing_docs = 0
-    with open(args.questions, encoding="utf-8") as f, open(args.out, "w", encoding="utf-8") as out:
+    rows = []
+    with open(args.questions, encoding="utf-8") as f:
         for row in csv.DictReader(f, delimiter="\t"):
-            if args.limit and n >= args.limit:
+            if args.limit and len(rows) >= args.limit:
                 break
-            page_files = json.loads(row["page_files"])
-            doc_ids = [name_to_id[p] for p in page_files if p in name_to_id]
-            if len(doc_ids) < len(page_files):
-                n_missing_docs += 1
-                print(f"  ! {row['interaction_id']}: {len(page_files) - len(doc_ids)} "
-                      f"page(s) absente(s) du dataset", file=sys.stderr)
+            rows.append(row)
 
-            t0 = time.time()
+    n_missing_docs = 0
+
+    def process(row: dict) -> dict:
+        page_files = json.loads(row["page_files"])
+        doc_ids = [name_to_id[p] for p in page_files if p in name_to_id]
+        missing = len(page_files) - len(doc_ids)
+        t0 = time.time()
+        try:
             refs = retrieve(base, args.ragflow_key, args.dataset_id, row["query"],
                             [] if args.unscoped else doc_ids,
                             args.page_size, args.similarity_threshold)
             prediction = generate(llm_url, args.llm_key, args.llm_model,
                                   row["query"], row["query_time"], refs)
-            out.write(json.dumps({
-                "interaction_id": row["interaction_id"],
-                "domain": row["domain"],
-                "question_type": row["question_type"],
-                "query": row["query"],
-                "query_time": row["query_time"],
-                "answer": row["answer"],
-                "alt_ans": json.loads(row["alt_ans"] or "[]"),
-                "prediction": prediction,
-                "n_refs": len(refs),
-                "scoped": not args.unscoped,
-                "elapsed_s": round(time.time() - t0, 2),
-            }, ensure_ascii=False) + "\n")
+            error = ""
+        except Exception as e:
+            # Une erreur transitoire ne doit pas tuer une run de plusieurs
+            # heures : abstention explicite + trace, filtrable au scoring.
+            refs, prediction, error = [], "I don't know", str(e)[:200]
+        return {
+            "interaction_id": row["interaction_id"],
+            "domain": row["domain"],
+            "question_type": row["question_type"],
+            "query": row["query"],
+            "query_time": row["query_time"],
+            "answer": row["answer"],
+            "alt_ans": json.loads(row["alt_ans"] or "[]"),
+            "prediction": prediction,
+            "n_refs": len(refs),
+            "n_missing_pages": missing,
+            "scoped": not args.unscoped,
+            "error": error,
+            "elapsed_s": round(time.time() - t0, 2),
+        }
+
+    n = n_errors = 0
+    t_start = time.time()
+    with open(args.out, "w", encoding="utf-8") as out, \
+         ThreadPoolExecutor(max_workers=args.workers) as ex:
+        for rec in ex.map(process, rows):
+            out.write(json.dumps(rec, ensure_ascii=False) + "\n")
             out.flush()
             n += 1
-            print(f"[{n}] {row['query'][:70]}… → {prediction[:80]}")
+            n_missing_docs += 1 if rec["n_missing_pages"] else 0
+            n_errors += 1 if rec["error"] else 0
+            if n % 10 == 0 or n == len(rows):
+                rate = n / max(time.time() - t_start, 1e-9)
+                eta_min = (len(rows) - n) / max(rate, 1e-9) / 60
+                print(f"[{n}/{len(rows)}] {rate:.2f} q/s, ETA {eta_min:.0f} min, "
+                      f"{n_errors} erreurs")
 
     print(f"\n{n} prédictions écrites dans {args.out}"
-          + (f" ({n_missing_docs} questions avec pages manquantes)" if n_missing_docs else ""))
+          + (f" ({n_missing_docs} questions avec pages manquantes)" if n_missing_docs else "")
+          + (f" ({n_errors} erreurs transitoires → abstention)" if n_errors else ""))
     return 0
 
 

@@ -26,6 +26,7 @@ import json
 import re
 import sys
 from collections import defaultdict
+from concurrent.futures import ThreadPoolExecutor
 from pathlib import Path
 
 import requests
@@ -83,47 +84,50 @@ def main() -> int:
     ap.add_argument("--llm-key", required=True)
     ap.add_argument("--llm-model", required=True)
     ap.add_argument("--out", type=Path, required=True)
+    ap.add_argument("--workers", type=int, default=4, help="jugements en parallèle")
     args = ap.parse_args()
 
     system_message = load_official_prompts(args.crag_repo)
     llm_url = args.llm_url.rstrip("/")
 
     rows = [json.loads(line) for line in open(args.predictions, encoding="utf-8")]
-    judged = []
-    n_miss = n_correct = 0
 
-    for i, row in enumerate(rows, 1):
+    def verdict_for(row: dict) -> str:
         prediction = row["prediction"].strip()
         pred_low = prediction.lower()
         ground_truths = [row["answer"]] + list(row.get("alt_ans") or [])
-        verdict = "hallucination"  # défaut si aucune GT ne matche
 
         # tolérant aux apostrophes perdues ("I don know", "I dont know")
         if re.search(r"i don'?t? know|i do not know", pred_low) or not prediction:
-            n_miss += 1
-            verdict = "miss"
-        else:
-            for gt in ground_truths:
-                gt = str(gt).strip()
-                gt_low = gt.lower()
-                if pred_low == gt_low:
-                    verdict = "correct"
-                    break
-                if "invalid" in pred_low and "invalid" in gt_low:
-                    verdict = "correct"
-                    break
-                if ("invalid" in pred_low) != ("invalid" in gt_low):
-                    continue  # hallucination pour cette GT, tenter la suivante
+            return "miss"
+        for gt in ground_truths:
+            gt = str(gt).strip()
+            gt_low = gt.lower()
+            if pred_low == gt_low:
+                return "correct"
+            if "invalid" in pred_low and "invalid" in gt_low:
+                return "correct"
+            if ("invalid" in pred_low) != ("invalid" in gt_low):
+                continue  # hallucination pour cette GT, tenter la suivante
+            try:
                 score = judge(llm_url, args.llm_key, args.llm_model,
                               system_message, row["query"], gt, prediction)
-                if score == 1:
-                    verdict = "correct"
-                    break
-            if verdict == "correct":
-                n_correct += 1
+            except Exception as e:
+                print(f"  ! judge error ({row['interaction_id'][:8]}): {e}", file=sys.stderr)
+                score = -1  # erreur judge → pas de crédit, la GT suivante peut encore matcher
+            if score == 1:
+                return "correct"
+        return "hallucination"
 
-        judged.append({**row, "verdict": verdict})
-        print(f"[{i}/{len(rows)}] {verdict:13s} {row['query'][:60]}")
+    judged = []
+    n_miss = n_correct = 0
+    with ThreadPoolExecutor(max_workers=args.workers) as ex:
+        for i, (row, verdict) in enumerate(zip(rows, ex.map(verdict_for, rows)), 1):
+            n_miss += verdict == "miss"
+            n_correct += verdict == "correct"
+            judged.append({**row, "verdict": verdict})
+            if i % 10 == 0 or i == len(rows):
+                print(f"[{i}/{len(rows)}] correct={n_correct} miss={n_miss}")
 
     n = len(judged)
     n_hallu = n - n_correct - n_miss
