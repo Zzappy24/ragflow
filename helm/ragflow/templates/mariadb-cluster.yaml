@@ -23,12 +23,6 @@ spec:
     name: {{ .Values.mariadb.databaseSecretRef }}
     key: password
   database: ragflow
-  # Per-user connection cap. Operator default is far too low (20) for our
-  # topology: 3 task-executors × DB_POOL_SIZE(16) + api pods can exceed it
-  # under bulk ingestion — every excess connection fails parses with
-  # "(1226) exceeded max_user_connections" (seen 2026-08-19, CRAG batch).
-  # Keep below myCnf max_connections (500) so root/exporter always connect.
-  maxUserConnections: {{ .Values.mariadb.maxUserConnections | default 300 }}
 
   # Galera replication — 3 nodes is the minimum for split-brain protection
   # (quorum = 2). Bumping to 5 buys nothing for a workload our size.
@@ -75,4 +69,30 @@ spec:
   # endpoint while Galera nodes come/go.
   podDisruptionBudget:
     maxUnavailable: 1
+---
+# Per-user connection cap for the app user. MariaDB.spec has no
+# maxUserConnections field on this operator version (CRD rejects it) — the
+# User CR owns account-level settings instead: it adopts the bootstrap
+# 'ragflow'@'%' user and reconciles `ALTER USER … MAX_USER_CONNECTIONS`.
+# Why: the operator bootstrap default (20) starves our topology — 3
+# task-executors × DB_POOL_SIZE(16) + api pods — under bulk ingestion; every
+# excess connection fails parses with "(1226) exceeded max_user_connections"
+# (incident 2026-08-19, calibration CRAG 962 docs: parsing stalled at 32 DONE).
+# Keep below myCnf max_connections (500) so root/exporter always connect.
+# CAUTION: deleting this CR may DROP the user on some operator versions —
+# it must live and die with the MariaDB CR itself.
+apiVersion: k8s.mariadb.com/v1alpha1
+kind: User
+metadata:
+  name: ragflow
+  labels:
+    {{- include "ragflow.labels" . | nindent 4 }}
+spec:
+  mariaDbRef:
+    name: {{ .Release.Name }}-mariadb
+  passwordSecretKeyRef:
+    name: {{ .Values.mariadb.databaseSecretRef }}
+    key: password
+  host: "%"
+  maxUserConnections: {{ .Values.mariadb.maxUserConnections | default 300 }}
 {{- end }}
