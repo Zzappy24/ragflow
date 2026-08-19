@@ -89,6 +89,32 @@ def retrieve(base: str, key: str, dataset_id: str, question: str,
     return [c.get("content") or c.get("content_with_weight") or "" for c in chunks]
 
 
+def _chat_once(llm_url: str, llm_key: str, llm_model: str,
+               user_message: str, max_tokens: int) -> str:
+    r = requests.post(
+        f"{llm_url}/chat/completions",
+        headers={"Authorization": f"Bearer {llm_key}", "Content-Type": "application/json"},
+        json={
+            "model": llm_model,
+            "messages": [
+                {"role": "system", "content": SYSTEM_PROMPT},
+                {"role": "user", "content": user_message},
+            ],
+            "temperature": 0.0,
+            "max_tokens": max_tokens,
+        },
+        timeout=180,
+    )
+    r.raise_for_status()
+    # NB : on ne lit QUE content — jamais reasoning_content, qui fuite le
+    # monologue interne dans la prédiction (vu run 1 : "We need answer
+    # user's question using only references…" jugé hallucination).
+    text = r.json()["choices"][0]["message"].get("content") or ""
+    if "</think>" in text:
+        text = text.split("</think>", 1)[1]
+    return text.strip()
+
+
 def generate(llm_url: str, llm_key: str, llm_model: str,
              query: str, query_time: str, references: list) -> str:
     refs = ""
@@ -101,31 +127,16 @@ def generate(llm_url: str, llm_key: str, llm_model: str,
         f"Current Time: {query_time}\n"
         f"Question: {query}\n"
     )
-    r = requests.post(
-        f"{llm_url}/chat/completions",
-        headers={"Authorization": f"Bearer {llm_key}", "Content-Type": "application/json"},
-        json={
-            "model": llm_model,
-            "messages": [
-                {"role": "system", "content": SYSTEM_PROMPT},
-                {"role": "user", "content": user_message},
-            ],
-            "temperature": 0.0,
-            # Les modèles reasoning (qwen) consomment leur budget dans
-            # <think> avant de répondre — un cap trop bas rend des
-            # prédictions vides.
-            "max_tokens": 2048,
-        },
-        timeout=180,
-    )
-    r.raise_for_status()
-    msg = r.json()["choices"][0]["message"]
-    text = msg.get("content") or msg.get("reasoning_content") or ""
-    # <think>…</think> éventuel des modèles reasoning : on ne garde que la réponse.
-    if "</think>" in text:
-        text = text.split("</think>", 1)[1]
-    words = text.strip().split()
-    return " ".join(words[:MAX_ANSWER_WORDS])
+    # Les modèles reasoning (qwen) consomment leur budget dans <think> avant
+    # de répondre — un cap trop bas rend un content vide. On retente une fois
+    # avec un budget doublé ; toujours vide → abstention explicite (le
+    # scoring la compte miss, jamais hallucination).
+    text = _chat_once(llm_url, llm_key, llm_model, user_message, 2048)
+    if not text:
+        text = _chat_once(llm_url, llm_key, llm_model, user_message, 4096)
+    if not text:
+        return "I don't know"
+    return " ".join(text.split()[:MAX_ANSWER_WORDS])
 
 
 def main() -> int:
