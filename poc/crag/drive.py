@@ -49,6 +49,16 @@ def rf_headers(key: str) -> dict:
     return {"Authorization": f"Bearer {key}", "Content-Type": "application/json"}
 
 
+def find_dataset(base: str, key: str, name: str) -> str:
+    r = requests.get(f"{base}/api/v1/datasets", headers=rf_headers(key),
+                     params={"name": name, "page_size": 10}, timeout=30)
+    r.raise_for_status()
+    for d in r.json().get("data") or []:
+        if d["name"] == name:
+            return d["id"]
+    raise RuntimeError(f"dataset introuvable: {name}")
+
+
 def list_documents(base: str, key: str, dataset_id: str) -> dict:
     """name → document_id pour tout le dataset."""
     name_to_id = {}
@@ -145,7 +155,10 @@ def main() -> int:
     ap.add_argument("--questions", type=Path, required=True)
     ap.add_argument("--ragflow-url", required=True)
     ap.add_argument("--ragflow-key", required=True)
-    ap.add_argument("--dataset-id", required=True)
+    ap.add_argument("--dataset-id", default="", help="dataset unique")
+    ap.add_argument("--per-domain", action="store_true",
+                    help="datasets <prefix>-<domaine> (cf. ingest.py --per-domain)")
+    ap.add_argument("--dataset-prefix", default="crag-v5")
     ap.add_argument("--llm-url", required=True)
     ap.add_argument("--llm-key", required=True)
     ap.add_argument("--llm-model", required=True)
@@ -158,11 +171,11 @@ def main() -> int:
     ap.add_argument("--workers", type=int, default=4, help="questions traitées en parallèle")
     args = ap.parse_args()
 
+    if bool(args.dataset_id) == args.per_domain:
+        ap.error("exactement un de --dataset-id / --per-domain")
+
     base = args.ragflow_url.rstrip("/")
     llm_url = args.llm_url.rstrip("/")
-
-    name_to_id = list_documents(base, args.ragflow_key, args.dataset_id)
-    print(f"{len(name_to_id)} documents dans le dataset {args.dataset_id}")
 
     rows = []
     with open(args.questions, encoding="utf-8") as f:
@@ -171,15 +184,28 @@ def main() -> int:
                 break
             rows.append(row)
 
+    # domaine → dataset, et par dataset : nom de fichier → doc_id
+    if args.dataset_id:
+        ds_of = {dom: args.dataset_id for dom in {r["domain"] for r in rows}}
+    else:
+        ds_of = {dom: find_dataset(base, args.ragflow_key, f"{args.dataset_prefix}-{dom}")
+                 for dom in sorted({r["domain"] for r in rows})}
+    name_to_id = {}
+    for ds in set(ds_of.values()):
+        name_to_id[ds] = list_documents(base, args.ragflow_key, ds)
+        print(f"{len(name_to_id[ds])} documents dans le dataset {ds}")
+
     n_missing_docs = 0
 
     def process(row: dict) -> dict:
+        dataset_id = ds_of[row["domain"]]
         page_files = json.loads(row["page_files"])
-        doc_ids = [name_to_id[p] for p in page_files if p in name_to_id]
+        doc_ids = [name_to_id[dataset_id][p] for p in page_files
+                   if p in name_to_id[dataset_id]]
         missing = len(page_files) - len(doc_ids)
         t0 = time.time()
         try:
-            refs = retrieve(base, args.ragflow_key, args.dataset_id, row["query"],
+            refs = retrieve(base, args.ragflow_key, dataset_id, row["query"],
                             [] if args.unscoped else doc_ids,
                             args.page_size, args.similarity_threshold)
             prediction = generate(llm_url, args.llm_key, args.llm_model,

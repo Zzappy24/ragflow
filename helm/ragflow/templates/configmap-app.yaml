@@ -91,7 +91,11 @@ data:
   DB_POOL_SIZE: "16"
   REDIS_POOL_SIZE: "32"
   EMBEDDING_BATCH_SIZE: "512"
-  DOC_BULK_SIZE: "128"
+  # 512 (défaut code : 128) — moins d'inserts Infinity mais plus gros : 128
+  # fragmentait la table en milliers de petits segments sous ingestion
+  # massive → boucle de compaction (même ts rejoué), inserts en read timeout
+  # (incident 2026-08-19, calibration CRAG 962 docs × 12 threads).
+  DOC_BULK_SIZE: "512"
   INFINITY_POOL_SIZE: "0"        # 0 = auto-size from WORKER_MAX_TASKS
 
   # --- service_conf.yaml template ------------------------------------------
