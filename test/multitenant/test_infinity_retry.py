@@ -63,6 +63,8 @@ try:
     _mod = importlib.util.module_from_spec(_spec)
     _spec.loader.exec_module(_mod)
     _retry_on_meta_contention = _mod._retry_on_meta_contention
+    _retry_on_txn_conflict = _mod._retry_on_txn_conflict
+    _delete_lock = _mod._delete_lock
 finally:
     # Restore sys.modules so we don't leak MagicMocks into later tests.
     for _m, _orig in _saved.items():
@@ -159,3 +161,52 @@ class TestRetryOnMetaContention:
                 )
         warns = [r for r in caplog.records if "exhausted" in r.message.lower()]
         assert len(warns) == 1
+
+
+def _conflict_exc() -> Exception:
+    """Mimic the surface of an Infinity transaction-conflict abort (livelock
+    prod 2026-08-19: concurrent row-DELETEs on the same table)."""
+    return Exception(
+        "Transaction: 12779305 is conflicted, detailed info: NewTxn conflict "
+        "reason: Delete: database: default_db, db_id: 1, table: ragflow_x_y, "
+        "table_id: 13, deleted: 5228 vs. Delete: ..."
+    )
+
+
+class TestRetryOnTxnConflict:
+    """Contract of the delete-conflict retry (CUSTOM B2B SaaS). Without it,
+    two concurrent deletes of the same rows livelock the whole doc engine."""
+
+    def test_conflict_is_retried_until_competitor_wins(self):
+        # First attempt conflicts; the retry finds the rows already gone and
+        # succeeds (delete is idempotent — 0 rows matched).
+        op = MagicMock(side_effect=[_conflict_exc(), "ok"])
+        result = _retry_on_txn_conflict("delete(t)", op, base_delay_ms=1)
+        assert result == "ok"
+        assert op.call_count == 2
+
+    def test_budget_is_bounded_then_propagates(self):
+        op = MagicMock(side_effect=[_conflict_exc()] * 10)
+        with pytest.raises(Exception) as ei:
+            _retry_on_txn_conflict("delete(t)", op, base_delay_ms=1, max_attempts=3)
+        assert "conflicted" in str(ei.value)
+        assert op.call_count == 3
+
+    def test_non_conflict_error_propagates_immediately(self):
+        op = MagicMock(side_effect=[ValueError("table not found")])
+        with pytest.raises(ValueError):
+            _retry_on_txn_conflict("delete(t)", op)
+        assert op.call_count == 1
+
+    def test_meta_contention_and_conflict_predicates_are_distinct(self):
+        # A "Resource busy" must NOT be retried by the conflict helper — it
+        # belongs to the metadata path with its own budget.
+        op = MagicMock(side_effect=[_busy_exc()])
+        with pytest.raises(Exception):
+            _retry_on_txn_conflict("delete(t)", op)
+        assert op.call_count == 1
+
+    def test_delete_lock_is_stable_per_table(self):
+        assert _delete_lock("ragflow_a_b") is _delete_lock("ragflow_a_b")
+        lock = _delete_lock("ragflow_a_b")
+        assert hasattr(lock, "acquire") and hasattr(lock, "release")

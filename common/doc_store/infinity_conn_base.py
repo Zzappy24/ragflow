@@ -19,6 +19,7 @@ import os
 import random
 import re
 import json
+import threading
 import time
 from abc import abstractmethod
 from typing import Callable, TypeVar
@@ -105,6 +106,51 @@ def _is_meta_contention_error(exc: BaseException) -> bool:
     return "Resource busy" in msg and "rocksdb" in msg.lower()
 
 
+def _retry_with_backoff(
+    op_name: str,
+    operation: Callable[[], _T],
+    *,
+    is_retryable: Callable[[BaseException], bool],
+    label: str,
+    logger: logging.Logger | None = None,
+    max_attempts: int,
+    base_delay_ms: int,
+) -> _T:
+    """Run ``operation()`` and retry on errors matching ``is_retryable``.
+
+    Exponential backoff with ±50% jitter to avoid a thundering herd when many
+    workers retry simultaneously. The wrapped operations must be idempotent
+    (re-running them after a conflicted attempt is a no-op at worst). Any
+    exception ``is_retryable`` rejects is re-raised immediately so genuine
+    failures still surface fast.
+    """
+    log = logger or logging.getLogger(__name__)
+    last_exc: BaseException | None = None
+    for attempt in range(max_attempts):
+        try:
+            return operation()
+        except Exception as exc:
+            if not is_retryable(exc):
+                raise
+            last_exc = exc
+            if attempt == max_attempts - 1:
+                break
+            base = (base_delay_ms / 1000.0) * (2 ** attempt)
+            sleep_for = base + random.uniform(0, base * 0.5)
+            log.info(
+                "INFINITY %s on %s (attempt %d/%d), "
+                "retrying in %.3fs: %s",
+                label, op_name, attempt + 1, max_attempts, sleep_for, exc,
+            )
+            time.sleep(sleep_for)
+    log.warning(
+        "INFINITY %s on %s exhausted %d attempts — propagating: %s",
+        label, op_name, max_attempts, last_exc,
+    )
+    assert last_exc is not None
+    raise last_exc
+
+
 def _retry_on_meta_contention(
     op_name: str,
     operation: Callable[[], _T],
@@ -113,40 +159,65 @@ def _retry_on_meta_contention(
     max_attempts: int = _META_RETRY_MAX,
     base_delay_ms: int = _META_RETRY_BASE_DELAY_MS,
 ) -> _T:
-    """Run ``operation()`` and retry on RocksDB "Resource busy" errors.
+    """Retry RocksDB "Resource busy" errors on metadata writes (CREATE/DROP).
 
-    Exponential backoff with ±50% jitter to avoid a thundering herd when many
-    workers retry simultaneously. ``ConflictType.Ignore`` makes the wrapped
-    Infinity calls idempotent, so re-running them on a conflicted retry is
-    safe (worst case: a no-op on a table that was already created). Any
-    exception that does not match :func:`_is_meta_contention_error` is
-    re-raised immediately so genuine failures still surface fast.
+    ``ConflictType.Ignore`` makes the wrapped Infinity calls idempotent, so
+    re-running them on a conflicted retry is safe (worst case: a no-op on a
+    table that was already created).
     """
-    log = logger or logging.getLogger(__name__)
-    last_exc: BaseException | None = None
-    for attempt in range(max_attempts):
-        try:
-            return operation()
-        except Exception as exc:
-            if not _is_meta_contention_error(exc):
-                raise
-            last_exc = exc
-            if attempt == max_attempts - 1:
-                break
-            base = (base_delay_ms / 1000.0) * (2 ** attempt)
-            sleep_for = base + random.uniform(0, base * 0.5)
-            log.info(
-                "INFINITY meta contention on %s (attempt %d/%d), "
-                "retrying in %.3fs: %s",
-                op_name, attempt + 1, max_attempts, sleep_for, exc,
-            )
-            time.sleep(sleep_for)
-    log.warning(
-        "INFINITY meta contention on %s exhausted %d attempts — propagating: %s",
-        op_name, max_attempts, last_exc,
+    return _retry_with_backoff(
+        op_name, operation,
+        is_retryable=_is_meta_contention_error, label="meta contention",
+        logger=logger, max_attempts=max_attempts, base_delay_ms=base_delay_ms,
     )
-    assert last_exc is not None
-    raise last_exc
+
+
+# CUSTOM B2B SaaS — Infinity delete conflict retry + per-table serialization.
+# Incident prod 2026-08-19: two concurrent row-DELETEs on the same table make
+# Infinity abort BOTH transactions ("NewTxn conflict reason: Delete ... vs.
+# Delete ..."); each caller resubmits, conflicts again, and the cluster
+# livelocks — Infinity burns all its CPU on aborted transactions and every
+# parse/insert times out. Two layers of defense:
+#   1. `_retry_on_txn_conflict`: bounded retries with jittered exponential
+#      backoff. Deleting rows is idempotent (a retry after the competitor won
+#      simply matches 0 rows), so one caller wins each round and the other
+#      converges instead of livelocking.
+#   2. `_delete_lock`: striped process-local locks serialize deletes per
+#      table inside one process (bulk doc-removal loops), so most conflicts
+#      never happen; the retry handles the cross-pod remainder.
+_DELETE_RETRY_MAX = _int_env("INFINITY_DELETE_RETRY_MAX", 6)
+_DELETE_RETRY_BASE_DELAY_MS = _int_env("INFINITY_DELETE_RETRY_BASE_DELAY_MS", 100)
+
+_DELETE_LOCK_STRIPES = [threading.Lock() for _ in range(64)]
+
+
+def _delete_lock(table_name: str) -> threading.Lock:
+    return _DELETE_LOCK_STRIPES[hash(table_name) % len(_DELETE_LOCK_STRIPES)]
+
+
+def _is_txn_conflict_error(exc: BaseException) -> bool:
+    """Return True iff ``exc`` is an Infinity transaction-conflict abort.
+
+    The server surfaces these as "Transaction: <id> is conflicted, detailed
+    info: NewTxn conflict reason: ...". Matching on "conflict" is deliberately
+    permissive: a false positive only costs a few bounded, jittered retries.
+    """
+    return "conflict" in str(exc).lower()
+
+
+def _retry_on_txn_conflict(
+    op_name: str,
+    operation: Callable[[], _T],
+    *,
+    logger: logging.Logger | None = None,
+    max_attempts: int = _DELETE_RETRY_MAX,
+    base_delay_ms: int = _DELETE_RETRY_BASE_DELAY_MS,
+) -> _T:
+    return _retry_with_backoff(
+        op_name, operation,
+        is_retryable=_is_txn_conflict_error, label="txn conflict",
+        logger=logger, max_attempts=max_attempts, base_delay_ms=base_delay_ms,
+    )
 
 
 class InfinityConnectionBase(DocStoreConnection):
@@ -651,7 +722,14 @@ class InfinityConnectionBase(DocStoreConnection):
                 return 0
             filter = self.equivalent_condition_to_str(condition, table_instance)
             self.logger.debug(f"INFINITY delete table {table_name}, filter {filter}.")
-            res = table_instance.delete(filter)
+            # CUSTOM B2B SaaS — Infinity delete conflict retry + per-table
+            # serialization (see _retry_on_txn_conflict above).
+            with _delete_lock(table_name):
+                res = _retry_on_txn_conflict(
+                    f"delete({table_name})",
+                    lambda: table_instance.delete(filter),
+                    logger=self.logger,
+                )
             return res.deleted_rows
         finally:
             self.connPool.release_conn(inf_conn)
