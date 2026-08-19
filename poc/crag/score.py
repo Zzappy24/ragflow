@@ -98,7 +98,8 @@ def main() -> int:
         ground_truths = [row["answer"]] + list(row.get("alt_ans") or [])
         verdict = "hallucination"  # défaut si aucune GT ne matche
 
-        if "i don't know" in pred_low or "i do not know" in pred_low:
+        # tolérant aux apostrophes perdues ("I don know", "I dont know")
+        if re.search(r"i don'?t? know|i do not know", pred_low) or not prediction:
             n_miss += 1
             verdict = "miss"
         else:

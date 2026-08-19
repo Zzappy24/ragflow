@@ -111,12 +111,16 @@ def generate(llm_url: str, llm_key: str, llm_model: str,
                 {"role": "user", "content": user_message},
             ],
             "temperature": 0.0,
-            "max_tokens": 256,
+            # Les modèles reasoning (qwen) consomment leur budget dans
+            # <think> avant de répondre — un cap trop bas rend des
+            # prédictions vides.
+            "max_tokens": 2048,
         },
-        timeout=120,
+        timeout=180,
     )
     r.raise_for_status()
-    text = r.json()["choices"][0]["message"]["content"] or ""
+    msg = r.json()["choices"][0]["message"]
+    text = msg.get("content") or msg.get("reasoning_content") or ""
     # <think>…</think> éventuel des modèles reasoning : on ne garde que la réponse.
     if "</think>" in text:
         text = text.split("</think>", 1)[1]
