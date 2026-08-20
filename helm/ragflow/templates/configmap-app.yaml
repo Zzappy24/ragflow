@@ -91,6 +91,15 @@ data:
   DB_POOL_SIZE: "16"
   REDIS_POOL_SIZE: "32"
   EMBEDDING_BATCH_SIZE: "512"
+  # Timeout RPC Infinity : 300s (défaut code 120s). Un insert lent qui
+  # timeout est REJOUÉ par le SDK pendant que le serveur exécute encore le
+  # premier — la duplication aggrave la lenteur (boule de neige 2026-08-20).
+  # Mieux vaut attendre un insert lent que le doubler.
+  INFINITY_RPC_TIMEOUT_MS: "300000"
+  # TTL des slots d'écriture par table : doit rester > au timeout RPC, sinon
+  # un slot expire pendant un insert légitime encore en vol et un 3e écrivain
+  # entre — la garantie du sémaphore saute.
+  INFINITY_TABLE_WRITE_SLOT_TTL_S: "360"
   # 512 (défaut code : 128) — moins d'inserts Infinity mais plus gros : 128
   # fragmentait la table en milliers de petits segments sous ingestion
   # massive → boucle de compaction (même ts rejoué), inserts en read timeout

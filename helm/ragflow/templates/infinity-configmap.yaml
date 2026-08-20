@@ -37,9 +37,15 @@ data:
     [storage]
     persistence_dir         = "/var/infinity/persistence"
     data_dir                = "/var/infinity/data"
-    optimize_interval        = "10s"
-    cleanup_interval         = "60s"
-    compact_interval         = "120s"
+    # Défauts amont : optimize 10s / cleanup 60s / compact 120s — un balayage
+    # de TOUTES les tables toutes les 10 s, en contention OCC permanente avec
+    # les inserts. Sous ingestion massive les écritures dépassent le timeout
+    # RPC client, les replays s'empilent, plus rien ne committe (ts figé,
+    # incident 2026-08-20 ~09:00 UTC). Intervalles détendus = le fond de
+    # tâche passe entre les rafales d'écriture au lieu de les percuter.
+    optimize_interval        = {{ .Values.infinity.optimizeInterval | default "60s" | quote }}
+    cleanup_interval         = "120s"
+    compact_interval         = {{ .Values.infinity.compactInterval | default "300s" | quote }}
     storage_type             = "local"
     mem_index_capacity       = 65536
 
