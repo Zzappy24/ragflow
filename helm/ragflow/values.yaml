@@ -182,6 +182,13 @@ infinity:
   # infiniflow/infinity#3418) : 128 sature en minutes sous charge dégradée.
   connectionPoolSize: 512
   bufferManagerSize: "8GB"
+  # Mode « fenêtre de maintenance » : monter optimizeInterval/compactInterval
+  # (~24h) et activer le CronJob nocturne qui fait optimize+compact table par
+  # table quand personne n'écrit — la maintenance périodique d'Infinity est
+  # une txn OCC qui percute les écritures (infiniflow/infinity#3418).
+  maintenance:
+    enabled: false
+    schedule: "0 1 * * *"   # 01:00 tous les jours
   resources:
     requests: { cpu: "1000m", memory: "4Gi" }
     limits:   { cpu: "4000m", memory: "16Gi" }

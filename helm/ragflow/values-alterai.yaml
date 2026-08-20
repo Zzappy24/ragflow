@@ -247,6 +247,15 @@ minio:
 
 infinity:
   storage: "100Gi"
+  # Mode fenêtre de maintenance : quasi plus de maintenance périodique en
+  # journée (elle percute les écritures en txn OCC — incidents 2026-08-19/20,
+  # infiniflow/infinity#3418) ; le CronJob de 01:00 fait optimize+compact
+  # sur toutes les tables. Après un gros run d'ingestion :
+  #   kubectl -n rag-new2 create job --from=cronjob/rag-new2-infinity-maintenance manual-$(date +%s)
+  optimizeInterval: "24h"
+  compactInterval: "24h"
+  maintenance:
+    enabled: true
   # Incident 2026-08-10 : OOMKilled (35 restarts cumulés !) pendant un
   # re-parse de 14 docs — tempête de conflits delete-vs-delete sur la même
   # table (12 tâches parallèles × retries) → CPU 195%, mémoire > 8Gi → kill.

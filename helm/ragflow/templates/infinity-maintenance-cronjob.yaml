@@ -1,0 +1,54 @@
+{{- if .Values.infinity.maintenance.enabled }}
+# Fenêtre de maintenance Infinity — optimize + compact de toutes les tables
+# la nuit, quand personne n'écrit. Complément du mode « intervalles longs »
+# (infinity.optimizeInterval / compactInterval ~24h dans values) : la
+# maintenance périodique d'Infinity est une transaction OCC qui percute les
+# écritures (incidents 2026-08-19/20, infiniflow/infinity#3418) — on la
+# sort du chemin de jour. Après un gros run d'ingestion, déclenchement
+# manuel possible :
+#   kubectl -n <ns> create job --from=cronjob/{{ .Release.Name }}-infinity-maintenance manual-$(date +%s)
+apiVersion: batch/v1
+kind: CronJob
+metadata:
+  name: {{ .Release.Name }}-infinity-maintenance
+  labels:
+    {{- include "ragflow.labels" . | nindent 4 }}
+spec:
+  schedule: {{ .Values.infinity.maintenance.schedule | quote }}
+  concurrencyPolicy: Forbid          # jamais deux maintenances en parallèle
+  successfulJobsHistoryLimit: 3
+  failedJobsHistoryLimit: 3
+  jobTemplate:
+    spec:
+      activeDeadlineSeconds: 7200    # grosse table = long ; 2h de plafond
+      backoffLimit: 1
+      template:
+        metadata:
+          labels:
+            app.kubernetes.io/name: ragflow
+            app.kubernetes.io/instance: {{ .Release.Name }}
+            app.kubernetes.io/component: infinity-maintenance
+        spec:
+          restartPolicy: Never
+          {{- with .Values.global.imagePullSecrets }}
+          imagePullSecrets:
+            {{- toYaml . | nindent 12 }}
+          {{- end }}
+          containers:
+            - name: maintenance
+              image: "{{ .Values.global.imageRegistry }}/{{ .Values.global.imageRepository }}:{{ .Values.global.imageTag }}"
+              imagePullPolicy: IfNotPresent
+              command: ["python", "tools/scripts/infinity_nightly_maintenance.py"]
+              env:
+                - name: INFINITY_HOST
+                  value: "{{ .Release.Name }}-infinity.{{ .Release.Namespace }}.svc.cluster.local"
+                - name: INFINITY_THRIFT_PORT
+                  value: "23817"
+              resources:
+                requests:
+                  cpu: 100m
+                  memory: 256Mi
+                limits:
+                  cpu: "1"
+                  memory: 1Gi
+{{- end }}
