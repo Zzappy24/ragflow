@@ -58,5 +58,16 @@ data:
 
     [wal]
     wal_dir                       = "/var/infinity/wal"
+    # Checkpoint périodique : observé à 30s sur cette version (la doc amont
+    # annonce 86400s — dérive de version). Sous ingestion bulk, la rotation
+    # WAL + checkpoint toutes les 30s pendant les rafales d'écriture est un
+    # suspect direct du gel des commits (ts figé juste après "Open new wal
+    # file", incident 2026-08-20 ~09:45 UTC). Espacé à 120s.
+    checkpoint_interval           = {{ .Values.infinity.checkpointInterval | default "120s" | quote }}
+    # Explicites (défauts doc) — le mode de flush est documenté ici même si
+    # la sémantique est actuellement cassée amont (tous les modes fsyncent
+    # par batch, cf. note dans infiniflow/infinity#3418).
+    wal_compact_threshold         = "1GB"
+    wal_flush                     = "only_write"
 
     [resource]
