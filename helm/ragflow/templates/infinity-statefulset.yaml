@@ -26,6 +26,10 @@ spec:
         app.kubernetes.io/name: ragflow
         app.kubernetes.io/instance: {{ .Release.Name }}
         app.kubernetes.io/component: infinity
+      annotations:
+        # Restart Infinity when its config changes (WAL replay at boot —
+        # expected, see probes below).
+        checksum/infinity-conf: {{ include (print $.Template.BasePath "/infinity-configmap.yaml") . | sha256sum }}
     spec:
       terminationGracePeriodSeconds: 60
       securityContext:
@@ -73,6 +77,10 @@ spec:
         - name: infinity
           image: {{ .Values.infinity.image }}
           imagePullPolicy: IfNotPresent
+          # Explicit config (see infinity-configmap.yaml) — without -f the
+          # binary runs on image defaults (connection_pool_size=128, too low
+          # once crashlooping clients leak sessions; incident 2026-08-20).
+          args: ["-f", "/infinity_conf.toml"]
           ports:
             - name: thrift
               containerPort: 23817
@@ -105,6 +113,9 @@ spec:
           volumeMounts:
             - name: data
               mountPath: /var/infinity
+            - name: infinity-conf
+              mountPath: /infinity_conf.toml
+              subPath: infinity_conf.toml
 
           # Phase 0: relaxed FS — readOnlyRootFilesystem trips Infinity's
           # internal scratch writes outside /var/infinity. Re-enable in
@@ -120,6 +131,9 @@ spec:
         - name: tmp
           emptyDir:
             sizeLimit: 2Gi
+        - name: infinity-conf
+          configMap:
+            name: {{ .Release.Name }}-infinity-conf
 
   volumeClaimTemplates:
     - metadata:

@@ -177,6 +177,11 @@ infinity:
   replicas: 1
   storage: "50Gi"
   image: "infiniflow/infinity:v0.7.0-dev5"
+  # Plafond de sessions thrift serveur (défaut image : 128). Les clients en
+  # read-timeout laissent des sessions zombies (pas de reaper serveur —
+  # infiniflow/infinity#3418) : 128 sature en minutes sous charge dégradée.
+  connectionPoolSize: 512
+  bufferManagerSize: "8GB"
   resources:
     requests: { cpu: "1000m", memory: "4Gi" }
     limits:   { cpu: "4000m", memory: "16Gi" }
