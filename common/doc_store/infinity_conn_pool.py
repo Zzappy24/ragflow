@@ -18,6 +18,11 @@ import os
 import time
 
 import infinity
+from functools import wraps
+
+from thrift.transport.TTransport import TTransportException
+
+from infinity.common import InfinityException
 from infinity.connection_pool import ConnectionPool
 from infinity.errors import ErrorCode
 from infinity.remote_thrift.client import ThriftInfinityClient
@@ -63,6 +68,61 @@ def _reconnect_with_socket_timeout(self):
 
 
 ThriftInfinityClient._reconnect = _reconnect_with_socket_timeout
+
+
+# CUSTOM B2B SaaS — no replay of MUTATIONS on transport timeout.
+#
+# Incident 2026-08-20 : le retry_wrapper du SDK rejoue TOUT appel après un
+# timeout transport (reconnect + replay). Pour les mutations c'est toxique :
+# la 1re tentative tourne souvent ENCORE côté serveur (session zombie), et
+# le rejeu identique entre en conflit avec son propre fantôme —
+#   "NewTxn conflict reason: Delete ... deleted: N vs. Delete ... deleted: N"
+# (mêmes lignes des deux côtés). Les aborts en cascade gèlent les commits
+# (ts figé), chaque gel produit de nouveaux timeouts → boule de neige.
+# Un INSERT rejoué est pire : pas de conflit, des chunks DUPLIQUÉS.
+# NB : le "TOO_MANY_CONNECTIONS (5003) Try N times" vu dans les logs est le
+# code fourre-tout de ce wrapper après épuisement — pas la limite serveur.
+#
+# Fix : insert/delete tentés UNE fois. Sur timeout : reconnexion (socket
+# saine pour la suite) puis on PROPAGE l'erreur — l'échec remonte à la
+# tâche, re-tentée plus tard par la voie normale (le delete défensif du
+# chemin upsert nettoie alors les lignes partielles du fantôme). Les
+# lectures gardent le retry_wrapper (les rejouer est sans danger).
+# Kill-switch : INFINITY_MUTATION_REPLAY=1 restaure le comportement SDK.
+# À re-vérifier à chaque bump du SDK : @wraps expose __wrapped__, et les
+# attributs lock/session_i/_reconnect existent (sinon warning + fallback).
+def _no_replay_mutation(unwrapped, op_label):
+    @wraps(unwrapped)
+    def wrapper(self, *args, **kwargs):
+        try:
+            with self.lock.gen_rlock():
+                return unwrapped(self, *args, **kwargs)
+        except TTransportException as e:
+            try:
+                with self.lock.gen_wlock():
+                    self._reconnect()
+                    self.session_i += 1
+            except Exception as rexc:
+                logging.warning(f"Infinity {op_label}: reconnect after timeout failed: {rexc}")
+            # Pas d'ErrorCode "timeout" dans ce SDK — CANT_CONNECT_SERVER est
+            # le plus proche sémantiquement (le message porte le vrai motif).
+            raise InfinityException(
+                ErrorCode.CANT_CONNECT_SERVER,
+                f"{op_label} transport timeout — NOT replayed (avoids ghost-txn conflicts): {e}",
+            ) from e
+    return wrapper
+
+
+if os.environ.get("INFINITY_MUTATION_REPLAY") != "1":
+    try:
+        ThriftInfinityClient.insert = _no_replay_mutation(
+            ThriftInfinityClient.insert.__wrapped__, "insert")
+        ThriftInfinityClient.delete = _no_replay_mutation(
+            ThriftInfinityClient.delete.__wrapped__, "delete")
+    except AttributeError as exc:
+        logging.warning(
+            "Infinity SDK layout changed — mutation no-replay patch NOT applied "
+            f"(mutations will be replayed on timeout, ghost-conflict risk): {exc}")
 
 
 @singleton
