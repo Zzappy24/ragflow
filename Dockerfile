@@ -51,9 +51,20 @@ COPY --from=deps /chromedriver-linux64-121-0-6167-85 /tmp/chromedriver-linux64.z
 COPY --from=deps /libssl1.1_1.1.1f-1ubuntu2_amd64.deb /tmp/libssl1.1_amd64.deb
 COPY --from=deps /libssl1.1_1.1.1f-1ubuntu2_arm64.deb /tmp/libssl1.1_arm64.deb
 
-RUN cp -r /tmp/ragflow_deps/InfiniFlow/text_concat_xgb_v1.0 /ragflow/rag/res/deepdoc/ && \
-    cp -r /tmp/ragflow_deps/InfiniFlow/deepdoc /ragflow/rag/res/deepdoc/ && \
-    rm -rf /tmp/ragflow_deps
+# CONTENU copié à plat (`SRC/.`) — `cp -r SRC DEST/` d'un répertoire vers un
+# répertoire existant l'imbrique en sous-répertoire (rag/res/deepdoc/deepdoc/),
+# où le code ne cherche pas : l'OCR retéléchargeait alors ses modèles depuis
+# Hugging Face au runtime (lent, non souverain) et le xgboost updown_concat
+# échouait net → PDF parsés sans DeepDoc (bug remonté par Marc 2026-08-24).
+# Le `test -f` fait ÉCHOUER le build si la disposition régresse.
+RUN cp -r /tmp/ragflow_deps/InfiniFlow/text_concat_xgb_v1.0/. /ragflow/rag/res/deepdoc/ && \
+    cp -r /tmp/ragflow_deps/InfiniFlow/deepdoc/. /ragflow/rag/res/deepdoc/ && \
+    rm -rf /tmp/ragflow_deps && \
+    test -f /ragflow/rag/res/deepdoc/updown_concat_xgb.model && \
+    test -f /ragflow/rag/res/deepdoc/det.onnx && \
+    test -f /ragflow/rag/res/deepdoc/rec.onnx && \
+    test -f /ragflow/rag/res/deepdoc/layout.onnx && \
+    test -f /ragflow/rag/res/deepdoc/tsr.onnx
 
 # Setup apt base and optional mirror
 RUN apt update && \
