@@ -19,7 +19,7 @@ ARG DEBIAN_FRONTEND=noninteractive
 
 # Build toolchain — needed to compile native deps that don't ship cp313
 # wheels on PyPI:
-#   - numpy 1.26.4 (pinned by infinity-sdk 0.7.0 which requires
+#   - numpy 1.26.4 (pinned by infinity-sdk 0.7.3 (contrainte inchangée : numpy>=1.26,<2) which requires
 #     numpy<2.0). No cp313 wheel exists for 1.26.4 so it builds from
 #     sdist via meson, which needs g++ + pkg-config (meson and ninja
 #     are pulled automatically by pip as build deps).
@@ -79,7 +79,7 @@ RUN python -m venv /opt/venv && \
         "elasticsearch-dsl==8.12.0" \
         "elasticsearch==8.19.3" \
         "opensearch-py==2.7.1" \
-        "infinity-sdk==0.7.0" \
+        "infinity-sdk==0.7.3" \
         "minio==7.2.4" \
         "valkey==6.0.2" \
         "boto3==1.42.25" \
