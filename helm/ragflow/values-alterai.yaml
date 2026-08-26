@@ -246,6 +246,10 @@ minio:
       memory: "1Gi"
 
 infinity:
+  # x64-v3 (AVX2) : confirmé sur le nœud Infinity le 2026-08-26
+  # (grep -c avx2 /proc/cpuinfo = 220). Fallback si reschedule sur un
+  # nœud plus ancien : v0.7.3-x64-v2.
+  image: "infiniflow/infinity:v0.7.3-x64-v3"
   storage: "100Gi"
   # Mode fenêtre de maintenance : quasi plus de maintenance périodique en
   # journée (elle percute les écritures en txn OCC — incidents 2026-08-19/20,

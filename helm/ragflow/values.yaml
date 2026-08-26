@@ -176,7 +176,16 @@ infinity:
   enabled: true
   replicas: 1
   storage: "50Gi"
-  image: "infiniflow/infinity:v0.7.0-dev5"
+  # v0.7.3 : corrige le deadlock de l'inverted index (#3409) qui gelait les
+  # commits / segfaultait sous ingestion massive (incidents 2026-08-19/20).
+  # Migration in-place validée en local le 2026-08-20 : la v0.7.3 rejoue le
+  # WAL/checkpoints écrits par dev5 sans perte (dev5 écrivait déjà le format
+  # CHECKPOINT_V2). ATTENTION : le protocole SDK est couplé (0.7.3 ↔ 0.7.3,
+  # rejets croisés) — déployer serveur ET images clientes dans le même sync.
+  # Tags upstream par architecture depuis 0.7.1 (pas de manifest multi-arch) :
+  # x64-v2 = baseline sûre, x64-v3 = AVX2 (mieux en vectoriel, cf. values-alterai).
+  # Les images arm64 0.7.1+ sont cassées upstream (glibc 2.38 manquante).
+  image: "infiniflow/infinity:v0.7.3-x64-v2"
   # Plafond de sessions thrift serveur (défaut image : 128). Les clients en
   # read-timeout laissent des sessions zombies (pas de reaper serveur —
   # infiniflow/infinity#3418) : 128 sature en minutes sous charge dégradée.

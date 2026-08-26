@@ -76,7 +76,13 @@ services:
   infinity:
     profiles:
       - infinity
-    image: infiniflow/infinity:v0.7.0
+    # v0.7.3 aligné avec infinity-sdk==0.7.3 (protocoles couplés, rejets
+    # croisés entre versions). Les images arm64 0.7.1+ sont cassées upstream
+    # (glibc) → x64 + émulation Rosetta sur Mac (lent mais fonctionnel,
+    # validé 2026-08-20). Un volume écrit par v0.7.0/dev5 est rejoué sans
+    # perte (migration in-place validée).
+    image: infiniflow/infinity:v0.7.3-x64-v2
+    platform: linux/amd64
     volumes:
       - infinity_data:/var/infinity
       - ./infinity_conf.toml:/infinity_conf.toml
