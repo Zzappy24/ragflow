@@ -309,10 +309,10 @@ sandbox:
   enabled: true
   image:
     repository: "harbor.cylndata.cyllene.pro/data/ragflow-sandbox-python"
-    # Versioned independently from global.imageTag: only bump when the
-    # sandbox image itself is rebuilt (recipes/deps change). Unchanged since
-    # the v0.9.7 build — no rebuild needed for the get_file/RBAC release.
-    tag: "v0.9.7"
+    # Depuis la release v0.9.11 : tag aligné sur global.imageTag (une
+    # release = un tag partout, l'utilisateur rebuilde toutes les images).
+    # Le contenu sandbox n'a pas changé depuis v0.9.7 — rebuild d'uniformisation.
+    tag: "v0.9.11"
   # harbor-pull-secret is copied once into rag-sandbox out-of-band
   # (externalSecrets disabled on this cluster) — this is only the NAME the
   # sandbox Jobs reference.
