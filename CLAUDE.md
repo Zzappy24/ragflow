@@ -427,6 +427,16 @@ isolation. On every upstream merge that touches `internal/`:
      (`StopParsing`, `AddChunk`, `ListChunks`) added upstream are NOT ramené
      in our fork yet. Watch for upstream deletion to trigger the port.
 
+5. **MINE DORMANTE — binaires stagehand jamais empaquetés** : le composant
+   `Browser` de l'agent Go (`internal/agent/component/browser`) exécute les
+   binaires `stagehand-server-v3-linux-<arch>` que `ragflow_deps/download_deps.py`
+   télécharge — mais **aucun Dockerfile ne les copie dans une image** (audit
+   2026-08-26). Sans impact tant que le runtime agent Go n'est pas déployé
+   (prod = api Python). Le jour où un déploiement inclut le serveur Go avec
+   ses composants d'agent : ajouter la copie des binaires dans l'image + un
+   `test -x` de présence au build (même discipline que les modèles DeepDoc,
+   cf. le garde-fou `test -f` du Dockerfile principal).
+
 Custom Go files (never conflict upstream):
 | File | What's custom |
 |------|--------------|
