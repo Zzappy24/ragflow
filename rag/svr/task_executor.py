@@ -148,6 +148,19 @@ TASK_TYPE_TO_PIPELINE_TASK_TYPE = {
 }
 
 UNACKED_ITERATOR = None
+# CUSTOM B2B SaaS — periodic XAUTOCLAIM re-run (orphan reclaim).
+# get_unacked_iterator() runs XAUTOCLAIM to reclaim messages stuck >5min on
+# DEAD consumers (redis_conn.py). Bug (fixed here): it only ran ONCE, at
+# worker startup, because UNACKED_ITERATOR stayed truthy forever after first
+# creation. So a task orphaned AFTER startup (a peer worker dies mid-parse
+# while this worker keeps running) was never reclaimed → doc stuck RUNNING
+# forever (13 ghosts observed 2026-08-27 after an executor rollout). Fix: reset
+# the iterator to None every _UNACKED_RESCAN_INTERVAL_S so XAUTOCLAIM re-runs
+# and catches newly-stale orphans. The 5-min idle floor is enforced inside
+# XAUTOCLAIM itself, so re-scanning often is cheap and safe. Grep
+# `CUSTOM B2B SaaS — periodic XAUTOCLAIM`.
+_UNACKED_RESCAN_INTERVAL_S = int(os.environ.get("UNACKED_RESCAN_INTERVAL_S", "120"))
+_UNACKED_LAST_SCAN = 0.0
 # Task type and executor index (consistent with SAAS version)
 TASK_TYPE = "common"
 TE_IDX = "0"
@@ -254,14 +267,21 @@ def set_progress(task_id, from_page=0, to_page=-1, prog=None, msg="Processing...
 
 async def collect():
     global CONSUMER_NAME, DONE_TASKS, FAILED_TASKS
-    global UNACKED_ITERATOR
+    global UNACKED_ITERATOR, _UNACKED_LAST_SCAN
 
     svr_queue_names = settings.get_svr_queue_names(TASK_TYPE)
 
     redis_msg = None
     try:
-        if not UNACKED_ITERATOR:
+        # CUSTOM B2B SaaS — periodic XAUTOCLAIM re-run (orphan reclaim).
+        # Re-arm the reclaim iterator every _UNACKED_RESCAN_INTERVAL_S so
+        # XAUTOCLAIM re-runs and catches messages orphaned AFTER startup (peer
+        # worker died mid-parse), not just those stale at boot. Without this,
+        # such tasks are never reclaimed and their doc stays RUNNING forever.
+        now = time.time()
+        if not UNACKED_ITERATOR or (now - _UNACKED_LAST_SCAN) >= _UNACKED_RESCAN_INTERVAL_S:
             UNACKED_ITERATOR = REDIS_CONN.get_unacked_iterator(svr_queue_names, SVR_CONSUMER_GROUP_NAME, CONSUMER_NAME)
+            _UNACKED_LAST_SCAN = now
         try:
             redis_msg = next(UNACKED_ITERATOR)
         except StopIteration:
@@ -302,6 +322,16 @@ async def collect():
         FAILED_TASKS += 1
         logging.warning(f"collect task {msg['id']} {state}")
         redis_msg.ack()
+        return None, None
+
+    # CUSTOM B2B SaaS — periodic XAUTOCLAIM: skip in-flight duplicates.
+    # The periodic iterator re-arm re-reads THIS consumer's pending list from
+    # scratch, which includes tasks this very worker is still processing
+    # (up to 16 concurrent, not yet acked). Without this guard a long-running
+    # task would be re-delivered to a sibling coroutine and processed twice.
+    # Do NOT ack: the in-flight handler owns the ack on completion.
+    if task["id"] in CURRENT_TASKS:
+        logging.debug(f"collect task {task['id']} already in flight on this worker, skipping duplicate delivery")
         return None, None
 
     task_type = msg.get("task_type", "")
