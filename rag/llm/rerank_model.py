@@ -15,6 +15,7 @@
 #
 import json
 import logging
+import os
 from abc import ABC
 from urllib.parse import urljoin
 from typing import Tuple, List
@@ -281,6 +282,16 @@ class CoHereRerank(Base):
 
     def _compute_rank(self, query: str, texts: List) -> Tuple[np.ndarray, int]:
         token_count = num_tokens_from_string(query) + sum([num_tokens_from_string(t) for t in texts])
+        # CUSTOM B2B SaaS — vLLM rerank truncate margin (tokenizer mismatch)
+        # Le reranker (bge-reranker-v2-m3 servi par vLLM, max 8192) reçoit
+        # query+doc concaténés ; un doc trop long dépasse la limite et vLLM
+        # rejette (400 "value=8193"), cassant TOUT le retrieval de la requête.
+        # Même cause que l'embed : comptage tiktoken ≠ sentencepiece bge. On
+        # tronque chaque doc en réservant de la place pour la query + marge.
+        # Réglable via VLLM_RERANK_TRUNCATE_TOKENS. Grep
+        # `CUSTOM B2B SaaS — vLLM rerank truncate margin`.
+        cap = int(os.environ.get("VLLM_RERANK_TRUNCATE_TOKENS", "6000"))
+        texts = [truncate(t, cap) for t in texts]
         res = self.client.rerank(
             model=self.model_name,
             query=query,

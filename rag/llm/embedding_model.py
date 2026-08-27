@@ -845,6 +845,18 @@ class LmStudioEmbed(LocalAIEmbed):
         self.model_name = model_name
 
 
+# CUSTOM B2B SaaS — VLLM embed truncate margin (tokenizer mismatch)
+# La troncature d'OpenAIEmbed compte en tiktoken (cl100k) mais le modèle
+# servi par vLLM (bge-m3 = sentencepiece/XLM-RoBERTa) compte différemment :
+# un texte à 8191 tokens tiktoken peut dépasser 8192 côté bge → vLLM rejette
+# ("maximum context length is 8192 ... value=8193", 400 BadRequest). Symptômes
+# observés 2026-08-27 : docs en FAIL à l'embedding + reranking cassé (même
+# limite). On tronque plus conservativement pour absorber l'expansion
+# tokenizer. Réglable via VLLM_EMBED_TRUNCATE_TOKENS (défaut 7000 ≈ 15% de
+# marge sous 8192). Grep `CUSTOM B2B SaaS — vLLM embed truncate margin`.
+_VLLM_EMBED_TRUNCATE = int(os.environ.get("VLLM_EMBED_TRUNCATE_TOKENS", "7000"))
+
+
 class OpenAI_APIEmbed(OpenAIEmbed):
     _FACTORY_NAME = ["VLLM", "OpenAI-API-Compatible"]
 
@@ -854,6 +866,13 @@ class OpenAI_APIEmbed(OpenAIEmbed):
         base_url = urljoin(base_url, "v1")
         self.client = OpenAI(api_key=key, base_url=base_url)
         self.model_name = model_name.split("___")[0]
+
+    def encode(self, texts: list):
+        return self._batched_encode(texts, self._call, batch_size=16, truncate_to=_VLLM_EMBED_TRUNCATE)
+
+    def encode_queries(self, text):
+        vectors, token_count = self._batched_encode([text], self._call, batch_size=16, truncate_to=_VLLM_EMBED_TRUNCATE)
+        return vectors[0], token_count
 
 
 class CoHereEmbed(Base):

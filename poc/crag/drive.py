@@ -41,6 +41,20 @@ SYSTEM_PROMPT = (
     "question, respond with 'I don't know'. There is no need to explain the "
     "reasoning behind your answers."
 )
+
+# Prompt « souple » : encourage à répondre dès qu'une info raisonnablement
+# pertinente est présente (même partielle ou implicite), tout en gardant le
+# garde-fou anti-hallucination (ne rien inventer hors des références). Vise à
+# convertir des « I don't know » en réponses correctes sans faire exploser
+# l'hallucination. NON comparable au leaderboard (prompt ≠ officiel).
+SOFT_SYSTEM_PROMPT = (
+    "You are provided with a question and various references. Answer the "
+    "question succinctly, using the fewest words possible. Use the references "
+    "as your source: if they contain the answer — even partially, indirectly, "
+    "or requiring simple inference — give your best answer. Only respond with "
+    "'I don't know' when the references genuinely offer nothing relevant. Never "
+    "invent facts that are not supported by the references. No explanations."
+)
 MAX_CONTEXT_REFERENCES_LENGTH = 4000  # même cap que l'officiel
 MAX_ANSWER_WORDS = 75  # approx. des 75 tokens Llama2 de l'officiel
 
@@ -59,23 +73,43 @@ def find_dataset(base: str, key: str, name: str) -> str:
     raise RuntimeError(f"dataset introuvable: {name}")
 
 
-def list_documents(base: str, key: str, dataset_id: str) -> dict:
-    """name → document_id pour tout le dataset."""
+def list_documents(base: str, key: str, dataset_id: str, page_size: int = 30) -> dict:
+    """name → document_id pour tout le dataset.
+
+    Le listing réconcilie le nombre de chunks contre le moteur par doc et
+    peut avoir des hangs intermittents sur gros dataset — petites pages +
+    retry par page, tolérant (une page qui échoue N fois est sautée avec un
+    warning plutôt que de faire échouer tout le run).
+    """
     name_to_id = {}
+    total = None
     page = 1
     while True:
-        r = requests.get(
-            f"{base}/api/v1/datasets/{dataset_id}/documents",
-            headers=rf_headers(key),
-            params={"page": page, "page_size": 100},
-            timeout=30,
-        )
-        r.raise_for_status()
-        data = r.json()["data"]
-        docs = data.get("docs", [])
+        data = None
+        for attempt in range(4):
+            try:
+                r = requests.get(
+                    f"{base}/api/v1/datasets/{dataset_id}/documents",
+                    headers=rf_headers(key),
+                    params={"page": page, "page_size": page_size},
+                    timeout=15,
+                )
+                r.raise_for_status()
+                data = r.json()["data"]
+                break
+            except Exception as e:
+                if attempt == 3:
+                    print(f"  ! page {page} sautée après 4 essais: {str(e)[:60]}", file=sys.stderr)
+        docs = (data or {}).get("docs", [])
+        if total is None and data is not None:
+            total = data.get("total", 0)
         for d in docs:
             name_to_id[d["name"]] = d["id"]
-        if len(docs) < 100:
+        # Fin quand on a couvert toutes les pages (basé sur total, pas sur la
+        # taille d'une page — une page sautée ne doit pas tronquer la liste).
+        if total is not None and page * page_size >= total:
+            return name_to_id
+        if total is None:  # première page injoignable → on abandonne proprement
             return name_to_id
         page += 1
 
@@ -101,14 +135,15 @@ def retrieve(base: str, key: str, dataset_id: str, question: str,
 
 
 def _chat_once(llm_url: str, llm_key: str, llm_model: str,
-               user_message: str, max_tokens: int) -> str:
+               user_message: str, max_tokens: int,
+               system_prompt: str = SYSTEM_PROMPT) -> str:
     r = requests.post(
         f"{llm_url}/chat/completions",
         headers={"Authorization": f"Bearer {llm_key}", "Content-Type": "application/json"},
         json={
             "model": llm_model,
             "messages": [
-                {"role": "system", "content": SYSTEM_PROMPT},
+                {"role": "system", "content": system_prompt},
                 {"role": "user", "content": user_message},
             ],
             "temperature": 0.0,
@@ -127,11 +162,13 @@ def _chat_once(llm_url: str, llm_key: str, llm_model: str,
 
 
 def generate(llm_url: str, llm_key: str, llm_model: str,
-             query: str, query_time: str, references: list) -> str:
+             query: str, query_time: str, references: list,
+             max_refs_chars: int = MAX_CONTEXT_REFERENCES_LENGTH,
+             system_prompt: str = SYSTEM_PROMPT) -> str:
     refs = ""
     if references:
         refs = "# References \n" + "".join(f"- {s.strip()}\n" for s in references)
-    refs = refs[:MAX_CONTEXT_REFERENCES_LENGTH]
+    refs = refs[:max_refs_chars]
     user_message = (
         f"{refs}\n------\n\n"
         "Using only the references listed above, answer the following question: \n"
@@ -142,9 +179,9 @@ def generate(llm_url: str, llm_key: str, llm_model: str,
     # de répondre — un cap trop bas rend un content vide. On retente une fois
     # avec un budget doublé ; toujours vide → abstention explicite (le
     # scoring la compte miss, jamais hallucination).
-    text = _chat_once(llm_url, llm_key, llm_model, user_message, 2048)
+    text = _chat_once(llm_url, llm_key, llm_model, user_message, 2048, system_prompt)
     if not text:
-        text = _chat_once(llm_url, llm_key, llm_model, user_message, 4096)
+        text = _chat_once(llm_url, llm_key, llm_model, user_message, 4096, system_prompt)
     if not text:
         return "I don't know"
     return " ".join(text.split()[:MAX_ANSWER_WORDS])
@@ -168,6 +205,12 @@ def main() -> int:
                     help="pas de filtre document_ids (mesure corpus entier)")
     ap.add_argument("--page-size", type=int, default=10, help="chunks retournés")
     ap.add_argument("--similarity-threshold", type=float, default=0.1)
+    ap.add_argument("--max-refs-chars", type=int, default=MAX_CONTEXT_REFERENCES_LENGTH,
+                    help="cap du contexte envoyé au LLM (défaut 4000 = protocole officiel ; "
+                         "augmenter = contexte moins restrictif, non comparable au leaderboard)")
+    ap.add_argument("--soft-prompt", action="store_true",
+                    help="prompt moins strict (répond dès qu'une info pertinente est là, "
+                         "sans inventer) — vise à réduire les abstentions ; non comparable au leaderboard")
     ap.add_argument("--workers", type=int, default=4, help="questions traitées en parallèle")
     args = ap.parse_args()
 
@@ -195,6 +238,17 @@ def main() -> int:
         name_to_id[ds] = list_documents(base, args.ragflow_key, ds)
         print(f"{len(name_to_id[ds])} documents dans le dataset {ds}")
 
+    # En mode scopé, ne garder que les questions dont AU MOINS une page est
+    # réellement dans le dataset (sinon retrieve() sans document_ids
+    # chercherait tout le dataset — faux scope). Le dataset prod ne contient
+    # qu'un sous-ensemble des questions du questions.tsv.
+    if not args.unscoped:
+        before = len(rows)
+        rows = [r for r in rows
+                if any(p in name_to_id[ds_of[r["domain"]]]
+                       for p in json.loads(r["page_files"]))]
+        print(f"scopé : {len(rows)}/{before} questions ont leurs pages en prod")
+
     n_missing_docs = 0
 
     def process(row: dict) -> dict:
@@ -209,7 +263,9 @@ def main() -> int:
                             [] if args.unscoped else doc_ids,
                             args.page_size, args.similarity_threshold)
             prediction = generate(llm_url, args.llm_key, args.llm_model,
-                                  row["query"], row["query_time"], refs)
+                                  row["query"], row["query_time"], refs,
+                                  args.max_refs_chars,
+                                  SOFT_SYSTEM_PROMPT if args.soft_prompt else SYSTEM_PROMPT)
             error = ""
         except Exception as e:
             # Une erreur transitoire ne doit pas tuer une run de plusieurs
