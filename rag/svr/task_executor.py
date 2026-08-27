@@ -305,6 +305,19 @@ async def collect():
         redis_msg.ack()
         return None, None
 
+    # CUSTOM B2B SaaS — periodic XAUTOCLAIM: skip in-flight duplicates.
+    # The periodic iterator re-arm re-reads THIS consumer's pending list from
+    # scratch, which includes tasks this very worker is still processing
+    # (up to 16 concurrent, not yet acked). The guard MUST sit here, BEFORE
+    # TaskService.get_task: get_task is not a read — it increments
+    # retry_count and overwrites progress ("Task has been received"), so a
+    # late guard would let every 120s re-scan push a long-running task to the
+    # 3-strikes abandon and corrupt its progress. Do NOT ack: the in-flight
+    # handler owns the ack on completion.
+    if msg.get("id") in CURRENT_TASKS:
+        logging.debug(f"collect task {msg['id']} already in flight on this worker, skipping duplicate delivery")
+        return None, None
+
     canceled = False
     if msg.get("doc_id", "") in [GRAPH_RAPTOR_FAKE_DOC_ID, CANVAS_DEBUG_DOC_ID]:
         task = msg
@@ -326,16 +339,6 @@ async def collect():
         FAILED_TASKS += 1
         logging.warning(f"collect task {msg['id']} {state}")
         redis_msg.ack()
-        return None, None
-
-    # CUSTOM B2B SaaS — periodic XAUTOCLAIM: skip in-flight duplicates.
-    # The periodic iterator re-arm re-reads THIS consumer's pending list from
-    # scratch, which includes tasks this very worker is still processing
-    # (up to 16 concurrent, not yet acked). Without this guard a long-running
-    # task would be re-delivered to a sibling coroutine and processed twice.
-    # Do NOT ack: the in-flight handler owns the ack on completion.
-    if task["id"] in CURRENT_TASKS:
-        logging.debug(f"collect task {task['id']} already in flight on this worker, skipping duplicate delivery")
         return None, None
 
     task_type = msg.get("task_type", "")
