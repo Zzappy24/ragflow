@@ -71,11 +71,13 @@ spec:
     minio: false       # ClusterIP for ragflow-api/task-executor
     console: false    # console kept private
 
-  prometheusOperator: true
-  metrics:
-    enabled: true
-    port: 9000
-    protocol: HTTP
+  # NOTE: `prometheusOperator` and `metrics` were REMOVED here (2026-08-27).
+  # They are MinIO Operator v4 API fields, dropped from the Tenant CRD in
+  # v5+ — the API server silently prunes them on apply, so the live object
+  # can never match git: that was the perpetual ArgoCD OutOfSync on this
+  # Tenant (and, via the release-revision annotation, the cause of executor
+  # rollouts on every sync). Prometheus scraping is driven by the
+  # prometheus.io/* annotations above, which remain.
 
   # Bucket created automatically at tenant boot — RAGFlow expects
   # `ragflow-storage` (set via env in configmap-app.yaml).
