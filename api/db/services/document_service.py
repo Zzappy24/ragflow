@@ -585,7 +585,20 @@ class DocumentService(CommonService):
             (((cls.model.progress < 1) & (cls.model.progress > 0)) |
              (cls.model.id.in_(unfinished_task_query)) |
              ((cls.model.progress == -1) & (cls.model.run == TaskStatus.FAIL.value) &
-              (cls.model.id.in_(docs_with_non_failed_tasks)))))  # including GraphRAG/RAPTOR/Mindmap; re-sync failed docs
+              (cls.model.id.in_(docs_with_non_failed_tasks))) |
+             # CUSTOM B2B SaaS — update_progress blind spots (incident 2026-08-28).
+             # Under load (max_user_connections storms + executor restarts), docs
+             # land in hybrid states the original filter never re-examines, so
+             # they stay RUNNING forever while their tasks are long finished:
+             #   * progress >= 1 with run == RUNNING (144 docs observed) — none
+             #     of the three conditions above matches;
+             #   * progress == -1 with run == RUNNING (7 docs observed) — the
+             #     FAIL re-sync condition requires run == FAIL.
+             # Both are self-healing once selected: _sync_progress recomputes
+             # from the tasks and writes the correct run status, which removes
+             # the doc from this filter on the next cycle.
+             ((cls.model.progress >= 1) & (cls.model.run == TaskStatus.RUNNING.value)) |
+             ((cls.model.progress == -1) & (cls.model.run == TaskStatus.RUNNING.value))))  # including GraphRAG/RAPTOR/Mindmap; re-sync failed docs
         return list(docs.dicts())
 
     @classmethod
