@@ -161,6 +161,10 @@ UNACKED_ITERATOR = None
 # `CUSTOM B2B SaaS — periodic XAUTOCLAIM`.
 _UNACKED_RESCAN_INTERVAL_S = int(os.environ.get("UNACKED_RESCAN_INTERVAL_S", "120"))
 _UNACKED_LAST_SCAN = 0.0
+# Lease renewal cadence: 60s gives 4 missed renewals of margin before the
+# 5-min XAUTOCLAIM floor — a worker must be dead (or its loop frozen 5 min
+# straight) before a peer can steal its task.
+_LEASE_RENEW_INTERVAL_S = int(os.environ.get("TASK_LEASE_RENEW_INTERVAL_S", "60"))
 # Task type and executor index (consistent with SAAS version)
 TASK_TYPE = "common"
 TE_IDX = "0"
@@ -2005,27 +2009,57 @@ async def handle_task():
     pipeline_task_type = TASK_TYPE_TO_PIPELINE_TASK_TYPE.get(task_type, PipelineTaskType.PARSE) or PipelineTaskType.PARSE
     task_id = task["id"]
     tenant_id = task.get("tenant_id", "")
+    # CUSTOM B2B SaaS — periodic XAUTOCLAIM: register in CURRENT_TASKS BEFORE
+    # any await (the tenant fair-share acquire below can park this coroutine
+    # for a while). The duplicate-delivery guard in collect() checks
+    # CURRENT_TASKS; registering late would leave a window where the periodic
+    # pending re-scan re-delivers this very task to a sibling coroutine.
+    # CUSTOM B2B SaaS: compact 5-field payload (vs upstream's deepcopy) to
+    # avoid memory pressure under heavy ingestion; we run the original
+    # do_handle_task path in prod (no TE_RUN_MODE A/B). NullRecordingContext
+    # is required because upstream sprinkled get_recording_context() calls.
+    CURRENT_TASKS[task_id] = {
+        "id": task_id,
+        "type": task_type,
+        "tenant_id": tenant_id,
+        "doc": task.get("name"),
+        "started": time.time(),
+    }
+    # CUSTOM B2B SaaS — periodic XAUTOCLAIM: lease renewal. Keep this task's
+    # stream message idle-clock below the 5-min reclaim floor for as long as
+    # we are alive and working on it (see RedisMsg.renew_lease). Without this,
+    # any task legitimately longer than 5 min would be stolen by a peer's
+    # periodic XAUTOCLAIM → concurrent double-processing + retry_count
+    # climbing to the 3-strikes abandon.
+    lease_stop = asyncio.Event()
+
+    async def _renew_lease_loop():
+        while True:
+            try:
+                await asyncio.wait_for(lease_stop.wait(), timeout=_LEASE_RENEW_INTERVAL_S)
+                return
+            except asyncio.TimeoutError:
+                try:
+                    await thread_pool_exec(redis_msg.renew_lease, CONSUMER_NAME)
+                except Exception as e:
+                    logging.warning(f"lease renewal failed for task {task_id}: {e}")
+
+    lease_task = asyncio.create_task(_renew_lease_loop())
     # CUSTOM PERF: acquire per-tenant fair-share slot when WORKER_TENANT_FAIR_SHARE>0.
     # Disabled by default — a lone active tenant uses all pod slots without waste.
     tenant_limiter = get_tenant_task_limiter(tenant_id)
     if tenant_limiter:
-        await tenant_limiter.acquire()
+        try:
+            await tenant_limiter.acquire()
+        except BaseException:
+            # Cancelled while waiting for the fair-share slot: stop the lease
+            # renewer and deregister, or the task would look in-flight forever.
+            lease_stop.set()
+            lease_task.cancel()
+            CURRENT_TASKS.pop(task_id, None)
+            raise
     try:
-        # CUSTOM B2B SaaS: keep HEAD's compact CURRENT_TASKS payload (5 fields)
-        # instead of upstream's `copy.deepcopy(task)` to avoid memory pressure
-        # under heavy ingestion, AND skip upstream's TE_RUN_MODE A/B-test
-        # paths (run_refactored_task / dry_run_task) — we run the original
-        # do_handle_task path in prod. set_recording_context(NullRecordingContext())
-        # is needed because upstream's refactor sprinkled get_recording_context()
-        # calls throughout the file; without an active context they would crash.
         logging.info(f"handle_task begin for task {json.dumps(task)}")
-        CURRENT_TASKS[task["id"]] = {
-            "id": task_id,
-            "type": task_type,
-            "tenant_id": tenant_id,
-            "doc": task.get("name"),
-            "started": time.time(),
-        }
         set_recording_context(NullRecordingContext())
         await do_handle_task(task)
 
@@ -2050,6 +2084,16 @@ async def handle_task():
             pass
         logging.exception(f"handle_task got exception for task {json.dumps(task)}")
     finally:
+        # CUSTOM B2B SaaS — periodic XAUTOCLAIM: stop the lease renewer and
+        # make deregistration unconditional (the except branches also pop,
+        # pop is idempotent). The renewer must stop BEFORE the ack below so a
+        # renewal can't resurrect an already-acked message's PEL entry.
+        lease_stop.set()
+        try:
+            await lease_task
+        except Exception:
+            pass
+        CURRENT_TASKS.pop(task_id, None)
         if tenant_limiter:
             tenant_limiter.release()
         _set_progress_last.pop(task_id, None)

@@ -50,6 +50,24 @@ class RedisMsg:
             logging.warning("[EXCEPTION]ack" + str(self.__queue_name) + "||" + str(e))
         return False
 
+    # CUSTOM B2B SaaS — periodic XAUTOCLAIM: lease renewal.
+    # XCLAIM to ourselves (justid, min_idle_time=0) resets the message's idle
+    # clock without touching the delivery counter. A live worker renewing
+    # every minute keeps its in-flight task's idle < the 5-min XAUTOCLAIM
+    # floor, so long-running tasks (GraphRAG/RAPTOR/large PDFs — up to the
+    # 80-min task timeout) are never stolen by a peer's periodic reclaim.
+    # A dead worker stops renewing → idle grows → a peer reclaims in ≤7 min.
+    def renew_lease(self, consumer_name):
+        try:
+            self.__consumer.xclaim(
+                self.__queue_name, self.__group_name, consumer_name,
+                min_idle_time=0, message_ids=[self.__msg_id], justid=True,
+            )
+            return True
+        except Exception as e:
+            logging.warning("[EXCEPTION]renew_lease " + str(self.__queue_name) + "||" + str(e))
+        return False
+
     def get_message(self):
         return self.__message
 
