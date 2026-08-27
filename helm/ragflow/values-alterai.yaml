@@ -34,16 +34,21 @@ externalSecrets:
 
 # Reduced bootstrap sizing for constrained cluster capacity.
 ragflow-api:
-  # 2 replicas × 1 hypercorn worker. C'est la config K8s-friendly pour Quart
-  # async : HA basique (1 pod down = l'autre sert), visibilité kubectl nette
-  # (1 worker = 1 pod = 1 process), pas de Redis lock à gérer entre workers
-  # du même pod, ressources prévisibles. La capacité d'un worker async Quart
-  # sur des workloads I/O-bound (LLM/DB/vector) tient large pour Cyllene
-  # B2B SaaS. HPA peut bump à 4 si besoin.
-  replicas: 2
+  # 4 replicas × 1 hypercorn worker (bump 2→4, 2026-08-27). On garde la
+  # philosophie 1 worker = 1 pod (visibilité kubectl, pas de lock inter-
+  # workers, ressources prévisibles) mais 2 workers étaient trop peu :
+  # starvation observée pendant l'ingestion CRAG — les appels qui touchent
+  # Infinity (POST/DELETE /chunks, /retrieval) bloquent un worker (peewee/
+  # Infinity synchrones) et sous charge de parsing les 2 workers se
+  # bloquaient, gelant tout listing 30-40s (DB propre, CPU idle prouvés).
+  # IMPORTANT : le HPA scale sur CPU/mémoire — il est AVEUGLE à cette
+  # starvation I/O (CPU idle pendant le hang) et ne montera jamais seul :
+  # le plancher minReplicas EST la capacité réelle. RAM ~1,3 Gi/pod, le
+  # node GPU a 200+ Gi libres.
+  replicas: 4
   hpa:
-    minReplicas: 2
-    maxReplicas: 4
+    minReplicas: 4
+    maxReplicas: 6
   # On garde l'API sur le node GPU (alteraiworkergpt1) — les CPU workers
   # (alteraiworker1/2/3) sont saturés (98%, 153% mem requests). Le node
   # GPU a 200+ Gi RAM libre (vLLM utilise les GPU, pas la CPU/RAM).
