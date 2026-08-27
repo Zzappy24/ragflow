@@ -290,7 +290,7 @@ class CoHereRerank(Base):
         # tronque chaque doc en réservant de la place pour la query + marge.
         # Réglable via VLLM_RERANK_TRUNCATE_TOKENS. Grep
         # `CUSTOM B2B SaaS — vLLM rerank truncate margin`.
-        cap = int(os.environ.get("VLLM_RERANK_TRUNCATE_TOKENS", "6000"))
+        cap = int(os.environ.get("VLLM_RERANK_TRUNCATE_TOKENS", "4500"))
         texts = [truncate(t, cap) for t in texts]
         res = self.client.rerank(
             model=self.model_name,

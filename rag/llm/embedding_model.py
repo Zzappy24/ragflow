@@ -852,9 +852,13 @@ class LmStudioEmbed(LocalAIEmbed):
 # ("maximum context length is 8192 ... value=8193", 400 BadRequest). Symptômes
 # observés 2026-08-27 : docs en FAIL à l'embedding + reranking cassé (même
 # limite). On tronque plus conservativement pour absorber l'expansion
-# tokenizer. Réglable via VLLM_EMBED_TRUNCATE_TOKENS (défaut 7000 ≈ 15% de
-# marge sous 8192). Grep `CUSTOM B2B SaaS — vLLM embed truncate margin`.
-_VLLM_EMBED_TRUNCATE = int(os.environ.get("VLLM_EMBED_TRUNCATE_TOKENS", "7000"))
+# tokenizer. Défaut 5000 : tiktoken SOUS-ESTIME XLM-RoBERTa (bge) — ratio
+# observé ~1.17 en prod (7000 tiktoken → 8193 bge, 2026-08-27), jusqu'à ~1.4
+# pour du dense/multilingue. 5000 × 1.4 ≈ 7000 bge, marge sûre sous 8192 ; ne
+# rogne que les chunks pathologiques (>5000 = 10× la cible 512), déjà
+# inexploitables. Réglable via VLLM_EMBED_TRUNCATE_TOKENS.
+# Grep `CUSTOM B2B SaaS — vLLM embed truncate margin`.
+_VLLM_EMBED_TRUNCATE = int(os.environ.get("VLLM_EMBED_TRUNCATE_TOKENS", "5000"))
 
 
 class OpenAI_APIEmbed(OpenAIEmbed):
