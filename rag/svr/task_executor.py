@@ -287,7 +287,23 @@ async def collect():
             UNACKED_ITERATOR = REDIS_CONN.get_unacked_iterator(svr_queue_names, SVR_CONSUMER_GROUP_NAME, CONSUMER_NAME)
             _UNACKED_LAST_SCAN = now
         try:
-            redis_msg = next(UNACKED_ITERATOR)
+            # CUSTOM B2B SaaS — periodic XAUTOCLAIM: drain in-flight
+            # duplicates inside the loop instead of surfacing them. A
+            # surfaced duplicate makes collect() return None, which costs the
+            # calling task_manager a 5s idle sleep — up to 16 of those per
+            # 120s re-arm under full load would add ~10s+ of new-task pickup
+            # latency. Skipping here keeps the pending re-scan invisible.
+            while True:
+                redis_msg = next(UNACKED_ITERATOR)
+                _m = redis_msg.get_message()
+                if _m and _m.get("id") in CURRENT_TASKS:
+                    logging.debug(f"collect task {_m.get('id')} already in flight on this worker, draining duplicate delivery")
+                    # Reset: if the generator raises StopIteration right after
+                    # this skip and every queue is empty, a stale reference
+                    # here would get processed as if it were a fresh message.
+                    redis_msg = None
+                    continue
+                break
         except StopIteration:
             for svr_queue_name in svr_queue_names:
                 redis_msg = REDIS_CONN.queue_consumer(svr_queue_name, SVR_CONSUMER_GROUP_NAME, CONSUMER_NAME)
