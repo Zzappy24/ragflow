@@ -81,6 +81,19 @@ spec:
 # Keep below myCnf max_connections (500) so root/exporter always connect.
 # CAUTION: deleting this CR may DROP the user on some operator versions —
 # it must live and die with the MariaDB CR itself.
+#
+# CAUTION 2 — DUAL-CR CONFLICT (incident 2026-08-27, parent-child re-parse):
+# the operator ALSO auto-generates a User CR (`<mariadb>-user`, e.g.
+# rag-new2-mariadb-user) from the MariaDB.spec bootstrap, with its default
+# maxUserConnections=20, managing the SAME SQL user 'ragflow'@'%'. Two
+# reconcilers fight over one grant — last writer wins, and prod ended up
+# LIVE at 20 despite this CR saying 300 (5 docs FAILed with (1226) during
+# a 960-doc wave). Fix on cluster (idempotent, no GitOps drift — that CR
+# is operator-generated, untracked by ArgoCD):
+#   kubectl -n <ns> patch user <mariadb>-user --type merge \
+#     -p '{"spec":{"maxUserConnections":300}}'
+# Verify: both rows of `kubectl get users.k8s.mariadb.com` must show 300,
+# and `SELECT max_user_connections FROM mysql.user WHERE User='ragflow'`.
 apiVersion: k8s.mariadb.com/v1alpha1
 kind: User
 metadata:
