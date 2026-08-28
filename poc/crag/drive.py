@@ -115,13 +115,20 @@ def list_documents(base: str, key: str, dataset_id: str, page_size: int = 30) ->
 
 
 def retrieve(base: str, key: str, dataset_id: str, question: str,
-             doc_ids: list, page_size: int, similarity_threshold: float) -> list:
+             doc_ids: list, page_size: int, similarity_threshold: float,
+             rerank_id: str = "") -> list:
     payload = {
         "question": question,
         "dataset_ids": [dataset_id],
         "page_size": page_size,
         "similarity_threshold": similarity_threshold,
     }
+    if rerank_id:
+        # Avec reranker, le score blended change d'échelle (le score rerankée
+        # remplace le cosine et est ~0 pour les non-pertinents) : un seuil
+        # calibré pour le cosine couperait tout. Le classement du reranker
+        # fait office de filtre (comme le top-k du protocole CRAG officiel).
+        payload["rerank_id"] = rerank_id
     if doc_ids:
         payload["document_ids"] = doc_ids
     r = requests.post(f"{base}/api/v1/retrieval", headers=rf_headers(key),
@@ -211,6 +218,9 @@ def main() -> int:
     ap.add_argument("--soft-prompt", action="store_true",
                     help="prompt moins strict (répond dès qu'une info pertinente est là, "
                          "sans inventer) — vise à réduire les abstentions ; non comparable au leaderboard")
+    ap.add_argument("--rerank-id", default="",
+                    help="modèle de reranking RAGFlow (ex: BAAI/bge-reranker-v2-m3@VLLM) ; "
+                         "utiliser avec --similarity-threshold 0 (l'échelle des scores change)")
     ap.add_argument("--workers", type=int, default=4, help="questions traitées en parallèle")
     args = ap.parse_args()
 
@@ -261,7 +271,8 @@ def main() -> int:
         try:
             refs = retrieve(base, args.ragflow_key, dataset_id, row["query"],
                             [] if args.unscoped else doc_ids,
-                            args.page_size, args.similarity_threshold)
+                            args.page_size, args.similarity_threshold,
+                            args.rerank_id)
             prediction = generate(llm_url, args.llm_key, args.llm_model,
                                   row["query"], row["query_time"], refs,
                                   args.max_refs_chars,
