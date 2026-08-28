@@ -15,6 +15,7 @@
 #
 
 import logging
+import os
 import random
 from collections import Counter, defaultdict
 
@@ -287,12 +288,37 @@ def split_with_pattern(d, pattern: str, content: str, eng) -> list:
         return [dd]
 
     txts = [txt for txt in compiled_pattern.split(content)]
+    # CUSTOM B2B SaaS — parent-child v2: minimum child size. Without a floor,
+    # every non-empty fragment became a child — line-split corpora produced
+    # children of a few characters, useless as retrieval units AND generating
+    # degenerate fulltext postings (~500k micro-rows) that crash Infinity's
+    # posting decoder (see docs/known-issues/infinity-ft-cleanup-uaf.md and
+    # upstream #3418). Fragments are accumulated until they reach
+    # CHILD_MIN_CHARS (default 120, 0 = legacy behavior); the tail is merged
+    # into the previous child rather than emitted short.
+    min_chars = int(os.environ.get("CHILD_MIN_CHARS", "120"))
+    pieces = []
     for j in range(0, len(txts), 2):
         txt = txts[j]
         if not txt:
             continue
         if j + 1 < len(txts):
             txt += txts[j + 1]
+        pieces.append(txt)
+    if min_chars > 0 and pieces:
+        merged, buf = [], ""
+        for p in pieces:
+            buf += p
+            if len(buf.strip()) >= min_chars:
+                merged.append(buf)
+                buf = ""
+        if buf.strip():
+            if merged:
+                merged[-1] += buf
+            else:
+                merged.append(buf)
+        pieces = merged
+    for txt in pieces:
         dd = copy.deepcopy(d)
         tokenize(dd, txt, eng)
         docs.append(dd)
