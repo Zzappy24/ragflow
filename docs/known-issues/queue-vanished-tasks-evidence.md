@@ -55,3 +55,25 @@ XPENDING vide, 6 « is unknown » loggés) — même mécanisme, moteur indiffé
    (le lease meurt avec le process → 5 min de latence de reclaim + retries
    brûlés à chaque redémarrage groupé).
 4. Test de pin : simuler burst + kill des workers, vérifier 0 doc figé.
+
+## Reproduction n°2 (2026-08-29 ~00:35, KB crag-es-pc, 36/962 docs)
+
+- Même signature (progress 0.003-0.006, « 0 tasks ahead », état stable >10 min).
+- **PREUVE NOUVELLE — retry_count = 0 sur les 36 tâches, progress_msg vide** :
+  `get_task` n'a JAMAIS été appelé pour elles → l'hypothèse « 3-strikes par
+  livraisons répétées » est RÉFUTÉE.
+- Producteur hors de cause : l'assert sur `queue_product` est actif (pas de
+  `python -O`), les POST /chunks ont répondu code 0 → les XADD ont réussi.
+- Nouveau suspect principal : **famine par réclamation croisée** dans le
+  reclaim périodique custom (task_executor.py `UNACKED_ITERATOR`) —
+  le XAUTOCLAIM de ré-armement (120 s, min_idle 300 s, count 100, 3 workers)
+  réclame des messages (idle remis à 0) mais l'itérateur est remplacé avant
+  de les livrer quand les slots sont occupés (collect() n'est appelé qu'à
+  slot libre) → messages coincés en PEL avec idle perpétuellement < 300 s,
+  invisibles de XREADGROUP '>' comme du prochain XAUTOCLAIM. ~4 % des tâches
+  sous burst, 3 occurrences sur 3 bursts massifs (Infinity ×1, ES ×2).
+- Fix pressenti : livrer TOUT ce qui est réclamé avant re-armer (ou ne
+  réclamer que ce qu'on peut traiter : count ≈ slots libres), + un
+  filet update_progress qui re-queue les tâches retry=0 sans message
+  pending âgées de > N min. Reproducteur à écrire sur le harnais
+  test_task_lease_integration (Redis réel + burst + slots saturés).
