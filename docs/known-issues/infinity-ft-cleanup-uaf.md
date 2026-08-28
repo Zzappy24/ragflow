@@ -73,3 +73,32 @@ kubectl -n rag-new2 rollout restart statefulset rag-new2-infinity
 **Le restart est OBLIGATOIRE et c'est lui le vrai remède** : le cleanup empoisonne le cache de
 readers pour la PROCHAINE recherche (déterministe, même des heures plus tard) — seul un restart
 purge `TableIndexReaderCache` + `mapped_files_`. Replay WAL ~3-4 min, prouvé fiable (3× le 2026-08-28).
+
+## Audit de robustesse complet (session Infinity, 2026-08-28)
+
+Audit structurel v0.7.3 par 5 agents parallèles — rapport artifact :
+https://claude.ai/code/artifact/2c4fde41-1770-40ff-952e-fcef78d5cf98
+(mémo : `~/.claude/projects/-Users-zappy-infinity-src/memory/infinity-robustness-audit-2026-08.md`)
+
+Découvertes supplémentaires à impact opérationnel pour NOUS :
+- **COMPACT et IMPORT n'invalident JAMAIS le cache de readers fulltext** → résultats fulltext
+  silencieusement PÉRIMÉS après notre maintenance nocturne de 01h00 (segments dépréciés servis,
+  imports invisibles), jusqu'à une invalidation qui n'arrive pas (bug #3423) ou un restart.
+  **⇒ Tant que l'image patchée n'est pas déployée : envisager un restart Infinity systématique
+  APRÈS la maintenance nocturne** (3-4 min de replay WAL à 01h05 — à arbitrer), ou suspendre le
+  compact nocturne. Sans ça, chaque nuit ouvre une fenêtre de résultats faux non détectables.
+- **Un CleanupTask est soumis à CHAQUE tick de 10 s** (`BGTaskProcessor::last_cleanup_ts_` jamais
+  écrit) → l'exposition au bug d'invalidation est PERMANENTE, pas périodique.
+- **2e variante du crash élucidée** : `MmapFile` → `std::filesystem::file_size` (surcharge qui
+  throw) sur fichier supprimé → exit 134 (vs 139 pour la variante simdunpack).
+- **Le pin lecteur existe déjà et est ignoré** : `BufferObj::rc_` est affiché dans le message
+  d'erreur de `PickForCleanup` mais jamais testé comme condition — levier n°1 du patch-set.
+- **Kill switch volontaire** : `QueryContext` fait `raise(SIGUSR1)` sur UnrecoverableException
+  (shutdown du serveur), l'ancien `throw e;` commenté juste à côté (`query_context_impl.cpp:307`).
+- `BufferManager::RequestSpace` : underflow non signé pouvant désactiver définitivement la
+  limite mémoire.
+
+Patch-set cyllene re-priorisé (du rapport) : 1) #3423 (fait) ; 2) trio confinement ~50 lignes
+(catch-all WorkerLoop + remplacer SIGUSR1 + protéger ~BufferHandle) = toute mort de process →
+échec de requête ; 3) invalidation COMPACT/IMPORT ; 4) purge mapped_files_ ; 5) pins structurels
+(précédés du fix transposition chunk_id/segment_id) ; 6) cache_ts_ honnête.
