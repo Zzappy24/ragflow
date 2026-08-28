@@ -3,6 +3,9 @@
 **Statut** : diagnostiqué par nous (2026-08-28, investigation du clone v0.7.3), posté upstream :
 [#3418, rapport de crash](https://github.com/infiniflow/infinity/issues/3418#issuecomment-5446478734) puis
 [#3418, diagnostic racine](https://github.com/infiniflow/infinity/issues/3418#issuecomment-5446559296).
+**PR de fix soumise : [infiniflow/infinity#3423](https://github.com/infiniflow/infinity/pull/3423)**
+(branche `fix/ft-reader-cache-invalidation-on-chunk-cleanup` sur le fork Zzappy24/infinity —
+15 lignes, miroir de CleanSegmentIndex dans CleanChunkIndex, vérifié présent sur main au 2026-08-28).
 Log du crash conservé par Yoann (`infinity_segfault_*.log`). Clone d'investigation : `~/infinity-src`.
 
 ## Symptôme
