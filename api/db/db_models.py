@@ -645,16 +645,25 @@ class MysqlDatabaseLock:
                 pass
             raise Exception(f"failed to acquire lock {self.lock_name}")
 
-    @with_retry(max_retries=10, retry_delay=2.0)
+    # CUSTOM B2B SaaS — unlock tolérant : les verrous consultatifs MySQL sont
+    # par-session. Si le body sous verrou dure plus que stale_timeout (ex.
+    # init_database_tables sur base vierge, ~25 min de DDL), le pool Peewee
+    # recycle la connexion porteuse → le verrou meurt avec elle. RELEASE_LOCK
+    # renvoie alors NULL (inexistant) ou 0 (autre session) : le verrou est DE
+    # FAIT libéré — retenter est inutile (constaté 2026-08-28 : 17 min de
+    # retries exponentiels au boot ES). Warning et on continue ; le retry ne
+    # couvre que les erreurs transport (connexion tombée pendant l'appel).
+    @with_retry(max_retries=3, retry_delay=1.0)
     def unlock(self):
         cursor = self.db.execute_sql("SELECT RELEASE_LOCK(%s)", (self.lock_name,))
         ret = cursor.fetchone()
-        if ret[0] == 0:
-            raise Exception(f"mysql lock {self.lock_name} was not established by this thread")
-        elif ret[0] == 1:
+        if ret[0] == 1:
             return True
-        else:
-            raise Exception(f"mysql lock {self.lock_name} does not exist")
+        logging.warning(
+            f"mysql lock {self.lock_name}: RELEASE_LOCK returned {ret[0]} — "
+            "the owning session died (pool recycle after a long critical section); lock already released"
+        )
+        return True
 
     def __enter__(self):
         if isinstance(self.db, PooledMySQLDatabase):
