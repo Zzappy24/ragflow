@@ -115,7 +115,7 @@ spec:
                 - |
                   {{- if ne (toString (.Values.infinity.maintenance.restartAfter | default true)) "false" }}
                   set -e
-                  apk add --no-cache curl >/dev/null
+                  apk add --no-cache curl jq >/dev/null
                   SA=/var/run/secrets/kubernetes.io/serviceaccount
                   API="https://kubernetes.default.svc/api/v1/namespaces/{{ .Release.Namespace }}/pods/{{ .Release.Name }}-infinity-0"
                   auth() { curl -s --cacert "$SA/ca.crt" -H "Authorization: Bearer $(cat $SA/token)" "$@"; }
@@ -124,10 +124,11 @@ spec:
                   # attendre le retour Ready (replay WAL ~3-4 min ; plafond 15 min)
                   sleep 15
                   for i in $(seq 1 90); do
-                    # l'ancien pod peut rester "ready" pendant son arrêt gracieux :
-                    # on exige AUSSI l'absence de deletionTimestamp (pod recréé)
-                    POD_JSON=$(auth "$API")
-                    if echo "$POD_JSON" | grep -q '"ready": *true' && ! echo "$POD_JSON" | grep -q '"deletionTimestamp"'; then
+                    # vraie condition Ready du pod (un grep naïf sur "ready": true
+                    # matche les initContainers terminés → succès prématuré constaté
+                    # à la validation) + absence de deletionTimestamp (l'ancien pod
+                    # en arrêt gracieux ne doit pas compter)
+                    if auth "$API" | jq -e '(.metadata.deletionTimestamp == null) and (([.status.conditions[]? | select(.type == "Ready") | .status] | first) == "True")' >/dev/null; then
                       echo "infinity Ready — maintenance complète"; exit 0
                     fi
                     sleep 10
