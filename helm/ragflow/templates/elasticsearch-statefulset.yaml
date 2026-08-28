@@ -35,6 +35,10 @@ spec:
       nodeSelector:
         {{- toYaml . | nindent 8 }}
       {{- end }}
+      {{- with .Values.elasticsearch.tolerations }}
+      tolerations:
+        {{- toYaml . | nindent 8 }}
+      {{- end }}
       # L'image officielle tourne en uid 1000 (elasticsearch) ; fsGroup pour
       # que le PVC rook-ceph-block soit inscriptible sans initContainer chown.
       securityContext:

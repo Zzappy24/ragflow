@@ -7,7 +7,7 @@
 global:
   imageRegistry: "harbor.cylndata.cyllene.pro"
   imageRepository: "data/ragflow"
-  imageTag: "v0.9.14"
+  imageTag: "v0.9.15"
   hostname: "ragflow.cyllene.cloud"
   # HTTPS actif depuis 2026-07-13 : listeners 443 sur le Gateway partagé
   # (envoy-gateway-system), certs Let's Encrypt via cert-manager gateway-shim.
@@ -19,6 +19,14 @@ global:
     - name: harbor-pull-secret
   env:
     INTERNAL_API_SECRET: "bb147273319ee168e9825b94842ad048ba9d8e569164c4cbd90b0dfd97ffef06"
+    # ── BENCH ES 9.5.2 (2026-08-28, memory project_engine_strategy) ─────────
+    # Bascule EN PLACE : la référence Infinity est déjà mesurée (CRAG), pas
+    # besoin des deux moteurs simultanément. Les KB existantes (Infinity)
+    # sont INVISIBLES tant que ce flag est sur elasticsearch — données
+    # intactes, retour = revert de ce bloc + sync (supprimer d'abord les KB
+    # créées sous ES). Si ES gagne le bench, cette bascule EST la migration.
+    # Requiert l'image ≥ v0.9.15 (fix exclude_source_vectors, ragflow#13272).
+    DOC_ENGINE: "elasticsearch"
   # k8s sandbox provider is enabled below — task-executor needs its SA
   # token in-cluster to create/watch/delete sandbox Jobs.
   sandboxTokenAutomount: true
@@ -249,6 +257,28 @@ minio:
     limits:
       cpu: "1000m"
       memory: "1Gi"
+
+# ── BENCH ES : StatefulSet ES 9.5.2 à côté d'Infinity (même node GPU) ───────
+# Infinity reste up (données préservées, retour arrière instantané) mais
+# n'est plus utilisé tant que DOC_ENGINE=elasticsearch.
+elasticsearch:
+  enabled: true
+  version: "9.5.2"
+  storage: "100Gi"
+  javaOpts: "-Xms8g -Xmx8g"
+  resources:
+    requests: { cpu: "1000m", memory: "12Gi" }
+    limits:   { cpu: "4000m", memory: "24Gi" }   # miroir des limits Infinity
+  nodeSelector:
+    node-role.kubernetes.io/gpt: "true"
+  tolerations:
+    - key: node-role
+      operator: Equal
+      value: gpu
+      effect: NoSchedule
+    - key: nvidia.com/gpu
+      operator: Exists
+      effect: NoSchedule
 
 infinity:
   # x64-v3 (AVX2) : confirmé sur le nœud Infinity le 2026-08-26
