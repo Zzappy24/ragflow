@@ -103,20 +103,33 @@ spec:
                   memory: 1Gi
           containers:
             - name: restart-infinity
-              image: bitnami/kubectl:1.31
+              # alpine + API Kubernetes directe (token SA) plutôt qu'une image
+              # kubectl tierce : bitnami/kubectl a disparu de Docker Hub
+              # (retrait Broadcom 2025) -> ImagePullBackOff constaté 2026-08-28.
+              # alpine:3.20 est déjà tirée par ce cluster (initContainers api),
+              # et `apk add curl` suit le même pattern éprouvé que gettext.
+              image: alpine:3.20
               imagePullPolicy: IfNotPresent
               command: ["/bin/sh", "-c"]
               args:
                 - |
                   {{- if ne (toString (.Values.infinity.maintenance.restartAfter | default true)) "false" }}
                   set -e
-                  POD="{{ .Release.Name }}-infinity-0"
-                  echo "post-maintenance: recycling $POD (purge des caches readers/mmap périmés)"
-                  kubectl -n {{ .Release.Namespace }} delete pod "$POD" --wait=false
+                  apk add --no-cache curl >/dev/null
+                  SA=/var/run/secrets/kubernetes.io/serviceaccount
+                  API="https://kubernetes.default.svc/api/v1/namespaces/{{ .Release.Namespace }}/pods/{{ .Release.Name }}-infinity-0"
+                  auth() { curl -s --cacert "$SA/ca.crt" -H "Authorization: Bearer $(cat $SA/token)" "$@"; }
+                  echo "post-maintenance: recycling {{ .Release.Name }}-infinity-0 (purge des caches readers/mmap périmés)"
+                  auth -X DELETE "$API" -o /dev/null
                   # attendre le retour Ready (replay WAL ~3-4 min ; plafond 15 min)
+                  sleep 15
                   for i in $(seq 1 90); do
-                    phase=$(kubectl -n {{ .Release.Namespace }} get pod "$POD" -o jsonpath='{.status.containerStatuses[0].ready}' 2>/dev/null || echo "")
-                    [ "$phase" = "true" ] && { echo "infinity Ready — maintenance complète"; exit 0; }
+                    # l'ancien pod peut rester "ready" pendant son arrêt gracieux :
+                    # on exige AUSSI l'absence de deletionTimestamp (pod recréé)
+                    POD_JSON=$(auth "$API")
+                    if echo "$POD_JSON" | grep -q '"ready": *true' && ! echo "$POD_JSON" | grep -q '"deletionTimestamp"'; then
+                      echo "infinity Ready — maintenance complète"; exit 0
+                    fi
                     sleep 10
                   done
                   echo "WARN: infinity pas Ready après 15 min — vérifier le replay WAL" >&2
