@@ -626,6 +626,21 @@ class Dealer:
             ranks["doc_aggs"] = []
             return ranks
 
+        # CUSTOM B2B SaaS — parent-child: consolidate children into parents
+        # BEFORE scoring, so the reranker judges parent texts and top-k is made
+        # of distinct parents (see _consolidate_children_to_moms). Scoped to
+        # the paths whose scoring survives consolidation: an external reranker
+        # (re-scores from text) or Infinity (engine _score aggregated as MAX).
+        # ES/OB without reranker keep the legacy child-level flow — their
+        # scoring needs per-child vectors/KNN — and rely on the caller-side
+        # retrieval_by_children as before.
+        if (rerank_mdl or settings.DOC_ENGINE_INFINITY) and any(
+                (sres.field.get(_cid) or {}).get("mom_id") for _cid in sres.ids):
+            sres = await self._consolidate_children_to_moms(sres, idx_names, kb_ids)
+            if sres.total == 0:
+                ranks["doc_aggs"] = []
+                return ranks
+
         term_similarity_weight = 1 - vector_similarity_weight
         logging.debug(
             "[Search] retrieval weights: trace_id=%s kb_count=%s similarity_threshold=%s "
@@ -925,6 +940,88 @@ class Dealer:
 
         return sorted(chunks, key=lambda x: x["similarity"] * -1)[:topn]
 
+    # CUSTOM B2B SaaS — parent-child retrieval consolidation (2026-08-28).
+    # Upstream order was: search children → rerank/score CHILD texts → top-k →
+    # (caller) retrieval_by_children resolves parents. The reranker therefore
+    # judged line-fragments (sometimes a few characters) — pure noise — and
+    # top-k selection was already ruined before parents were fetched (measured:
+    # −7.6 pts paired on CRAG). This helper consolidates children into their
+    # mothers BEFORE scoring: matching stays child-precise (that's the point of
+    # parent-child), but ranking/reranking operates on PARENT texts and top-k
+    # is naturally made of distinct parents. Aggregation is MAX (best child
+    # wins), not mean (dilution). Called from retrieval(); the caller-side
+    # retrieval_by_children then no-ops (parents carry no mom_id) and remains
+    # as a safety net for paths that skip retrieval().
+    async def _consolidate_children_to_moms(self, sres, idx_names: list[str], kb_ids: list[str]):
+        mom_children: dict[str, list[str]] = defaultdict(list)
+        passthrough: list[str] = []
+        for cid in sres.ids:
+            mid = (sres.field.get(cid) or {}).get("mom_id")
+            if isinstance(mid, str) and mid.strip():
+                mom_children[mid].append(cid)
+            else:
+                passthrough.append(cid)
+        if not mom_children:
+            return sres
+
+        new_ids: list[str] = []
+        new_field: dict = {}
+        new_highlight: dict = {}
+        seen: set = set()
+        for cid in sres.ids:
+            chunk = sres.field.get(cid) or {}
+            mid = chunk.get("mom_id")
+            if not (isinstance(mid, str) and mid.strip()):
+                new_ids.append(cid)
+                new_field[cid] = chunk
+                if sres.highlight and cid in sres.highlight:
+                    new_highlight[cid] = sres.highlight[cid]
+                continue
+            if mid in seen:
+                continue
+            seen.add(mid)
+            cks = [sres.field[c] for c in mom_children[mid]]
+            mom = await thread_pool_exec(self.dataStore.get, mid, idx_names[0], kb_ids)
+            if mom is None:
+                logging.warning("Parent chunk '%s' not found; keeping %d child chunk(s) as candidates.", mid, len(cks))
+                for c in mom_children[mid]:
+                    new_ids.append(c)
+                    new_field[c] = sres.field[c]
+                continue
+            # Best (max-scoring) child drives the pre-rerank engine score and
+            # donates its vector; the parent's own text feeds token/rerank sims.
+            best = max(cks, key=lambda c: c.get("_score") or 0.0)
+            mom_content = mom.get("content_with_weight", "") or ""
+            entry = {
+                "content_with_weight": mom_content,
+                "content_ltks": rag_tokenizer.tokenize(mom_content),
+                "title_tks": mom.get("title_tks", best.get("title_tks", "")),
+                "important_kwd": sorted({kw for c in cks for kw in (c.get("important_kwd") or [])}),
+                "tag_kwd": sorted({t for c in cks for t in (c.get("tag_kwd") or [])}),
+                "doc_id": mom.get("doc_id", best.get("doc_id", "")),
+                "docnm_kwd": mom.get("docnm_kwd", best.get("docnm_kwd", "")),
+                "kb_id": mom.get("kb_id", best.get("kb_id", "")),
+                "img_id": mom.get("img_id", ""),
+                "position_int": mom.get("position_int", []),
+                "doc_type_kwd": mom.get("doc_type_kwd", ""),
+                "_score": max((c.get("_score") or 0.0) for c in cks),
+            }
+            for k, v in best.items():
+                if k.endswith("_vec"):
+                    entry[k] = v
+            new_ids.append(mid)
+            new_field[mid] = entry
+            if sres.highlight:
+                for c in mom_children[mid]:
+                    if c in sres.highlight:
+                        new_highlight[mid] = sres.highlight[c]
+                        break
+        sres.ids = new_ids
+        sres.field = new_field
+        sres.highlight = new_highlight or sres.highlight
+        sres.total = len(new_ids)
+        return sres
+
     def retrieval_by_children(self, chunks: list[dict], tenant_ids: list[str]):
         if not chunks:
             return []
@@ -964,9 +1061,13 @@ class Dealer:
                 "kb_id": chunk["kb_id"],
                 "important_kwd": [kwd for ck in cks for kwd in ck.get("important_kwd", [])],
                 "image_id": chunk.get("img_id", ""),
-                "similarity": np.mean([ck["similarity"] for ck in cks]),
-                "vector_similarity": np.mean([ck["similarity"] for ck in cks]),
-                "term_similarity": np.mean([ck["similarity"] for ck in cks]),
+                # CUSTOM B2B SaaS — parent-child: MAX, not mean. A parent whose
+                # best child matches strongly IS a strong candidate; averaging
+                # with its weaker siblings diluted exactly the signal that made
+                # it surface.
+                "similarity": max(ck["similarity"] for ck in cks),
+                "vector_similarity": max(ck["similarity"] for ck in cks),
+                "term_similarity": max(ck["similarity"] for ck in cks),
                 "vector": [0.0] * vector_size,
                 "positions": chunk.get("position_int", []),
                 "doc_type_kwd": chunk.get("doc_type_kwd", "")
