@@ -19,7 +19,9 @@ fi
 
 export PATH=/Users/zappy/.local/bin:/opt/homebrew/bin:$PATH
 export PYTHONPATH="$REPO"
-export DOC_ENGINE=infinity
+# Moteur doc surchargeable pour le bench ES vs Infinity :
+#   DOC_ENGINE=elasticsearch STACK_VERSION=9.5.2 bash scripts/dev_up.sh
+export DOC_ENGINE="${DOC_ENGINE:-infinity}"
 export ADMIN_JWT_SECRET=dev-only-change-before-prod-ragflow-2026
 export RSA_PASSPHRASE=Welcome
 
@@ -30,8 +32,8 @@ fi
 # ---------------------------------------------------------------------------
 # 1. Docker base services (mysql, redis, infinity, minio, es01)
 # ---------------------------------------------------------------------------
-echo "[dev_up] starting docker base services (mysql, redis, infinity, minio, es01)"
-docker compose -f docker/docker-compose-base.yml --profile infinity up -d > /dev/null
+echo "[dev_up] starting docker base services (mysql, redis, minio, moteur=${DOC_ENGINE})"
+docker compose -f docker/docker-compose-base.yml --profile "${DOC_ENGINE}" up -d > /dev/null
 
 echo -n "[dev_up] waiting for minio… "
 until curl -fsS http://localhost:9000/minio/health/live > /dev/null 2>&1; do sleep 2; done
