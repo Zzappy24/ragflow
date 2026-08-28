@@ -129,6 +129,24 @@ class ESConnectionBase(DocStoreConnection):
         # parser_id is used by Infinity but not needed for ES (kept for interface compatibility)
         if self.index_exist(index_name, dataset_id):
             return True
+        # CUSTOM B2B SaaS — ES 9.x exclude_source_vectors : depuis ES 9.x les
+        # dense_vector sont EXCLUS du _source par défaut → rerank sans reranker
+        # et insert_citations lisent des vecteurs vides via le fallback
+        # zero_vector silencieux de search.py (upstream ragflow#13272, confirmé
+        # empiriquement contre ES 9.5.2 le 2026-08-28). On force le setting à
+        # false ; les versions qui ne le connaissent pas (≤ 8.x) rejettent le
+        # create → retry sans le setting.
+        settings_with_vectors = dict(self.mapping["settings"])
+        settings_with_vectors["index.mapping.exclude_source_vectors"] = False
+        try:
+            return IndicesClient(self.es).create(index=index_name,
+                                                 settings=settings_with_vectors,
+                                                 mappings=self.mapping["mappings"])
+        except Exception as first_err:
+            if "exclude_source_vectors" not in str(first_err):
+                self.logger.exception("ESConnection.createIndex error %s" % index_name)
+                return
+            self.logger.info(f"create_idx({index_name}): exclude_source_vectors inconnu du serveur (ES <9), retry sans le setting")
         try:
             return IndicesClient(self.es).create(index=index_name,
                                                  settings=self.mapping["settings"],
