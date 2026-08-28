@@ -1,3 +1,4 @@
+{{- if .Values.infinity.enabled }}
 # Infinity server config — mirrors docker/infinity_conf.toml (the compose
 # path mounts it the same way with `-f /infinity_conf.toml`). Before this
 # ConfigMap existed the K8s pod ran on IMAGE DEFAULTS, notably
@@ -71,3 +72,4 @@ data:
     wal_flush                     = "only_write"
 
     [resource]
+{{- end }}

@@ -14,12 +14,24 @@ appVersion: "cyllene-1.0.0"
 # pulled from a remote repo (`repository:` omitted) — the umbrella copies
 # them on `helm package`. Keeps the multi-tenant code we own in one repo.
 dependencies:
+  # `condition:` permet de couper un sous-chart par values (ex. la release
+  # bench ES coupe le panel mgmt — values-bench-es.yaml). Un chemin absent
+  # est traité comme true par Helm → comportement prod inchangé.
   - name: ragflow-api
     version: 1.0.0
+    condition: ragflow-api.enabled
   - name: ragflow-task-executor
     version: 1.0.0
+    condition: ragflow-task-executor.enabled
   - name: ragflow-frontend
     version: 1.0.0
+    condition: ragflow-frontend.enabled
+  - name: ragflow-management-backend
+    version: 1.0.0
+    condition: ragflow-management-backend.enabled
+  - name: ragflow-management-frontend
+    version: 1.0.0
+    condition: ragflow-management-frontend.enabled
 
 maintainers:
   - name: Cyllene RAG Team

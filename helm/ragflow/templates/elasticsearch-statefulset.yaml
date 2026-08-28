@@ -1,0 +1,129 @@
+{{- if .Values.elasticsearch.enabled }}
+# Elasticsearch — moteur doc alternatif à Infinity (bench 2026-08 puis
+# migration éventuelle, voir docs/known-issues/infinity-ft-cleanup-uaf.md et
+# memory project_engine_strategy). Single-node : même topologie que le
+# StatefulSet Infinity qu'il remplace (rook-ceph-block RWO). Sécurité xpack
+# activée (basic auth), TLS off — trafic intra-namespace uniquement.
+#
+# IMPORTANT versions : ES 9.x exclut les dense_vector du _source par défaut
+# → le create_idx du code force index.mapping.exclude_source_vectors=false
+# (grep CUSTOM B2B SaaS — ES 9.x exclude_source_vectors). Toute image < ce
+# fix (≤ v0.9.14) casse silencieusement citations + ranking sans reranker.
+apiVersion: apps/v1
+kind: StatefulSet
+metadata:
+  name: {{ .Release.Name }}-es01
+  labels:
+    {{- include "ragflow.labels" . | nindent 4 }}
+    app.kubernetes.io/component: elasticsearch
+spec:
+  serviceName: {{ .Release.Name }}-es01
+  replicas: 1
+  selector:
+    matchLabels:
+      app.kubernetes.io/name: ragflow
+      app.kubernetes.io/instance: {{ .Release.Name }}
+      app.kubernetes.io/component: elasticsearch
+  template:
+    metadata:
+      labels:
+        app.kubernetes.io/name: ragflow
+        app.kubernetes.io/instance: {{ .Release.Name }}
+        app.kubernetes.io/component: elasticsearch
+    spec:
+      {{- with .Values.elasticsearch.nodeSelector }}
+      nodeSelector:
+        {{- toYaml . | nindent 8 }}
+      {{- end }}
+      # L'image officielle tourne en uid 1000 (elasticsearch) ; fsGroup pour
+      # que le PVC rook-ceph-block soit inscriptible sans initContainer chown.
+      securityContext:
+        fsGroup: 1000
+      containers:
+        - name: elasticsearch
+          image: "docker.elastic.co/elasticsearch/elasticsearch:{{ .Values.elasticsearch.version }}"
+          imagePullPolicy: IfNotPresent
+          ports:
+            - containerPort: 9200
+              name: http
+            - containerPort: 9300
+              name: transport
+          env:
+            - name: node.name
+              value: es01
+            - name: discovery.type
+              value: single-node
+            - name: cluster.name
+              value: {{ .Release.Name }}-es
+            - name: ELASTIC_PASSWORD
+              value: {{ .Values.elasticsearch.password | quote }}
+            - name: bootstrap.memory_lock
+              value: "false"
+            - name: xpack.security.enabled
+              value: "true"
+            - name: xpack.security.http.ssl.enabled
+              value: "false"
+            - name: xpack.security.transport.ssl.enabled
+              value: "false"
+            # Heap explicite — sans elle ES prend 50% de la limite mémoire,
+            # ce qui laisse trop peu au page cache Lucene sur petites limites.
+            - name: ES_JAVA_OPTS
+              value: {{ .Values.elasticsearch.javaOpts | quote }}
+            - name: cluster.routing.allocation.disk.watermark.low
+              value: "5gb"
+            - name: cluster.routing.allocation.disk.watermark.high
+              value: "3gb"
+            - name: cluster.routing.allocation.disk.watermark.flood_stage
+              value: "2gb"
+          resources:
+            {{- toYaml .Values.elasticsearch.resources | nindent 12 }}
+          readinessProbe:
+            exec:
+              command:
+                - sh
+                - -c
+                - 'curl -fsS -u "elastic:${ELASTIC_PASSWORD}" http://localhost:9200/_cluster/health | grep -qE ''"status":"(green|yellow)"'''
+            initialDelaySeconds: 30
+            periodSeconds: 10
+            failureThreshold: 30
+          livenessProbe:
+            tcpSocket:
+              port: 9200
+            initialDelaySeconds: 120
+            periodSeconds: 20
+            failureThreshold: 6
+          volumeMounts:
+            - name: esdata
+              mountPath: /usr/share/elasticsearch/data
+  volumeClaimTemplates:
+    - metadata:
+        name: esdata
+      spec:
+        accessModes: ["ReadWriteOnce"]
+        storageClassName: {{ .Values.global.storageClass | quote }}
+        resources:
+          requests:
+            storage: {{ .Values.elasticsearch.storage | quote }}
+---
+# Headless Service — requis par serviceName du StatefulSet, et sert
+# d'endpoint stable {{ .Release.Name }}-es01.<ns>.svc.cluster.local:9200
+# pour le service_conf des pods api/executor.
+apiVersion: v1
+kind: Service
+metadata:
+  name: {{ .Release.Name }}-es01
+  labels:
+    {{- include "ragflow.labels" . | nindent 4 }}
+    app.kubernetes.io/component: elasticsearch
+spec:
+  clusterIP: None
+  selector:
+    app.kubernetes.io/name: ragflow
+    app.kubernetes.io/instance: {{ .Release.Name }}
+    app.kubernetes.io/component: elasticsearch
+  ports:
+    - name: http
+      port: 9200
+    - name: transport
+      port: 9300
+{{- end }}

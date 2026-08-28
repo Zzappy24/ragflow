@@ -1,0 +1,127 @@
+# =============================================================================
+#  Bench ES 9.5.2 vs Infinity — release ISOLÉE (namespace dédié rag-bench-es)
+# -----------------------------------------------------------------------------
+#  Décision 2026-08-28 (memory project_engine_strategy) : bench décisionnel.
+#  Release séparée = MariaDB/Redis/MinIO/ES à elle → AUCUN partage avec la
+#  prod (partager le Redis ferait voler les tâches du bench par les executors
+#  Infinity de rag-new2 ; le moteur doc est une config par PROCESS, pas par KB).
+#  Seuls les services vLLM de l'espace `vllm` sont réutilisés (cluster-wide,
+#  mêmes modèles bge-m3 + reranker + Qwen que la référence Infinity = fair).
+#
+#  Install (après création des secrets — voir helm/ragflow/BENCH_ES.md) :
+#    helm upgrade --install rag-bench helm/ragflow \
+#      -f helm/ragflow/values-alterai.yaml -f helm/ragflow/values-bench-es.yaml \
+#      -n rag-bench-es --create-namespace
+#  (ou app ArgoCD dédiée avec les DEUX values files, alterai d'abord)
+#
+#  ⚠ IMAGE ≥ v0.9.15 OBLIGATOIRE : le fix exclude_source_vectors (ES 9.x) est
+#  commité APRÈS le build v0.9.14 — sans lui, citations + ranking sans
+#  reranker lisent des vecteurs nuls SILENCIEUSEMENT (ragflow#13272).
+# =============================================================================
+
+global:
+  imageTag: "v0.9.15"
+  # Pas d'exposition publique dédiée : le driver du bench passe par
+  # port-forward (kubectl port-forward svc/rag-bench-ragflow-api 9380:9380).
+  # Ce hostname n'a pas de listener sur le Gateway partagé — la route
+  # rendue reste inerte, aucune collision avec ragflow.cyllene.cloud.
+  hostname: "ragflow-bench.cyllene.cloud"
+  env:
+    DOC_ENGINE: "elasticsearch"
+  # Sandbox off pour le bench → pas de SA token dans les executors.
+  sandboxTokenAutomount: false
+
+# --- moteur doc : ES on, Infinity off ---------------------------------------
+elasticsearch:
+  enabled: true
+  version: "9.5.2"
+  storage: "100Gi"
+  # Node GPU (alteraiworkergpt1) : seul node avec de la RAM libre (~350Gi),
+  # même hôte que l'Infinity de prod → topologie comparable pour le bench.
+  javaOpts: "-Xms8g -Xmx8g"
+  resources:
+    requests: { cpu: "1000m", memory: "12Gi" }
+    limits:   { cpu: "4000m", memory: "24Gi" }   # miroir des limits Infinity prod
+  nodeSelector:
+    node-role.kubernetes.io/gpt: "true"
+
+infinity:
+  enabled: false
+  maintenance:
+    enabled: false
+
+# --- API : 2 replicas suffisent (bench mono-utilisateur, pas de HPA utile) ---
+ragflow-api:
+  replicas: 2
+  hpa:
+    minReplicas: 2
+    maxReplicas: 2
+  resources:
+    requests: { cpu: "1",  memory: "4Gi" }
+    limits:   { cpu: "4",  memory: "8Gi" }
+
+# --- Executors : CPU-only ---------------------------------------------------
+# Les 8 slots MIG du node GPU sont TOUS pris par la prod (4 bge-m3 +
+# 1 reranker + 3 task-executor rag-new2, cf. values-alterai). Le corpus CRAG
+# est du HTML/texte parsé en `naive` — DeepDoc OCR/GPU n'est PAS sollicité ;
+# l'embedding/rerank restent sur les vLLM partagés (GPU). Le bench qualité
+# et latence de REQUÊTE est donc à iso-modèles ; seule la vitesse brute
+# d'ingestion n'est pas comparable à la référence prod (à noter au rapport).
+ragflow-task-executor:
+  replicas: 3
+  device: "cpu"
+  workerMaxTasks: "4"
+  resources:
+    requests: { cpu: "1000m", memory: "4Gi" }
+    limits:   { cpu: "4000m", memory: "12Gi" }
+  keda:
+    minReplicas: 3
+    maxReplicas: 3
+  livenessProbe:
+    enabled: true
+    heartbeatFile: "/tmp/k8s_heartbeat"
+    maxAgeSeconds: 180
+    initialDelaySeconds: 120
+    periodSeconds: 30
+    failureThreshold: 3
+    timeoutSeconds: 10
+  extraEnv:
+    - name: LLM_TIMEOUT_SECONDS
+      value: "120"
+    - name: LLM_MAX_RETRIES
+      value: "2"
+
+# --- Data stores dédiés à la release (isolation totale vs rag-new2) ----------
+mariadb:
+  enabled: true
+  storage: "20Gi"
+  replicas: 1
+  galera: false
+
+redis:
+  enabled: true
+  storage: "5Gi"
+
+minio:
+  enabled: true
+  # Tenant MinIO de CE namespace (le CR s'appelle `minio` → service minio-hl
+  # local). Surcharge le host rag-new2 hérité de values-alterai.
+  host: "minio-hl.rag-bench-es.svc.cluster.local:9000"
+  size: "100Gi"
+
+# --- Pas de produit Code ni d'admin panel pour un bench ----------------------
+ragflow-management-backend:
+  enabled: false
+ragflow-management-frontend:
+  enabled: false
+
+# Frontend on : pratique pour inspecter les KB/chunks pendant le bench.
+ragflow-frontend:
+  enabled: true
+  replicas: 1
+
+sandbox:
+  enabled: false
+
+# vLLM : hérités de values-alterai (vllm-router-service.vllm.svc — cluster-wide,
+# accessibles depuis n'importe quel namespace). Rien à surcharger.

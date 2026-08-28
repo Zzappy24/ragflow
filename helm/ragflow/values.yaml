@@ -202,6 +202,27 @@ infinity:
     requests: { cpu: "1000m", memory: "4Gi" }
     limits:   { cpu: "4000m", memory: "16Gi" }
 
+# --- Elasticsearch (moteur doc alternatif — bench 2026-08 / migration) -------
+# Désactivé par défaut : la prod tourne sur Infinity. Activer avec
+# DOC_ENGINE=elasticsearch (global.env) + infinity.enabled=false dans la
+# release qui l'utilise (voir values-bench-es.yaml). Le code force
+# exclude_source_vectors=false au create_idx (requis en ES 9.x, image
+# ≥ v0.9.15 obligatoire — grep CUSTOM B2B SaaS — ES 9.x exclude_source_vectors).
+elasticsearch:
+  enabled: false
+  version: "9.5.2"
+  # Mot de passe basic auth du superuser `elastic`. Intra-namespace only —
+  # même modèle que le compose upstream. À surcharger par env.
+  password: "infini_rag_flow"
+  storage: "100Gi"
+  # Heap explicite ; le reste de la limite mémoire sert de page cache Lucene
+  # (règle ES : heap ≤ 50% de la RAM disponible, jamais > 31Go).
+  javaOpts: "-Xms4g -Xmx4g"
+  resources:
+    requests: { cpu: "1000m", memory: "6Gi" }
+    limits:   { cpu: "4000m", memory: "12Gi" }
+  nodeSelector: {}
+
 # --- vLLM endpoint (NOT deployed by this chart, just configured) -------------
 # vLLM lives in its own ns (`vllm-rag` or shared `gpt`/`glm`) and is shared
 # infra. We just point ragflow-api at its Service URLs.

@@ -106,6 +106,10 @@ data:
   # (incident 2026-08-19, calibration CRAG 962 docs × 12 threads).
   DOC_BULK_SIZE: "512"
   INFINITY_POOL_SIZE: "0"        # 0 = auto-size from WORKER_MAX_TASKS
+{{- if .Values.elasticsearch.enabled }}
+  # Résolu par envsubst dans la section es: du template ci-dessous.
+  ELASTIC_PASSWORD: {{ .Values.elasticsearch.password | quote }}
+{{- end }}
 
   # --- service_conf.yaml template ------------------------------------------
   # RAGFlow's Python config does NOT read MYSQL_HOST/REDIS_HOST/etc. env vars
@@ -146,3 +150,11 @@ data:
       uri: {{ .Release.Name }}-infinity.{{ .Release.Namespace }}.svc.cluster.local:23817
       postgres_port: 5432
       db_name: default_db
+    es:
+      # Section inerte quand DOC_ENGINE=infinity (symétrique de la section
+      # infinity quand DOC_ENGINE=elasticsearch). ELASTIC_PASSWORD vient du
+      # ConfigMap (voir plus haut) — pas un secret critique : service
+      # intra-namespace, même modèle que le compose upstream.
+      hosts: 'http://{{ .Release.Name }}-es01.{{ .Release.Namespace }}.svc.cluster.local:9200'
+      username: 'elastic'
+      password: ${ELASTIC_PASSWORD}
