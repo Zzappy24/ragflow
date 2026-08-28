@@ -84,9 +84,17 @@ Découvertes supplémentaires à impact opérationnel pour NOUS :
 - **COMPACT et IMPORT n'invalident JAMAIS le cache de readers fulltext** → résultats fulltext
   silencieusement PÉRIMÉS après notre maintenance nocturne de 01h00 (segments dépréciés servis,
   imports invisibles), jusqu'à une invalidation qui n'arrive pas (bug #3423) ou un restart.
-  **⇒ Tant que l'image patchée n'est pas déployée : envisager un restart Infinity systématique
-  APRÈS la maintenance nocturne** (3-4 min de replay WAL à 01h05 — à arbitrer), ou suspendre le
-  compact nocturne. Sans ça, chaque nuit ouvre une fenêtre de résultats faux non détectables.
+  **⇒ DÉCISION (2026-08-28, après contre-analyse) : compaction MAINTENUE en prod.** Le risque
+  recalculé est faible sur notre corpus à faible churn : le COMPACT droppe des SEGMENTS entiers,
+  dont le cleanup (≤10 s) passe par `CleanSegmentIndex` qui invalide CORRECTEMENT le cache —
+  la fenêtre se referme en secondes ; le trou « périmé pour toujours » ne concerne que les merges
+  de chunks d'index (optimize), marginaux hors churn massif. Et des semaines d'empirique (config
+  identique) sans crash ni dérive. Suspendre aurait coûté une dégradation lente CERTAINE des
+  recherches (accumulation de chunks d'index) contre un risque théorique jamais observé.
+  La suspension (`optimizeInterval/compactInterval: 720h` + `maintenance.enabled: false`) reste
+  le bon geste UNIQUEMENT pendant une opération à churn massif (cf. protocole ci-dessus) —
+  et devient sans objet dès que l'image patchée (invalidation COMPACT/IMPORT incluse au
+  patch-set n°3) est déployée.
 - **Un CleanupTask est soumis à CHAQUE tick de 10 s** (`BGTaskProcessor::last_cleanup_ts_` jamais
   écrit) → l'exposition au bug d'invalidation est PERMANENTE, pas périodique.
 - **2e variante du crash élucidée** : `MmapFile` → `std::filesystem::file_size` (surcharge qui
