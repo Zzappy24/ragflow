@@ -48,3 +48,25 @@ Un restart purge les caches mais le crash revient au prochain cycle merge+cleanu
 Bugs annexes relevés : transposition chunk_id/segment_id (column_index_reader_impl.cpp:104-109) ;
 mutex jamais verrouillé dans ColumnIndexReader ; `~BufferHandle()` explicite puis réassignation
 (column_length_io_impl.cpp:42,62).
+
+## Protocole opérationnel (tant que le fix upstream n'est pas livré)
+
+**Prod normale : ne rien changer.** Le bug exige un churn massif fusionnant des chunks fulltext —
+jamais déclenché en fonctionnement normal (semaines de recul). Le garrot `cleanup_interval=0`
+permanent coûterait (croissance disque/méta) plus qu'il ne protège.
+
+**Avant toute opération à fort churn** (re-parse massif du corpus, tests parent-child v2) :
+```sql
+SET GLOBAL cleanup_interval = 0;   -- geler l'éboueur pendant l'opération
+```
+**Après l'opération** (fenêtre calme, ex. avec la maintenance de 01h00) :
+```sql
+SET GLOBAL cleanup_interval = 10;  -- le réveiller ; attendre ~2 min qu'il passe
+SET GLOBAL cleanup_interval = 0;   -- (optionnel) le rendormir si une autre vague suit
+```
+```bash
+kubectl -n rag-new2 rollout restart statefulset rag-new2-infinity
+```
+**Le restart est OBLIGATOIRE et c'est lui le vrai remède** : le cleanup empoisonne le cache de
+readers pour la PROCHAINE recherche (déterministe, même des heures plus tard) — seul un restart
+purge `TableIndexReaderCache` + `mapped_files_`. Replay WAL ~3-4 min, prouvé fiable (3× le 2026-08-28).
