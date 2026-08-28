@@ -261,19 +261,10 @@ infinity:
   # infiniflow/infinity#3418) ; le CronJob de 01:00 fait optimize+compact
   # sur toutes les tables. Après un gros run d'ingestion :
   #   kubectl -n rag-new2 create job --from=cronjob/rag-new2-infinity-maintenance manual-$(date +%s)
-  # SUSPENSION TEMPORAIRE de toute compaction (2026-08-28, audit robustesse
-  # Infinity) : COMPACT n'invalide JAMAIS le cache de readers fulltext, et
-  # l'invalidation au cleanup est cassée (#3423 en attente) → chaque
-  # compaction ouvre une fenêtre de résultats fulltext SILENCIEUSEMENT
-  # PÉRIMÉS jusqu'à un restart. Tant que l'image patchée (v0.7.3-cyllene1)
-  # n'est pas déployée : intervalles internes repoussés à 30 j + CronJob
-  # de maintenance désactivé. Coût : fragmentation (acceptable quelques
-  # jours). RÉTABLIR 24h/24h + enabled:true au déploiement de l'image
-  # patchée. Réf : docs/known-issues/infinity-ft-cleanup-uaf.md.
-  optimizeInterval: "720h"
-  compactInterval: "720h"
+  optimizeInterval: "24h"
+  compactInterval: "24h"
   maintenance:
-    enabled: false
+    enabled: true
   # Incident 2026-08-10 : OOMKilled (35 restarts cumulés !) pendant un
   # re-parse de 14 docs — tempête de conflits delete-vs-delete sur la même
   # table (12 tâches parallèles × retries) → CPU 195%, mémoire > 8Gi → kill.
