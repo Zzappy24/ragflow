@@ -110,3 +110,21 @@ Patch-set cyllene re-priorisé (du rapport) : 1) #3423 (fait) ; 2) trio confinem
 (catch-all WorkerLoop + remplacer SIGUSR1 + protéger ~BufferHandle) = toute mort de process →
 échec de requête ; 3) invalidation COMPACT/IMPORT ; 4) purge mapped_files_ ; 5) pins structurels
 (précédés du fix transposition chunk_id/segment_id) ; 6) cache_ts_ honnête.
+
+
+## Posture opérationnelle FINALE (synthèse des deux analyses, 2026-08-28)
+
+**Fenêtrer, pas désactiver.** Le danger n'est pas la maintenance en soi mais la maintenance
+CONCURRENTE aux requêtes ; et la désactivation permanente capitalise le risque (prolifération
+de chunks, perfs dégradées, maintenance finale énorme donc plus risquée).
+
+- **Régime normal** : intervalles internes longs (24h, déjà en place) — pas d'optimize manuel,
+  pas de compaction forcée, pas de CREATE INDEX sur table active (Munmap brut sous scans).
+- **Fenêtre nocturne (cron 01h00)**, ordre : compact → optimize → **RESTART du statefulset**.
+  Le restart final est NON NÉGOCIABLE : compact laisse le cache ft périmé, le cleanup chunk-level
+  n'invalide pas (#3423), optimize mute les octets en place — seul le restart purge tout.
+  → Implémenté dans le CronJob helm (initContainer maintenance + conteneur kubectl restart,
+  RBAC restreint au pod infinity-0, `infinity.maintenance.restartAfter` pour désactiver).
+- **Churn massif exceptionnel** : protocole dédié plus haut (geler cleanup pendant, fenêtre après).
+- **État cible** : l'image patchée (trio confinement + invalidation COMPACT/IMPORT) rend ces
+  précautions inutiles — une base saine n'a pas besoin de fenêtres.

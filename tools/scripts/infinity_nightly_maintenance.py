@@ -44,9 +44,15 @@ def main() -> int:
             t0 = time.time()
             try:
                 table = db.get_table(name)
-                table.optimize()
+                # Ordre compact -> optimize (audit robustesse 2026-08-28) :
+                # compact ne fait que MARQUER (le cleanup détruit plus tard),
+                # optimize mute les octets d'index EN PLACE — le faire en
+                # dernier minimise la fenêtre où un scan concurrent lirait des
+                # octets en cours de mutation. Le restart post-maintenance
+                # (cronjob) purge ensuite les caches périmés — non négociable.
                 table.compact()
-                log.info("%s: optimize+compact OK (%.1fs)", name, time.time() - t0)
+                table.optimize()
+                log.info("%s: compact+optimize OK (%.1fs)", name, time.time() - t0)
             except Exception as exc:
                 failures += 1
                 log.error("%s: échec maintenance: %s", name, exc)
