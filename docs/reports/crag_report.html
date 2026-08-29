@@ -145,7 +145,7 @@
   .tick.win .lbl { color: var(--gold); font-weight: 600; }
   .bullets { list-style: none; padding: 0; margin: .6rem 0 0; }
   .bullets li { padding-left: 1.15rem; position: relative; margin: .5rem 0; color: var(--ink-soft); font-size: .95rem; }
-  .bullets li::before { content: "—"; position: absolute; left: 0; color: var(--qwen); }
+  .bullets li::before { content: "·"; position: absolute; left: 0; color: var(--qwen); }
 
   /* exemples de sévérité */
   .cases { display: grid; gap: .8rem; }
@@ -269,7 +269,7 @@
       </div>
     </div>
     <p class="punch" style="margin-top:1.3rem">La vérité est entre les deux. Repères : RAG simple GPT-4 Turbo = <strong>+7,7</strong> · vainqueur mondial = <strong>+28,4</strong>.</p>
-    <div class="localbadge">🔒 <span><b>Tout a tourné en local</b> — recherche, réponses : modèle souverain 27 Mds. Claude n'a jamais généré une réponse : il n'intervient que pour <b>noter</b>, en contre-expertise du juge local.</span></div>
+    <div class="localbadge">🔒 <span><b>Tout a tourné en local</b>. Recherche et réponses : modèle souverain 27 Mds. Claude n'a jamais généré une réponse : il n'intervient que pour <b>noter</b>, en contre-expertise du juge local.</span></div>
   </div></section>
 
   <!-- 3 · Comment ça marche -->
@@ -287,13 +287,13 @@
       <span class="parrow">→</span>
       <div class="pstep"><span class="pn">3 · Réponse</span>
         <div class="pt">Basée sur les passages</div>
-        <div class="pd">rien d'autre — sinon « je ne sais pas »</div></div>
+        <div class="pd">rien d'autre, sinon « je ne sais pas »</div></div>
       <span class="parrow">→</span>
       <div class="pstep"><span class="pn">4 · Jugement</span>
         <div class="pt">Contre la référence</div>
         <div class="pd">correcte · abstention · fausse</div></div>
     </div>
-    <p class="note">Chaque réponse est traçable jusqu'au document source. Personne n'a internet — les pages sont fournies par le protocole, pour nous comme pour tous les repères.</p>
+    <p class="note">Chaque réponse est traçable jusqu'au document source. Personne n'a internet : les pages sont fournies par le protocole, pour nous comme pour tous les repères.</p>
   </div></section>
 
   <!-- 4 · Barème -->
@@ -305,7 +305,7 @@
       <span class="rule no">réponse fausse&nbsp;&nbsp;−1</span>
       <span class="rule idk">« je ne sais pas »&nbsp;&nbsp;0</span>
     </div>
-    <p class="punch" style="margin-top:1.5rem"><strong>Mieux vaut s'abstenir qu'inventer.</strong> Un petit modèle en RAG simple répond à tout — et finit négatif (−17).</p>
+    <p class="punch" style="margin-top:1.5rem"><strong>Mieux vaut s'abstenir qu'inventer.</strong> Un petit modèle en RAG simple répond à tout, et finit négatif (−17).</p>
   </div></section>
 
   <!-- 5 · Les 200 réponses -->
@@ -322,7 +322,7 @@
       <span><i class="swatch" style="background:var(--miss)"></i> abstentions</span>
       <span><i class="swatch" style="background:var(--hallu)"></i> fausses</span>
     </div>
-    <p class="note">Comptage du juge local. La contre-expertise reclasse 15 des 46 « fausses » en justes ou prudentes — d'où l'écart entre les deux scores.</p>
+    <p class="note">Comptage du juge local. La contre-expertise reclasse 15 des 46 « fausses » en justes ou prudentes. C'est l'écart entre les deux scores.</p>
   </div></section>
 
   <!-- 6 · Échelle -->
@@ -338,24 +338,24 @@
       <div class="tick cx" style="left:92%"><span class="dot"></span><span class="lbl above">Claude&nbsp;+27,5</span></div>
       <div class="tick win" style="left:97%"><span class="dot"></span><span class="lbl below">vainqueur&nbsp;+28,4</span></div>
     </div>
-    <p class="punch">Notre score vit dans <strong>la bande entre les deux juges</strong> — et son plafond touche le vainqueur mondial, qui jouait avec un modèle affiné sur le test et des bases métier pré-câblées.</p>
+    <p class="punch">Notre score vit dans <strong>la bande entre les deux juges</strong>, et son plafond touche le vainqueur mondial, qui jouait avec un modèle affiné sur le test et des bases métier pré-câblées.</p>
   </div></section>
 
   <!-- 7 · Pourquoi deux juges -->
   <section class="slide"><div class="inner">
     <div class="kicker">Fiabilité de la notation · 322 jugements re-vérifiés</div>
-    <h2>Le juge local est trop sévère — la preuve par l'exemple</h2>
+    <h2>Le juge local est trop sévère : la preuve par l'exemple</h2>
     <div class="cases">
       <div class="case">
-        <div class="cq">Date demandée : <b>28 juillet 1949</b> — réponse « July 28, 1949 », référence « 1949-07-28 »</div>
+        <div class="cq">Date demandée : <b>28 juillet 1949</b>. Réponse « July 28, 1949 », référence « 1949-07-28 »</div>
         <div class="verdicts"><span class="vchip qno">Qwen ✗ fausse</span><span class="vchip cok">Claude ✓ juste</span></div>
       </div>
       <div class="case">
-        <div class="cq">Score d'un match : réponse <b>« 2-1 »</b>, référence <b>« 2 »</b> — même information, plus complète</div>
+        <div class="cq">Score d'un match : réponse <b>« 2-1 »</b>, référence <b>« 2 »</b>. Même information, plus complète</div>
         <div class="verdicts"><span class="vchip qno">Qwen ✗ fausse</span><span class="vchip cok">Claude ✓ juste</span></div>
       </div>
       <div class="case">
-        <div class="cq">Question piège (fausse prémisse) : le système répond <b>« Non — c'était son 2ᵉ album »</b> — exactement le comportement attendu</div>
+        <div class="cq">Question piège (fausse prémisse) : le système répond <b>« Non, c'était son 2ᵉ album »</b>, exactement le comportement attendu</div>
         <div class="verdicts"><span class="vchip qno">Qwen ✗ fausse</span><span class="vchip cok">Claude ✓ juste</span></div>
       </div>
     </div>
@@ -401,11 +401,11 @@
     <h2>Pourquoi changer de moteur : une enquête, pas un pari</h2>
     <div class="story">
       <div class="srow"><span class="step">Incidents</span>
-        <p><strong>Crashs et gels récurrents</strong> du moteur vectoriel sous charge — jusqu'à faire échouer les benchmarks eux-mêmes.</p></div>
+        <p><strong>Crashs et gels récurrents</strong> du moteur vectoriel sous charge, jusqu'à faire échouer les benchmarks eux-mêmes.</p></div>
       <div class="srow"><span class="step">Enquête</span>
         <p><strong>Nous avons ouvert le code du moteur</strong> et trouvé la cause racine : un cache de lecture jamais invalidé, qui lit de la mémoire libérée.</p></div>
       <div class="srow"><span class="step">Correctifs</span>
-        <p><strong>3 correctifs proposés au projet d'origine</strong> (pull requests publiques) — l'expertise reste acquise, quel que soit le moteur.</p></div>
+        <p><strong>3 correctifs proposés au projet d'origine</strong> (pull requests publiques) : l'expertise reste acquise, quel que soit le moteur.</p></div>
       <div class="srow"><span class="step">Audit</span>
         <p><strong>7 faiblesses structurelles</strong> identifiées au-delà du crash : le maintien exigeait un échafaudage permanent de contournements.</p></div>
       <div class="srow"><span class="step">Décision</span>
@@ -418,11 +418,11 @@
     <div class="kicker">Le benchmark comme crash-test · décision moteur</div>
     <h2>Elasticsearch gagne aussi la bataille opérationnelle</h2>
     <div class="solid">
-      <div><div class="k">Ingestion des 960 pages</div><div class="v num">45 min</div><div class="n">1 seul run, 0 échec — l'ancien moteur n'y est jamais parvenu sans reprises ni interventions</div></div>
+      <div><div class="k">Ingestion des 960 pages</div><div class="v num">45 min</div><div class="n">1 seul run, 0 échec. L'ancien moteur n'y est jamais parvenu sans reprises ni interventions</div></div>
       <div><div class="k">Latence par question</div><div class="v num">−30 %</div><div class="n">2,8 s vs 3,9 s en médiane sur corpus entier, à pipeline égal</div></div>
-      <div><div class="k">Incidents moteur</div><div class="v num">0</div><div class="n">vs segfaults et gels récurrents — cause racine identifiée par nous, correctifs proposés au projet d'origine</div></div>
+      <div><div class="k">Incidents moteur</div><div class="v num">0</div><div class="n">vs segfaults et gels récurrents. Cause racine identifiée par nous, correctifs proposés au projet d'origine</div></div>
     </div>
-    <p class="note">Décision : migration engagée vers Elasticsearch. Tous les contournements construits autour de l'ancien moteur (sémaphores d'écriture, fenêtre de maintenance nocturne, retries) deviennent inutiles — de la dette en moins.</p>
+    <p class="note">Décision : migration engagée vers Elasticsearch. Tous les contournements construits autour de l'ancien moteur (sémaphores d'écriture, fenêtre de maintenance nocturne, retries) deviennent inutiles : de la dette en moins.</p>
   </div></section>
 
   <!-- 10 · Ce que le switch débloque -->
@@ -431,7 +431,7 @@
     <h2>Ce que le nouveau moteur débloque</h2>
     <div class="gains">
       <div class="gain">
-        <div class="gt"><span class="hl">La toute dernière version</span> — pas prévu</div>
+        <div class="gt"><span class="hl">La toute dernière version</span>, pas prévu</div>
         <div class="gd">RAGFlow ne supporte officiellement qu'Elasticsearch 8.x. Nous avons validé la 9.5.2 (sortie 2026) nous-mêmes : 2 incompatibilités trouvées et corrigées à la racine, en amont de tout incident.</div>
       </div>
       <div class="gain">
@@ -444,11 +444,11 @@
       </div>
       <div class="gain">
         <div class="gt"><span class="hl">Multi-tenant serein</span></div>
-        <div class="gd">Écritures concurrentes natives : plusieurs clients peuvent ingérer pendant qu'un autre requête — un non-événement, là où c'était un scénario à risque.</div>
+        <div class="gd">Écritures concurrentes natives : plusieurs clients peuvent ingérer pendant qu'un autre requête. Un non-événement, là où c'était un scénario à risque.</div>
       </div>
       <div class="gain">
         <div class="gt"><span class="hl">15 ans de maturité</span></div>
-        <div class="gd">Scaling horizontal, haute dispo, monitoring, expertise disponible sur le marché — l'écosystème le plus éprouvé du domaine.</div>
+        <div class="gd">Scaling horizontal, haute dispo, monitoring, expertise disponible sur le marché : l'écosystème le plus éprouvé du domaine.</div>
       </div>
       <div class="gain">
         <div class="gt"><span class="hl">De la dette en moins</span></div>
@@ -464,11 +464,11 @@
     <div class="gains">
       <div class="gain">
         <div class="gt"><span class="hl">La lecture scale</span> en ajoutant des nœuds</div>
-        <div class="gd">Index répliqués = débit de requêtes horizontal. L'ancien moteur : un seul process pour tous les clients — jusqu'à geler les écrans pendant les ingestions.</div>
+        <div class="gd">Index répliqués = débit de requêtes horizontal. L'ancien moteur : un seul process pour tous les clients, jusqu'à geler les écrans pendant les ingestions.</div>
       </div>
       <div class="gain">
         <div class="gt"><span class="hl">L'écriture scale</span> avec les workers</div>
-        <div class="gd">On bridait l'ancien moteur à 2 écrivains pour le protéger. Désormais le débit d'ingestion suit le nombre de workers — qui s'auto-ajustent déjà à la demande.</div>
+        <div class="gd">On bridait l'ancien moteur à 2 écrivains pour le protéger. Désormais le débit d'ingestion suit le nombre de workers, qui s'auto-ajustent déjà à la demande.</div>
       </div>
       <div class="gain">
         <div class="gt"><span class="hl">Des corpus plus gros que la RAM</span></div>
@@ -476,7 +476,7 @@
       </div>
       <div class="gain">
         <div class="gt"><span class="hl">Sauvegarde &amp; reprise natives</span></div>
-        <div class="gd">Snapshots incrémentaux vers le stockage objet, par API : un vrai plan de reprise d'activité à proposer aux clients — introuvable avant.</div>
+        <div class="gd">Snapshots incrémentaux vers le stockage objet, par API : un vrai plan de reprise d'activité à proposer aux clients, introuvable avant.</div>
       </div>
       <div class="gain">
         <div class="gt"><span class="hl">Un index par base de connaissances</span></div>
@@ -495,13 +495,13 @@
     <h2>L'écart s'est refermé</h2>
     <div class="why">
       <div class="wrow"><span class="tag same">identique</span>
-        <p><strong>Le reranker</strong> — le même modèle que le nôtre, et il fonctionne encore mieux sur Elasticsearch.</p></div>
+        <p><strong>Le reranker.</strong> Le même modèle que le nôtre, et il fonctionne encore mieux sur Elasticsearch.</p></div>
       <div class="wrow"><span class="tag same">désormais acquis</span>
-        <p><strong>Le chunking parent-enfant — leur technique clé.</strong> Réimplémenté et validé chez nous : +2 points, hallucination en baisse.</p></div>
+        <p><strong>Le chunking parent-enfant, leur technique clé.</strong> Réimplémenté et validé chez nous : +2 points, hallucination en baisse.</p></div>
       <div class="wrow"><span class="tag nope">non transposable</span>
         <p><strong>Modèle affiné sur les questions du test.</strong> Impossible pour un produit qui ne connaît pas les questions à l'avance.</p></div>
       <div class="wrow"><span class="tag nope">non généralisable</span>
-        <p><strong>Bases métier pré-câblées sur les 5 domaines du test</strong> — construites à la main en connaissant les sujets.</p></div>
+        <p><strong>Bases métier pré-câblées sur les 5 domaines du test</strong>, construites à la main en connaissant les sujets.</p></div>
     </div>
     <p class="punch" style="margin-top:1.1rem">Il ne reste que les deux ingrédients hors-catégorie. Aux mêmes règles, notre plafond jugé (+27,5) touche leur score officiel (+28,4).</p>
   </div></section>
@@ -512,7 +512,7 @@
     <h2>Deux fois moins d'hallucinations que les RAG simples</h2>
     <div class="duel">
       <div class="us"><div class="dv num">15,5 – 23 %</div><div class="dl">notre plateforme (selon le juge)</div></div>
-      <div class="them"><div class="dv num">28 – 46 %</div><div class="dl">RAG simples publiés — GPT-4 Turbo inclus</div></div>
+      <div class="them"><div class="dv num">28 – 46 %</div><div class="dl">RAG simples publiés, GPT-4 Turbo inclus</div></div>
     </div>
     <p class="punch" style="margin-top:1.3rem">Un assistant qui dit « je ne sais pas » vaut mieux qu'un assistant qui ment avec aplomb.</p>
   </div></section>
@@ -546,7 +546,7 @@
         </div>
       </div>
     </div>
-    <p class="note">Finance : abstention massive par design — les cours « du jour » ne sont pas dans des pages statiques. Prémisse fausse : le mur du benchmark pour tout système non affiné dessus — premier point marqué (1/17, contre 0 avant).</p>
+    <p class="note">Finance : abstention massive par design, les cours « du jour » ne sont pas dans des pages statiques. Prémisse fausse : le mur du benchmark pour tout système non affiné dessus ; premier point marqué (1/17, contre 0 avant).</p>
   </div></section>
 
   <!-- 13 · Méthode -->
@@ -554,7 +554,7 @@
     <div class="kicker">Méthode &amp; sources</div>
     <p><strong style="color:var(--ink)">Protocole.</strong> Prompts et grille de notation repris verbatim de <code>facebookresearch/CRAG</code>. 10 runs appariés sur les mêmes 200 questions, deux moteurs (Infinity v0.7.3, Elasticsearch 9.5.2), plateforme v0.9.13 → v0.9.15. Corpus : 960 pages ré-ingérées à l'identique sur chaque moteur.</p>
     <p><strong style="color:var(--ink)">Génération.</strong> 100 % locale et souveraine : Qwen 27 Mds (vLLM), embeddings bge-m3, reranker bge-reranker-v2-m3. Aucun appel à un service externe pendant les runs.</p>
-    <p><strong style="color:var(--ink)">Juges.</strong> Qwen 3.6 27B (local) sur tous les runs ; contre-expertise Claude — rôle strictement limité à la notation — sur 322 jugements (4 runs), fichiers d'audit commités, chaque correction re-vérifiable item par item. Le leaderboard officiel utilise GPT-4 : comparaisons indicatives, biais borné par le double jugement.</p>
+    <p><strong style="color:var(--ink)">Juges.</strong> Qwen 3.6 27B (local) sur tous les runs ; contre-expertise Claude (rôle strictement limité à la notation) sur 322 jugements (4 runs), fichiers d'audit commités, chaque correction re-vérifiable item par item. Le leaderboard officiel utilise GPT-4 : comparaisons indicatives, biais borné par le double jugement.</p>
     <p><strong style="color:var(--ink)">Références.</strong> CRAG : <code>arXiv 2406.04744</code> · Vainqueur KDD Cup'24 : <code>arXiv 2410.00005</code>.</p>
   </footer></section>
 
