@@ -1,0 +1,579 @@
+<!-- content only; wrapper added at publish -->
+<title>CRAG · RAGFlow Cyllene</title>
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Archivo:wght@600;700;800&family=IBM+Plex+Mono:wght@500;600&family=IBM+Plex+Sans:wght@400;500;600&display=swap">
+
+<style>
+  /* Thème unique assumé : deck de présentation sombre, contrasté, projetable. */
+  :root {
+    --ground: #0b1015;
+    --surface: #121a21;
+    --surface-2: #182229;
+    --ink: #eef4f8;
+    --ink-soft: #a7b8c3;
+    --ink-faint: #6f8290;
+    --hair: #22303a;
+    --qwen: #2fd4b2;
+    --qwen-soft: rgba(47,212,178,.14);
+    --claude: #8ab4ff;
+    --claude-soft: rgba(138,180,255,.14);
+    --correct: #3ddc84;
+    --miss: #e8b750;
+    --hallu: #ff6b5e;
+    --gold: #ffd166;
+    --shadow: 0 2px 6px rgba(0,0,0,.35), 0 14px 40px rgba(0,0,0,.35);
+    --radius: 16px;
+  }
+
+  * { box-sizing: border-box; }
+  html, body { height: 100%; }
+  body {
+    margin: 0; overflow: hidden;
+    background: var(--ground);
+    color: var(--ink);
+    font-family: "IBM Plex Sans", system-ui, sans-serif;
+    line-height: 1.5;
+    -webkit-font-smoothing: antialiased;
+  }
+  h1, h2 { font-family: "Archivo", system-ui, sans-serif; text-wrap: balance; margin: 0; }
+  .mono { font-family: "IBM Plex Mono", monospace; }
+  .num { font-variant-numeric: tabular-nums; }
+
+  .deck { position: fixed; inset: 0; }
+  .slide {
+    position: absolute; inset: 0;
+    display: flex; align-items: center; justify-content: center;
+    padding: 2.4rem 1.4rem 5rem;
+    opacity: 0; transform: translateX(30px); pointer-events: none;
+    transition: opacity .3s ease, transform .3s ease;
+    overflow-y: auto;
+  }
+  .slide.active { opacity: 1; transform: none; pointer-events: auto; }
+  .slide.prev { transform: translateX(-30px); }
+  @media (prefers-reduced-motion: reduce) { .slide { transition: none; transform: none; } }
+  .inner { width: 100%; max-width: 900px; max-height: 100%; }
+
+  .kicker { font-family: "IBM Plex Mono", monospace; font-size: .74rem; font-weight: 600;
+    letter-spacing: .18em; text-transform: uppercase; color: var(--qwen); margin-bottom: 1rem; }
+  .slide h2 { font-size: clamp(1.6rem, 4vw, 2.5rem); font-weight: 800; letter-spacing: -.02em;
+    margin-bottom: 1.6rem; line-height: 1.15; }
+  .note { color: var(--ink-faint); font-size: .85rem; margin-top: 1.3rem; max-width: 64ch; }
+  .punch { font-size: clamp(1rem, 2.2vw, 1.2rem); color: var(--ink-soft); max-width: 58ch; margin: 0; }
+  .punch strong { color: var(--ink); }
+
+  .nav { position: fixed; left: 0; right: 0; bottom: 0; z-index: 10;
+    display: flex; align-items: center; justify-content: center; gap: 1rem;
+    padding: .8rem 1rem; background: linear-gradient(transparent, var(--ground) 45%); }
+  .nav button { font-family: "IBM Plex Mono", monospace; font-size: 1.05rem; font-weight: 600;
+    color: var(--ink-soft); background: var(--surface); border: 1px solid var(--hair);
+    border-radius: 10px; padding: .5rem 1.05rem; cursor: pointer; box-shadow: var(--shadow); }
+  .nav button:hover { color: var(--ink); border-color: var(--ink-faint); }
+  .nav button:focus-visible { outline: 2px solid var(--qwen); outline-offset: 2px; }
+  .nav .cnt { font-family: "IBM Plex Mono", monospace; font-size: .8rem; color: var(--ink-faint);
+    min-width: 4.5rem; text-align: center; }
+  .dots { position: fixed; top: 0; left: 0; right: 0; display: flex; gap: 4px; z-index: 10; }
+  .dots i { flex: 1; height: 3px; background: var(--hair); }
+  .dots i.on { background: var(--qwen); }
+
+  /* ===== gros chiffres jumeaux ===== */
+  .twin { display: grid; grid-template-columns: 1fr 1fr; gap: 1.1rem; }
+  @media (max-width: 640px) { .twin { grid-template-columns: 1fr; } }
+  .twin > div { border-radius: var(--radius); padding: 1.8rem 1.4rem 1.5rem; text-align: center;
+    border: 1px solid var(--hair); background: var(--surface); box-shadow: var(--shadow); }
+  .twin .who { font-family: "IBM Plex Mono", monospace; font-size: .74rem; font-weight: 600;
+    letter-spacing: .12em; text-transform: uppercase; }
+  .twin .big { font-family: "Archivo", sans-serif; font-weight: 800; font-size: clamp(3.4rem, 10vw, 5.6rem);
+    line-height: 1; margin: .4rem 0 .3rem; font-variant-numeric: tabular-nums; }
+  .twin .sub { font-size: .85rem; color: var(--ink-faint); }
+  .twin .q-card { border-top: 5px solid var(--qwen); }
+  .twin .c-card { border-top: 5px solid var(--claude); }
+  .twin .q-card .who, .twin .q-card .big { color: var(--qwen); }
+  .twin .c-card .who, .twin .c-card .big { color: var(--claude); }
+
+  .localbadge { display: inline-flex; align-items: center; gap: .5rem; margin-top: 1.4rem;
+    background: var(--surface-2); border: 1px solid var(--hair); border-radius: 999px;
+    padding: .55rem 1.15rem; font-size: .9rem; color: var(--ink-soft); }
+  .localbadge b { color: var(--ink); }
+
+  /* pipeline */
+  .pipe { display: flex; align-items: stretch; gap: .55rem; overflow-x: auto; padding-bottom: .3rem; }
+  .pstep { flex: 1; min-width: 130px; background: var(--surface); border: 1px solid var(--hair);
+    border-radius: 12px; padding: 1rem 1.05rem; box-shadow: var(--shadow); }
+  .pstep .pn { font-family: "IBM Plex Mono", monospace; font-size: .66rem; font-weight: 600;
+    letter-spacing: .1em; text-transform: uppercase; color: var(--qwen); }
+  .pstep .pt { font-weight: 600; font-size: .95rem; margin: .25rem 0 .15rem; }
+  .pstep .pd { font-size: .8rem; color: var(--ink-faint); line-height: 1.4; }
+  .parrow { align-self: center; color: var(--ink-faint); font-family: "IBM Plex Mono", monospace; flex: none; }
+
+  /* barème */
+  .rules { display: flex; gap: .8rem; flex-wrap: wrap; margin-top: 1.4rem; }
+  .rule { border-radius: 999px; padding: .55rem 1.2rem; font-size: 1rem; font-weight: 600; }
+  .rule.ok { background: var(--correct); color: #08130c; }
+  .rule.no { background: var(--hallu); color: #190806; }
+  .rule.idk { background: var(--surface-2); color: var(--ink-soft); border: 1px solid var(--hair); }
+  .formula { font-family: "Archivo", sans-serif; font-weight: 800; font-size: clamp(1.7rem, 4.6vw, 2.8rem);
+    letter-spacing: -.01em; }
+  .formula .c { color: var(--correct); } .formula .h { color: var(--hallu); }
+
+  /* composition */
+  .composition { display: flex; height: 64px; border-radius: 12px; overflow: hidden;
+    border: 1px solid var(--hair); font-family: "IBM Plex Mono", monospace; font-size: 1rem; font-weight: 600; }
+  .composition > span { display: flex; align-items: center; justify-content: center; color: #0a0f0a; }
+  .seg-correct { background: var(--correct); } .seg-miss { background: var(--miss); } .seg-hallu { background: var(--hallu); }
+  .legend { display: flex; gap: 1.4rem; flex-wrap: wrap; margin-top: .9rem; font-size: .88rem; color: var(--ink-soft); }
+  .legend span { display: inline-flex; align-items: center; gap: .45rem; }
+  .swatch { width: 13px; height: 13px; border-radius: 3px; display: inline-block; }
+
+  /* échelle : bande de vérité */
+  .scale-track { position: relative; height: 10px; border-radius: 999px;
+    background: linear-gradient(90deg, var(--hallu) 0%, var(--miss) 30%, var(--surface-2) 42%, var(--qwen) 100%);
+    margin: 4.2rem 0 3.4rem; }
+  .range-band { position: absolute; top: 50%; transform: translateY(-50%); height: 22px;
+    border-radius: 999px; background: linear-gradient(90deg, var(--qwen-soft), var(--claude-soft));
+    border: 1.5px solid var(--qwen); }
+  .tick { position: absolute; top: 50%; transform: translate(-50%,-50%); }
+  .tick .dot { width: 12px; height: 12px; border-radius: 50%; background: var(--ink-faint); border: 2px solid var(--ground); display: block; }
+  .tick.us .dot { width: 18px; height: 18px; background: var(--qwen); box-shadow: 0 0 0 5px var(--qwen-soft); }
+  .tick.cx .dot { width: 18px; height: 18px; background: var(--claude); box-shadow: 0 0 0 5px var(--claude-soft); }
+  .tick.win .dot { background: var(--gold); }
+  .tick .lbl { position: absolute; left: 50%; transform: translateX(-50%); white-space: nowrap;
+    font-family: "IBM Plex Mono", monospace; font-size: .72rem; color: var(--ink-faint); }
+  .tick .lbl.above { bottom: 20px; } .tick .lbl.below { top: 20px; }
+  .tick.us .lbl { color: var(--qwen); font-weight: 600; }
+  .tick.cx .lbl { color: var(--claude); font-weight: 600; }
+  .tick.win .lbl { color: var(--gold); font-weight: 600; }
+  .bullets { list-style: none; padding: 0; margin: .6rem 0 0; }
+  .bullets li { padding-left: 1.15rem; position: relative; margin: .5rem 0; color: var(--ink-soft); font-size: .95rem; }
+  .bullets li::before { content: "—"; position: absolute; left: 0; color: var(--qwen); }
+
+  /* exemples de sévérité */
+  .cases { display: grid; gap: .8rem; }
+  .case { display: grid; grid-template-columns: 1fr auto; gap: .9rem; align-items: center;
+    background: var(--surface); border: 1px solid var(--hair); border-radius: 12px;
+    padding: .95rem 1.15rem; box-shadow: var(--shadow); }
+  .case .cq { font-size: .9rem; color: var(--ink-soft); }
+  .case .cq b { color: var(--ink); font-weight: 600; }
+  .case .verdicts { display: flex; gap: .5rem; flex: none; }
+  .vchip { font-family: "IBM Plex Mono", monospace; font-size: .72rem; font-weight: 600;
+    border-radius: 8px; padding: .35rem .6rem; white-space: nowrap; }
+  .vchip.qno { background: rgba(255,107,94,.15); color: var(--hallu); border: 1px solid rgba(255,107,94,.4); }
+  .vchip.cok { background: rgba(61,220,132,.12); color: var(--correct); border: 1px solid rgba(61,220,132,.4); }
+  .accord { display: flex; height: 48px; border-radius: 10px; overflow: hidden; border: 1px solid var(--hair);
+    font-family: "IBM Plex Mono", monospace; font-size: .82rem; font-weight: 600; margin-top: 1.1rem; }
+  .accord .agree { background: var(--surface-2); color: var(--ink-soft); display: flex; align-items: center; justify-content: center; }
+  .accord .dis { background: var(--claude); color: #0a1220; display: flex; align-items: center; justify-content: center; }
+
+  /* escalier */
+  .stairs { display: grid; grid-template-columns: repeat(4, 1fr); gap: .8rem; align-items: end;
+    height: 300px; margin-top: .6rem; }
+  @media (max-width: 640px) { .stairs { height: 230px; } }
+  .stair { display: flex; flex-direction: column; justify-content: flex-end; height: 100%; }
+  .stair .bar-v { border-radius: 12px 12px 4px 4px; background: var(--surface-2); border: 1px solid var(--hair);
+    display: flex; flex-direction: column; align-items: center; justify-content: flex-start;
+    padding-top: .7rem; box-shadow: var(--shadow); }
+  .stair.hero .bar-v { background: linear-gradient(180deg, var(--qwen-soft), var(--surface-2)); border-color: var(--qwen); }
+  .stair .sv { font-family: "Archivo", sans-serif; font-weight: 800; font-size: clamp(1.3rem, 3.4vw, 2rem); color: var(--ink); }
+  .stair.hero .sv { color: var(--qwen); }
+  .stair .sl { font-size: .74rem; color: var(--ink-faint); text-align: center; margin-top: .6rem; line-height: 1.35; min-height: 2.6em; }
+  .stair .se { font-family: "IBM Plex Mono", monospace; font-size: .66rem; color: var(--ink-faint); text-transform: uppercase; letter-spacing: .08em; text-align: center; margin-top: .25rem; }
+
+  /* stats 3 colonnes */
+  .solid { display: grid; grid-template-columns: repeat(3, 1fr); gap: 1px; background: var(--hair);
+    border: 1px solid var(--hair); border-radius: var(--radius); overflow: hidden; }
+  @media (max-width: 640px) { .solid { grid-template-columns: 1fr; } }
+  .solid > div { background: var(--surface); padding: 1.4rem 1.3rem; }
+  .solid .k { font-size: .72rem; color: var(--ink-faint); text-transform: uppercase; letter-spacing: .06em; }
+  .solid .v { font-family: "Archivo", sans-serif; font-weight: 800; font-size: clamp(1.5rem, 3.6vw, 2.1rem); margin-top: .3rem; color: var(--qwen); }
+  .solid .n { font-size: .8rem; color: var(--ink-faint); margin-top: .3rem; }
+
+  /* vainqueur */
+  .why { display: grid; gap: .7rem; margin-top: .4rem; }
+  .wrow { display: flex; gap: .9rem; align-items: baseline; background: var(--surface);
+    border: 1px solid var(--hair); border-radius: 12px; padding: .95rem 1.15rem; box-shadow: var(--shadow); }
+  .wrow .tag { font-family: "IBM Plex Mono", monospace; font-size: .66rem; font-weight: 600;
+    text-transform: uppercase; letter-spacing: .08em; padding: .25rem .65rem; border-radius: 999px; flex: none; }
+  .tag.same { color: var(--correct); background: rgba(61,220,132,.1); border: 1px solid rgba(61,220,132,.35); }
+  .tag.nope { color: var(--hallu); background: rgba(255,107,94,.1); border: 1px solid rgba(255,107,94,.35); }
+  .wrow p { margin: 0; font-size: .92rem; color: var(--ink-soft); }
+  .wrow p strong { color: var(--ink); }
+
+  /* duel */
+  .duel { display: grid; grid-template-columns: 1fr 1fr; gap: 1.1rem; align-items: stretch; }
+  @media (max-width: 620px) { .duel { grid-template-columns: 1fr; } }
+  .duel > div { border-radius: var(--radius); padding: 1.7rem 1.3rem; text-align: center;
+    border: 1px solid var(--hair); background: var(--surface); box-shadow: var(--shadow); }
+  .duel .dv { font-family: "Archivo", sans-serif; font-weight: 800; font-size: clamp(2.2rem, 7vw, 3.6rem); }
+  .duel .us .dv { color: var(--correct); } .duel .them .dv { color: var(--hallu); }
+  .duel .dl { font-size: .84rem; color: var(--ink-faint); margin-top: .3rem; }
+
+  /* breakdowns */
+  .cols { display: grid; grid-template-columns: 1fr 1fr; gap: clamp(1.4rem, 4vw, 2.6rem); }
+  @media (max-width: 720px) { .cols { grid-template-columns: 1fr; } }
+  .cols h3 { font-size: .76rem; text-transform: uppercase; letter-spacing: .08em; color: var(--ink-faint);
+    font-family: "IBM Plex Mono", monospace; font-weight: 600; margin: 0 0 .9rem; }
+  .breakdown { display: grid; gap: .5rem; }
+  .brow2 { display: grid; grid-template-columns: 122px 1fr; align-items: center; gap: .8rem; }
+  .brow2 .rlabel { font-size: .84rem; color: var(--ink); }
+  .bar { display: flex; height: 22px; border-radius: 6px; overflow: hidden; background: var(--surface-2); }
+  .bar > i { display: block; height: 100%; }
+  .bar .c { background: var(--correct); } .bar .m { background: var(--miss); } .bar .h { background: var(--hallu); }
+
+  /* enquête */
+  .story { display: grid; gap: .7rem; }
+  .srow { display: flex; gap: .9rem; align-items: baseline; background: var(--surface);
+    border: 1px solid var(--hair); border-radius: 12px; padding: .9rem 1.15rem; box-shadow: var(--shadow); }
+  .srow .step { font-family: "IBM Plex Mono", monospace; font-size: .8rem; font-weight: 600;
+    color: var(--qwen); flex: none; min-width: 5.2rem; }
+  .srow p { margin: 0; font-size: .92rem; color: var(--ink-soft); }
+  .srow p strong { color: var(--ink); }
+
+  /* bénéfices */
+  .gains { display: grid; grid-template-columns: 1fr 1fr; gap: .8rem; }
+  @media (max-width: 640px) { .gains { grid-template-columns: 1fr; } }
+  .gain { background: var(--surface); border: 1px solid var(--hair); border-radius: 12px;
+    padding: 1.05rem 1.15rem; box-shadow: var(--shadow); }
+  .gain .gt { font-weight: 600; font-size: .98rem; margin-bottom: .25rem; }
+  .gain .gt .hl { color: var(--qwen); }
+  .gain .gd { font-size: .84rem; color: var(--ink-faint); line-height: 1.45; }
+
+  footer p { margin: .35rem 0; color: var(--ink-faint); font-size: .85rem; max-width: 72ch; }
+  footer code { font-family: "IBM Plex Mono", monospace; background: var(--surface-2); padding: .1rem .38rem; border-radius: 4px; color: var(--ink-soft); }
+</style>
+
+<div class="dots" id="dots"></div>
+<div class="deck" id="deck">
+
+  <!-- 1 · Titre -->
+  <section class="slide"><div class="inner" style="text-align:center">
+    <div class="kicker">Benchmark indépendant · CRAG (Meta) · 27–29 août 2026</div>
+    <h1 style="font-size:clamp(2.1rem,5.6vw,3.6rem);font-weight:800;letter-spacing:-.025em">La plateforme RAG<br>à l'épreuve du benchmark<br>de référence</h1>
+    <p class="punch" style="margin:1.4rem auto 0">200 questions réelles · 960 pages web · deux moteurs de recherche comparés<br>protocole public de la compétition mondiale KDD Cup 2024</p>
+    <p class="note" style="margin-left:auto;margin-right:auto">Naviguez avec les flèches ← →</p>
+  </div></section>
+
+  <!-- 2 · Verdict -->
+  <section class="slide"><div class="inner">
+    <div class="kicker">Le verdict</div>
+    <h2>Un même run, noté par deux juges indépendants</h2>
+    <div class="twin">
+      <div class="q-card">
+        <div class="who">Juge Qwen · strict au mot près</div>
+        <div class="big num">+14,0</div>
+        <div class="sub">justesse 37 % · hallucination 23 %</div>
+      </div>
+      <div class="c-card">
+        <div class="who">Juge Claude · règles officielles</div>
+        <div class="big num">+27,5</div>
+        <div class="sub">justesse 43 % · hallucination 15,5 %</div>
+      </div>
+    </div>
+    <p class="punch" style="margin-top:1.3rem">La vérité est entre les deux. Repères : RAG simple GPT-4 Turbo = <strong>+7,7</strong> · vainqueur mondial = <strong>+28,4</strong>.</p>
+    <div class="localbadge">🔒 <span><b>Tout a tourné en local</b> — recherche, réponses : modèle souverain 27 Mds. Claude n'a jamais généré une réponse : il n'intervient que pour <b>noter</b>, en contre-expertise du juge local.</span></div>
+  </div></section>
+
+  <!-- 3 · Comment ça marche -->
+  <section class="slide"><div class="inner">
+    <div class="kicker">Le test</div>
+    <h2>Une question, quatre étapes</h2>
+    <div class="pipe">
+      <div class="pstep"><span class="pn">1 · Question</span>
+        <div class="pt">Réelle</div>
+        <div class="pd">« Quel film a gagné l'Oscar 2020 ? »</div></div>
+      <span class="parrow">→</span>
+      <div class="pstep"><span class="pn">2 · Recherche</span>
+        <div class="pt">Dans 960 pages</div>
+        <div class="pd">le moteur extrait les passages les plus pertinents</div></div>
+      <span class="parrow">→</span>
+      <div class="pstep"><span class="pn">3 · Réponse</span>
+        <div class="pt">Basée sur les passages</div>
+        <div class="pd">rien d'autre — sinon « je ne sais pas »</div></div>
+      <span class="parrow">→</span>
+      <div class="pstep"><span class="pn">4 · Jugement</span>
+        <div class="pt">Contre la référence</div>
+        <div class="pd">correcte · abstention · fausse</div></div>
+    </div>
+    <p class="note">Chaque réponse est traçable jusqu'au document source. Personne n'a internet — les pages sont fournies par le protocole, pour nous comme pour tous les repères.</p>
+  </div></section>
+
+  <!-- 4 · Barème -->
+  <section class="slide"><div class="inner">
+    <div class="kicker">Le barème</div>
+    <h2 class="formula">Score = <span class="c">% justes</span> − <span class="h">% fausses</span></h2>
+    <div class="rules">
+      <span class="rule ok">réponse juste&nbsp;&nbsp;+1</span>
+      <span class="rule no">réponse fausse&nbsp;&nbsp;−1</span>
+      <span class="rule idk">« je ne sais pas »&nbsp;&nbsp;0</span>
+    </div>
+    <p class="punch" style="margin-top:1.5rem"><strong>Mieux vaut s'abstenir qu'inventer.</strong> Un petit modèle en RAG simple répond à tout — et finit négatif (−17).</p>
+  </div></section>
+
+  <!-- 5 · Les 200 réponses -->
+  <section class="slide"><div class="inner">
+    <div class="kicker">Les 200 réponses · meilleure configuration</div>
+    <h2>Plus de justes que d'abstentions</h2>
+    <div class="composition" role="img" aria-label="74 correctes, 80 abstentions, 46 fausses selon Qwen">
+      <span class="seg-correct" style="flex:74">74</span>
+      <span class="seg-miss" style="flex:80">80</span>
+      <span class="seg-hallu" style="flex:46">46</span>
+    </div>
+    <div class="legend">
+      <span><i class="swatch" style="background:var(--correct)"></i> justes</span>
+      <span><i class="swatch" style="background:var(--miss)"></i> abstentions</span>
+      <span><i class="swatch" style="background:var(--hallu)"></i> fausses</span>
+    </div>
+    <p class="note">Comptage du juge local. La contre-expertise reclasse 15 des 46 « fausses » en justes ou prudentes — d'où l'écart entre les deux scores.</p>
+  </div></section>
+
+  <!-- 6 · Échelle -->
+  <section class="slide"><div class="inner">
+    <div class="kicker">Positionnement · repères publiés (Task 1)</div>
+    <h2>Où on se situe</h2>
+    <div class="scale-track" role="img" aria-label="RAG simple 8B moins 17 ; zéro ; GPT-4 Turbo +7,7 ; notre fourchette +14 à +27,5 ; vainqueur +28,4">
+      <div class="range-band" style="left:66%;width:26%"></div>
+      <div class="tick" style="left:6%"><span class="dot"></span><span class="lbl below">RAG simple 8B&nbsp;−17</span></div>
+      <div class="tick" style="left:40%"><span class="dot"></span><span class="lbl above">0</span></div>
+      <div class="tick" style="left:55%"><span class="dot"></span><span class="lbl below">GPT-4T&nbsp;+7,7</span></div>
+      <div class="tick us" style="left:66%"><span class="dot"></span><span class="lbl above">Qwen&nbsp;+14</span></div>
+      <div class="tick cx" style="left:92%"><span class="dot"></span><span class="lbl above">Claude&nbsp;+27,5</span></div>
+      <div class="tick win" style="left:97%"><span class="dot"></span><span class="lbl below">vainqueur&nbsp;+28,4</span></div>
+    </div>
+    <p class="punch">Notre score vit dans <strong>la bande entre les deux juges</strong> — et son plafond touche le vainqueur mondial, qui jouait avec un modèle affiné sur le test et des bases métier pré-câblées.</p>
+  </div></section>
+
+  <!-- 7 · Pourquoi deux juges -->
+  <section class="slide"><div class="inner">
+    <div class="kicker">Fiabilité de la notation · 322 jugements re-vérifiés</div>
+    <h2>Le juge local est trop sévère — la preuve par l'exemple</h2>
+    <div class="cases">
+      <div class="case">
+        <div class="cq">Date demandée : <b>28 juillet 1949</b> — réponse « July 28, 1949 », référence « 1949-07-28 »</div>
+        <div class="verdicts"><span class="vchip qno">Qwen ✗ fausse</span><span class="vchip cok">Claude ✓ juste</span></div>
+      </div>
+      <div class="case">
+        <div class="cq">Score d'un match : réponse <b>« 2-1 »</b>, référence <b>« 2 »</b> — même information, plus complète</div>
+        <div class="verdicts"><span class="vchip qno">Qwen ✗ fausse</span><span class="vchip cok">Claude ✓ juste</span></div>
+      </div>
+      <div class="case">
+        <div class="cq">Question piège (fausse prémisse) : le système répond <b>« Non — c'était son 2ᵉ album »</b> — exactement le comportement attendu</div>
+        <div class="verdicts"><span class="vchip qno">Qwen ✗ fausse</span><span class="vchip cok">Claude ✓ juste</span></div>
+      </div>
+    </div>
+    <div class="accord" role="img" aria-label="279 accords, 43 corrections sur 322 jugements">
+      <span class="agree" style="flex:279">279 accords</span>
+      <span class="dis" style="flex:43">43 corrections</span>
+    </div>
+    <p class="note">Les 43 corrections vont <strong style="color:var(--ink)">toutes dans le même sens</strong> : Qwen refuse des réponses justes, jamais l'inverse (vérifié sur échantillons). Les scores Qwen sont donc des planchers. Chaque correction est archivée et re-vérifiable.</p>
+  </div></section>
+
+  <!-- 8 · L'escalier -->
+  <section class="slide"><div class="inner">
+    <div class="kicker">La progression · juge Qwen · mêmes 200 questions</div>
+    <h2>+8 → +14 en 48 heures</h2>
+    <div class="stairs">
+      <div class="stair">
+        <div class="bar-v" style="height:38%"><span class="sv num">+8,0</span></div>
+        <div class="sl">Point de départ<br>protocole officiel</div>
+        <div class="se">moteur historique</div>
+      </div>
+      <div class="stair">
+        <div class="bar-v" style="height:46%"><span class="sv num">+9,5</span></div>
+        <div class="sl">Corpus entier<br>+ reranking</div>
+        <div class="se">moteur historique</div>
+      </div>
+      <div class="stair">
+        <div class="bar-v" style="height:62%"><span class="sv num">+12,0</span></div>
+        <div class="sl">Nouveau moteur<br>+ contexte élargi</div>
+        <div class="se">Elasticsearch</div>
+      </div>
+      <div class="stair hero">
+        <div class="bar-v" style="height:78%"><span class="sv num">+14,0</span></div>
+        <div class="sl">+ chunking<br>parent-enfant</div>
+        <div class="se">Elasticsearch</div>
+      </div>
+    </div>
+    <p class="note">Chaque marche est mesurée sur les mêmes 200 questions, même juge. Le retrieval Elasticsearch est vérifié sain à chaque étape : 86,7 % des pages de référence retrouvées, 82,5 % de précision en tête de classement avec reranking.</p>
+  </div></section>
+
+  <!-- 9 · Pourquoi changer de moteur -->
+  <section class="slide"><div class="inner">
+    <div class="kicker">La décision · août 2026</div>
+    <h2>Pourquoi changer de moteur : une enquête, pas un pari</h2>
+    <div class="story">
+      <div class="srow"><span class="step">Incidents</span>
+        <p><strong>Crashs et gels récurrents</strong> du moteur vectoriel sous charge — jusqu'à faire échouer les benchmarks eux-mêmes.</p></div>
+      <div class="srow"><span class="step">Enquête</span>
+        <p><strong>Nous avons ouvert le code du moteur</strong> et trouvé la cause racine : un cache de lecture jamais invalidé, qui lit de la mémoire libérée.</p></div>
+      <div class="srow"><span class="step">Correctifs</span>
+        <p><strong>3 correctifs proposés au projet d'origine</strong> (pull requests publiques) — l'expertise reste acquise, quel que soit le moteur.</p></div>
+      <div class="srow"><span class="step">Audit</span>
+        <p><strong>7 faiblesses structurelles</strong> identifiées au-delà du crash : le maintien exigeait un échafaudage permanent de contournements.</p></div>
+      <div class="srow"><span class="step">Décision</span>
+        <p><strong>Bencher la sortie</strong> plutôt que s'enfoncer : mêmes questions, même corpus, les deux moteurs face à face. Les chiffres ont tranché.</p></div>
+    </div>
+  </div></section>
+
+  <!-- 9b · Le moteur à l'épreuve -->
+  <section class="slide"><div class="inner">
+    <div class="kicker">Le benchmark comme crash-test · décision moteur</div>
+    <h2>Elasticsearch gagne aussi la bataille opérationnelle</h2>
+    <div class="solid">
+      <div><div class="k">Ingestion des 960 pages</div><div class="v num">45 min</div><div class="n">1 seul run, 0 échec — l'ancien moteur n'y est jamais parvenu sans reprises ni interventions</div></div>
+      <div><div class="k">Latence par question</div><div class="v num">−30 %</div><div class="n">2,8 s vs 3,9 s en médiane sur corpus entier, à pipeline égal</div></div>
+      <div><div class="k">Incidents moteur</div><div class="v num">0</div><div class="n">vs segfaults et gels récurrents — cause racine identifiée par nous, correctifs proposés au projet d'origine</div></div>
+    </div>
+    <p class="note">Décision : migration engagée vers Elasticsearch. Tous les contournements construits autour de l'ancien moteur (sémaphores d'écriture, fenêtre de maintenance nocturne, retries) deviennent inutiles — de la dette en moins.</p>
+  </div></section>
+
+  <!-- 10 · Ce que le switch débloque -->
+  <section class="slide"><div class="inner">
+    <div class="kicker">Au-delà des scores</div>
+    <h2>Ce que le nouveau moteur débloque</h2>
+    <div class="gains">
+      <div class="gain">
+        <div class="gt"><span class="hl">La toute dernière version</span> — pas prévu</div>
+        <div class="gd">RAGFlow ne supporte officiellement qu'Elasticsearch 8.x. Nous avons validé la 9.5.2 (sortie 2026) nous-mêmes : 2 incompatibilités trouvées et corrigées à la racine, en amont de tout incident.</div>
+      </div>
+      <div class="gain">
+        <div class="gt"><span class="hl">Les nouveautés vectorielles 9.x</span> en réserve</div>
+        <div class="gd">Quantization BBQ, recherche filtrée ACORN, mode VectorDB auto-calibré : des gains de perf et de coût activables sans re-migration.</div>
+      </div>
+      <div class="gain">
+        <div class="gt"><span class="hl">Parent-enfant</span> enfin possible</div>
+        <div class="gd">La technique du vainqueur mondial crashait l'ancien moteur. Sur Elasticsearch : validée, +2 points, hallucination en baisse.</div>
+      </div>
+      <div class="gain">
+        <div class="gt"><span class="hl">Multi-tenant serein</span></div>
+        <div class="gd">Écritures concurrentes natives : plusieurs clients peuvent ingérer pendant qu'un autre requête — un non-événement, là où c'était un scénario à risque.</div>
+      </div>
+      <div class="gain">
+        <div class="gt"><span class="hl">15 ans de maturité</span></div>
+        <div class="gd">Scaling horizontal, haute dispo, monitoring, expertise disponible sur le marché — l'écosystème le plus éprouvé du domaine.</div>
+      </div>
+      <div class="gain">
+        <div class="gt"><span class="hl">De la dette en moins</span></div>
+        <div class="gd">Sémaphores d'écriture, fenêtre de maintenance nocturne, redémarrages planifiés : tout l'échafaudage de contournements part à la benne.</div>
+      </div>
+    </div>
+  </div></section>
+
+  <!-- 11 · Le vainqueur -->
+  <section class="slide"><div class="inner">
+    <div class="kicker">Analyse du vainqueur mondial (+28,4)</div>
+    <h2>L'écart s'est refermé</h2>
+    <div class="why">
+      <div class="wrow"><span class="tag same">identique</span>
+        <p><strong>Le reranker</strong> — le même modèle que le nôtre, et il fonctionne encore mieux sur Elasticsearch.</p></div>
+      <div class="wrow"><span class="tag same">désormais acquis</span>
+        <p><strong>Le chunking parent-enfant — leur technique clé.</strong> Réimplémenté et validé chez nous : +2 points, hallucination en baisse.</p></div>
+      <div class="wrow"><span class="tag nope">non transposable</span>
+        <p><strong>Modèle affiné sur les questions du test.</strong> Impossible pour un produit qui ne connaît pas les questions à l'avance.</p></div>
+      <div class="wrow"><span class="tag nope">non généralisable</span>
+        <p><strong>Bases métier pré-câblées sur les 5 domaines du test</strong> — construites à la main en connaissant les sujets.</p></div>
+    </div>
+    <p class="punch" style="margin-top:1.1rem">Il ne reste que les deux ingrédients hors-catégorie. Aux mêmes règles, notre plafond jugé (+27,5) touche leur score officiel (+28,4).</p>
+  </div></section>
+
+  <!-- 11 · Hallucination -->
+  <section class="slide"><div class="inner">
+    <div class="kicker">Le chiffre qui compte en entreprise</div>
+    <h2>Deux fois moins d'hallucinations que les RAG simples</h2>
+    <div class="duel">
+      <div class="us"><div class="dv num">15,5 – 23 %</div><div class="dl">notre plateforme (selon le juge)</div></div>
+      <div class="them"><div class="dv num">28 – 46 %</div><div class="dl">RAG simples publiés — GPT-4 Turbo inclus</div></div>
+    </div>
+    <p class="punch" style="margin-top:1.3rem">Un assistant qui dit « je ne sais pas » vaut mieux qu'un assistant qui ment avec aplomb.</p>
+  </div></section>
+
+  <!-- 12 · Détail -->
+  <section class="slide"><div class="inner">
+    <div class="kicker">Détail · meilleure configuration · juge Qwen</div>
+    <h2>Par domaine, par type</h2>
+    <div class="cols">
+      <div>
+        <h3>Domaines</h3>
+        <div class="breakdown">
+          <div class="brow2"><div class="rlabel">Finance</div><div class="bar"><i class="c" style="width:14.6%"></i><i class="m" style="width:60.4%"></i><i class="h" style="width:25%"></i></div></div>
+          <div class="brow2"><div class="rlabel">Sports</div><div class="bar"><i class="c" style="width:44.7%"></i><i class="m" style="width:42.6%"></i><i class="h" style="width:12.8%"></i></div></div>
+          <div class="brow2"><div class="rlabel">Cinéma</div><div class="bar"><i class="c" style="width:44.4%"></i><i class="m" style="width:26.7%"></i><i class="h" style="width:28.9%"></i></div></div>
+          <div class="brow2"><div class="rlabel">Ouvert</div><div class="bar"><i class="c" style="width:45.7%"></i><i class="m" style="width:34.3%"></i><i class="h" style="width:20%"></i></div></div>
+          <div class="brow2"><div class="rlabel">Musique</div><div class="bar"><i class="c" style="width:40%"></i><i class="m" style="width:28%"></i><i class="h" style="width:32%"></i></div></div>
+        </div>
+      </div>
+      <div>
+        <h3>Types de questions</h3>
+        <div class="breakdown">
+          <div class="brow2"><div class="rlabel">Simple + condition</div><div class="bar"><i class="c" style="width:42.2%"></i><i class="m" style="width:37.8%"></i><i class="h" style="width:20%"></i></div></div>
+          <div class="brow2"><div class="rlabel">Simple</div><div class="bar"><i class="c" style="width:41.5%"></i><i class="m" style="width:34%"></i><i class="h" style="width:24.5%"></i></div></div>
+          <div class="brow2"><div class="rlabel">Agrégation</div><div class="bar"><i class="c" style="width:50%"></i><i class="m" style="width:30%"></i><i class="h" style="width:20%"></i></div></div>
+          <div class="brow2"><div class="rlabel">Ensemble</div><div class="bar"><i class="c" style="width:30.4%"></i><i class="m" style="width:30.4%"></i><i class="h" style="width:39.1%"></i></div></div>
+          <div class="brow2"><div class="rlabel">Comparaison</div><div class="bar"><i class="c" style="width:33.3%"></i><i class="m" style="width:61.9%"></i><i class="h" style="width:4.8%"></i></div></div>
+          <div class="brow2"><div class="rlabel">Multi-étapes</div><div class="bar"><i class="c" style="width:41.7%"></i><i class="m" style="width:41.7%"></i><i class="h" style="width:16.7%"></i></div></div>
+          <div class="brow2"><div class="rlabel">Prémisse fausse</div><div class="bar"><i class="c" style="width:5.9%"></i><i class="m" style="width:70.6%"></i><i class="h" style="width:23.5%"></i></div></div>
+          <div class="brow2"><div class="rlabel">Post-traitement</div><div class="bar"><i class="c" style="width:33.3%"></i><i class="m" style="width:22.2%"></i><i class="h" style="width:44.4%"></i></div></div>
+        </div>
+      </div>
+    </div>
+    <p class="note">Finance : abstention massive par design — les cours « du jour » ne sont pas dans des pages statiques. Prémisse fausse : le mur du benchmark pour tout système non affiné dessus — premier point marqué (1/17, contre 0 avant).</p>
+  </div></section>
+
+  <!-- 13 · Méthode -->
+  <section class="slide"><footer class="inner">
+    <div class="kicker">Méthode &amp; sources</div>
+    <p><strong style="color:var(--ink)">Protocole.</strong> Prompts et grille de notation repris verbatim de <code>facebookresearch/CRAG</code>. 10 runs appariés sur les mêmes 200 questions, deux moteurs (Infinity v0.7.3, Elasticsearch 9.5.2), plateforme v0.9.13 → v0.9.15. Corpus : 960 pages ré-ingérées à l'identique sur chaque moteur.</p>
+    <p><strong style="color:var(--ink)">Génération.</strong> 100 % locale et souveraine : Qwen 27 Mds (vLLM), embeddings bge-m3, reranker bge-reranker-v2-m3. Aucun appel à un service externe pendant les runs.</p>
+    <p><strong style="color:var(--ink)">Juges.</strong> Qwen 3.6 27B (local) sur tous les runs ; contre-expertise Claude — rôle strictement limité à la notation — sur 322 jugements (4 runs), fichiers d'audit commités, chaque correction re-vérifiable item par item. Le leaderboard officiel utilise GPT-4 : comparaisons indicatives, biais borné par le double jugement.</p>
+    <p><strong style="color:var(--ink)">Références.</strong> CRAG : <code>arXiv 2406.04744</code> · Vainqueur KDD Cup'24 : <code>arXiv 2410.00005</code>.</p>
+  </footer></section>
+
+</div>
+
+<div class="nav">
+  <button id="prev" aria-label="Diapositive précédente">←</button>
+  <span class="cnt" id="cnt"></span>
+  <button id="next" aria-label="Diapositive suivante">→</button>
+</div>
+
+<script>
+(function () {
+  var slides = Array.prototype.slice.call(document.querySelectorAll('.slide'));
+  var dots = document.getElementById('dots');
+  var cnt = document.getElementById('cnt');
+  var cur = 0;
+  slides.forEach(function () { dots.appendChild(document.createElement('i')); });
+  var dotEls = Array.prototype.slice.call(dots.children);
+
+  function show(i) {
+    if (i < 0) i = 0;
+    if (i > slides.length - 1) i = slides.length - 1;
+    slides.forEach(function (s, k) {
+      s.classList.toggle('active', k === i);
+      s.classList.toggle('prev', k < i);
+    });
+    dotEls.forEach(function (d, k) { d.classList.toggle('on', k <= i); });
+    cnt.textContent = (i + 1) + ' / ' + slides.length;
+    cur = i;
+    try { history.replaceState(null, '', '#' + (i + 1)); } catch (e) {}
+  }
+
+  document.getElementById('prev').addEventListener('click', function () { show(cur - 1); });
+  document.getElementById('next').addEventListener('click', function () { show(cur + 1); });
+  document.addEventListener('keydown', function (e) {
+    if (e.key === 'ArrowRight' || e.key === 'PageDown' || e.key === ' ') { e.preventDefault(); show(cur + 1); }
+    if (e.key === 'ArrowLeft' || e.key === 'PageUp') { e.preventDefault(); show(cur - 1); }
+    if (e.key === 'Home') { e.preventDefault(); show(0); }
+    if (e.key === 'End') { e.preventDefault(); show(slides.length - 1); }
+  });
+  var tx = null;
+  document.addEventListener('touchstart', function (e) { tx = e.changedTouches[0].clientX; }, {passive: true});
+  document.addEventListener('touchend', function (e) {
+    if (tx === null) return;
+    var dx = e.changedTouches[0].clientX - tx;
+    if (Math.abs(dx) > 60) show(cur + (dx < 0 ? 1 : -1));
+    tx = null;
+  }, {passive: true});
+
+  var start = parseInt((location.hash || '').replace('#', ''), 10);
+  show(isNaN(start) ? 0 : start - 1);
+})();
+</script>
