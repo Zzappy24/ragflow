@@ -457,7 +457,39 @@
     </div>
   </div></section>
 
-  <!-- 11 · Le vainqueur -->
+  <!-- 11 · Scalabilité -->
+  <section class="slide"><div class="inner">
+    <div class="kicker">Trajectoire · du POC au SaaS multi-clients</div>
+    <h2>Un moteur qui grandit avec la plateforme</h2>
+    <div class="gains">
+      <div class="gain">
+        <div class="gt"><span class="hl">La lecture scale</span> en ajoutant des nœuds</div>
+        <div class="gd">Index répliqués = débit de requêtes horizontal. L'ancien moteur : un seul process pour tous les clients — jusqu'à geler les écrans pendant les ingestions.</div>
+      </div>
+      <div class="gain">
+        <div class="gt"><span class="hl">L'écriture scale</span> avec les workers</div>
+        <div class="gd">On bridait l'ancien moteur à 2 écrivains pour le protéger. Désormais le débit d'ingestion suit le nombre de workers — qui s'auto-ajustent déjà à la demande.</div>
+      </div>
+      <div class="gain">
+        <div class="gt"><span class="hl">Des corpus plus gros que la RAM</span></div>
+        <div class="gd">Les index vectoriels 9.x peuvent servir depuis le disque (DiskBBQ) : le plafond mémoire qui dimensionnait l'ancien moteur saute.</div>
+      </div>
+      <div class="gain">
+        <div class="gt"><span class="hl">Sauvegarde &amp; reprise natives</span></div>
+        <div class="gd">Snapshots incrémentaux vers le stockage objet, par API : un vrai plan de reprise d'activité à proposer aux clients — introuvable avant.</div>
+      </div>
+      <div class="gain">
+        <div class="gt"><span class="hl">Un index par base de connaissances</span></div>
+        <div class="gd">Suppression instantanée, quota de stockage mesurable en un appel, placement par client possible : la facturation à l'usage devient simple.</div>
+      </div>
+      <div class="gain">
+        <div class="gt"><span class="hl">Analytics en prime</span></div>
+        <div class="gd">Le même moteur sait agréger : statistiques d'usage et tableaux de bord clients sans infrastructure supplémentaire.</div>
+      </div>
+    </div>
+  </div></section>
+
+  <!-- 12 · Le vainqueur -->
   <section class="slide"><div class="inner">
     <div class="kicker">Analyse du vainqueur mondial (+28,4)</div>
     <h2>L'écart s'est refermé</h2>
