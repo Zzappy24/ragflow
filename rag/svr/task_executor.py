@@ -269,6 +269,23 @@ def set_progress(task_id, from_page=0, to_page=-1, prog=None, msg="Processing...
         logging.exception(f"set_progress({task_id}), progress: {prog}, progress_msg: {msg}, got exception: {e}")
 
 
+# CUSTOM B2B SaaS — v0.9.16 queue-vanished fix : un écartement n'est
+# définitif que si la row task a disparu (re-run l'a remplacée) ou si les
+# tentatives sont épuisées (get_task a déjà marqué le doc en échec, bruyant).
+# Tout le reste est transitoire (contention row-lock) → on garde le message.
+def _is_task_permanently_gone(task_id: str) -> bool:
+    try:
+        found, row = TaskService.get_by_id(task_id)
+        if not found or row is None:
+            return True
+        return (row.retry_count or 0) >= 3
+    except Exception:
+        # DB indisponible : impossible de trancher — on garde le message
+        # (re-livraison plus tard) plutôt que risquer une perte définitive.
+        logging.warning(f"_is_task_permanently_gone({task_id}): DB check failed, keeping message", exc_info=True)
+        return False
+
+
 async def collect():
     global CONSUMER_NAME, DONE_TASKS, FAILED_TASKS
     global UNACKED_ITERATOR, _UNACKED_LAST_SCAN
@@ -352,9 +369,20 @@ async def collect():
         canceled = has_canceled(task["id"])
     if not task or canceled:
         state = "is unknown" if not task else "has been cancelled"
-        FAILED_TASKS += 1
         logging.warning(f"collect task {msg['id']} {state}")
-        redis_msg.ack()
+        # CUSTOM B2B SaaS — v0.9.16 queue-vanished fix (ACK destructeur).
+        # get_task renvoie aussi None sur CONTENTION (row-lock NOWAIT : un
+        # pair traite déjà la tâche). L'ancien ack inconditionnel consommait
+        # alors le message — si le pair mourait ensuite en plein traitement,
+        # la tâche était perdue à JAMAIS (doc figé RUNNING à ~0.008, repro
+        # 2026-08-28/29). On n'ACK que les écartements PERMANENTS (row
+        # supprimée, retries épuisés, annulée) ; la contention laisse le
+        # message en PEL — le propriétaire finit, ou le reclaim re-livre.
+        if canceled or _is_task_permanently_gone(msg["id"]):
+            FAILED_TASKS += 1
+            redis_msg.ack()
+        else:
+            logging.info(f"collect task {msg['id']}: transient miss (contention) — message left pending for its owner")
         return None, None
 
     task_type = msg.get("task_type", "")

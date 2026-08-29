@@ -934,6 +934,15 @@ class DocumentService(CommonService):
 
         cls._sync_progress(docs)
 
+        # CUSTOM B2B SaaS — v0.9.16 queue-vanished fix : filet de re-mise en
+        # file des tâches jamais livrées (throttlé à 60 s en interne, no-op
+        # en fonctionnement normal). Voir task_service.requeue_vanished_tasks.
+        try:
+            from api.db.services.task_service import requeue_vanished_tasks
+            requeue_vanished_tasks()
+        except Exception:
+            logging.warning("update_progress: requeue_vanished_tasks failed", exc_info=True)
+
     @classmethod
     @DB.connection_context()
     def update_progress_immediately(cls, docs: list[dict]):

@@ -16,6 +16,7 @@
 import logging
 import os
 import random
+import time
 import xxhash
 from datetime import datetime
 
@@ -513,6 +514,84 @@ def queue_tasks(doc: dict, bucket: str, name: str, priority: int):
         assert REDIS_CONN.queue_product(
             settings.get_svr_queue_name(priority, suffix), message=unfinished_task
         ), "Can't access Redis. Please check the Redis' status."
+
+
+# CUSTOM B2B SaaS — v0.9.16 queue-vanished fix : filet de re-mise en file.
+# Trois incidents (2026-08-19/28/29) : des messages entrés dans le stream ne
+# sont jamais livrés (retry_count=0, doc figé RUNNING à ~0.008) — pertes dans
+# la couche reclaim sous burst + recycles. Les causes connues sont corrigées
+# (pagination XAUTOCLAIM, ACK sur contention) ; ce filet rattrape toute
+# variante restante : une tâche jamais reçue, plus vieille que min_age_s,
+# alors que sa file est VIDE (lag+pending=0 → le message a matériellement
+# disparu, pas de doublon possible), est re-queuée. Pin :
+# test/multitenant/test_queue_vanished_fixes.py
+_REQUEUE_MIN_AGE_S = int(os.environ.get("TASK_REQUEUE_MIN_AGE_S", "600"))
+_REQUEUE_CHECK_INTERVAL_S = 60
+_requeue_last_check = {"ts": 0.0}
+
+
+def should_requeue_vanished(age_s: float, queue_backlog: int, min_age_s: int = _REQUEUE_MIN_AGE_S) -> bool:
+    """Décision pure (testable) : re-queuer une tâche jamais livrée ?
+
+    - age_s : ancienneté de la row task ;
+    - queue_backlog : lag (non livrés) + pending (livrés non ackés) de sa file.
+    File non vide → on attend (backlog légitime, re-queuer dupliquerait).
+    File vide + tâche vieille → le message a disparu : re-queue certain.
+    """
+    return age_s >= min_age_s and queue_backlog == 0
+
+
+def requeue_vanished_tasks() -> int:
+    """Re-queue les tâches orphelines (jamais livrées, file vide). Throttlé.
+
+    Appelé depuis le cycle update_progress de l'api-server. Retourne le
+    nombre de tâches re-queuées (0 la plupart du temps).
+    """
+    now = time.time()
+    if now - _requeue_last_check["ts"] < _REQUEUE_CHECK_INTERVAL_S:
+        return 0
+    _requeue_last_check["ts"] = now
+
+    from common.constants import SVR_CONSUMER_GROUP_NAME
+
+    orphans = list(
+        Task.select(Task, Document.parser_id)
+        .join(Document, on=(Task.doc_id == Document.id))
+        .where(
+            (Document.run == TaskStatus.RUNNING.value)
+            & (Task.retry_count == 0)
+            & (Task.progress <= 0.01)
+            & (Task.create_time < int((now - _REQUEUE_MIN_AGE_S) * 1000))
+        )
+        .limit(200)
+        .objects()
+    )
+    if not orphans:
+        return 0
+
+    # Backlog par file — un seul appel Redis par file concernée.
+    backlogs: dict[str, int] = {}
+    requeued = 0
+    for t in orphans:
+        suffix = "common" if t.parser_id != "resume" else "resume"
+        queue = settings.get_svr_queue_name(t.priority or 0, suffix)
+        if queue not in backlogs:
+            info = REDIS_CONN.queue_info(queue, SVR_CONSUMER_GROUP_NAME) or {}
+            backlogs[queue] = int(info.get("lag") or 0) + int(info.get("pending") or 0)
+        age_s = now - (t.create_time or 0) / 1000
+        if not should_requeue_vanished(age_s, backlogs[queue]):
+            continue
+        msg = t.to_dict()
+        msg.pop("progress_msg", None)
+        msg.pop("chunk_ids", None)
+        if REDIS_CONN.queue_product(queue, message=msg):
+            requeued += 1
+            backlogs[queue] += 1  # le message re-queué compte dans le backlog
+            logging.warning(
+                f"requeue_vanished_tasks: task {t.id} (doc {t.doc_id}) re-queued after "
+                f"{age_s:.0f}s never-delivered on empty queue {queue}"
+            )
+    return requeued
 
 
 def reuse_prev_task_chunks(task: dict, prev_tasks: list[dict], chunking_config: dict):

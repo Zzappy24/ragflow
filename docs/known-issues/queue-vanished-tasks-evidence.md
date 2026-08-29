@@ -77,3 +77,24 @@ XPENDING vide, 6 « is unknown » loggés) — même mécanisme, moteur indiffé
   filet update_progress qui re-queue les tâches retry=0 sans message
   pending âgées de > N min. Reproducteur à écrire sur le harnais
   test_task_lease_integration (Redis réel + burst + slots saturés).
+
+## FIX LIVRÉ (v0.9.16, 2026-08-29)
+
+1. **Pagination XAUTOCLAIM** (`rag/utils/redis_conn.py::xautoclaim_all`) — le
+   scan continue jusqu'au curseur "0-0" ; l'ancien `break` sur page vide
+   laissait les orphelins derrière une page de baux frais irréclamables.
+2. **ACK non destructeur** (`rag/svr/task_executor.py::collect`) — un message
+   « unknown » n'est ACKé que si l'écartement est PERMANENT (row supprimée,
+   retry>=3, annulée — garde `_is_task_permanently_gone`, fail-safe : doute
+   DB → on garde). La contention row-lock laisse le message au propriétaire.
+   C'était le mécanisme le plus destructeur : ack sur contention + mort du
+   pair gagnant = tâche perdue à jamais.
+3. **Filet de re-mise en file** (`task_service.requeue_vanished_tasks`,
+   appelé par `document_service.update_progress`, throttlé 60 s) — tâche
+   jamais livrée (retry=0, progress≤0.01) + >10 min + file VIDE
+   (lag+pending=0 → le message a matériellement disparu) → re-queue, log
+   WARNING. Aucun doublon possible (la garde file-vide l'exclut).
+
+Pins : `test/multitenant/test_queue_vanished_fixes.py` (10 tests).
+Non traité (accepté) : le « drain au recycle » — devenu du confort, les
+protections 1-3 rendent la perte impossible même sans drain.

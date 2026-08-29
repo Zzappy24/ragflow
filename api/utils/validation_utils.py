@@ -412,6 +412,13 @@ class ParserConfig(Base):
     html4excel: Annotated[bool, Field(default=False)]
     layout_recognize: Annotated[str, Field(default="DeepDOC")]
     parent_child: Annotated[ParentChildConfig, Field(default_factory=lambda: ParentChildConfig(use_parent_child=False))]
+    # CUSTOM B2B SaaS — v0.9.16 : clés parent-child au niveau naive.py
+    # (enable_children/children_delimiter, lues par build_chunks). Absentes du
+    # modèle, la création de dataset via l'API les rejetait ("Extra inputs are
+    # not permitted") alors que l'UI/DB les acceptent — constaté au bench PC
+    # du 2026-08-29 (config posée en SQL faute d'API).
+    enable_children: Annotated[bool | None, Field(default=None)]
+    children_delimiter: Annotated[str | None, Field(default=None)]
     raptor: Annotated[RaptorConfig, Field(default_factory=lambda: RaptorConfig(use_raptor=False))]
     tag_kb_ids: Annotated[list[str], Field(default_factory=list)]
     topn_tags: Annotated[int, Field(default=1, ge=1, le=10)]

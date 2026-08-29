@@ -75,6 +75,33 @@ class RedisMsg:
         return self.__msg_id
 
 
+# CUSTOM B2B SaaS — v0.9.16 queue-vanished fix (pagination XAUTOCLAIM).
+# L'ancien scan s'arrêtait sur `not claimed` : une page sans message éligible
+# (ex. baux frais des tâches en vol, renouvelés toutes les 60 s) STOPPAIT le
+# tour alors que le curseur n'avait pas fini — les orphelins situés derrière
+# n'étaient jamais réclamés (famine, ~4 % des tâches sous burst — dossier
+# docs/known-issues/queue-vanished-tasks-evidence.md). Seul le curseur "0-0"
+# marque la fin du scan. Fonction module-level pure pour être testable
+# (test/multitenant/test_queue_vanished_fixes.py).
+def xautoclaim_all(redis_client, queue_name: str, group_name: str, consumer_name: str,
+                   min_idle_ms: int = 300_000, count: int = 100, max_pages: int = 1000) -> int:
+    cursor = "0-0"
+    claimed_total = 0
+    for _ in range(max_pages):
+        result = redis_client.xautoclaim(queue_name, group_name, consumer_name,
+                                         min_idle_time=min_idle_ms, start_id=cursor, count=count)
+        # result = (next_cursor, [claimed_messages], [deleted_ids])
+        next_cursor = result[0]
+        claimed = result[1] if len(result) > 1 else []
+        claimed_total += len(claimed)
+        if isinstance(next_cursor, bytes):
+            next_cursor = next_cursor.decode()
+        if next_cursor == "0-0":
+            break
+        cursor = next_cursor
+    return claimed_total
+
+
 @singleton
 class RedisDB:
     lua_delete_if_equal = None
@@ -504,18 +531,7 @@ class RedisDB:
                 # another consumer — reasonable threshold given the longest
                 # legitimate task (table analysis on a 100-page PDF) is ~3 min.
                 try:
-                    cursor = "0-0"
-                    claimed_total = 0
-                    while True:
-                        result = self.REDIS.xautoclaim(queue_name, group_name, consumer_name, min_idle_time=300_000, start_id=cursor, count=100)
-                        # result = (next_cursor, [claimed_messages], [deleted_ids])
-                        next_cursor = result[0]
-                        claimed = result[1] if len(result) > 1 else []
-                        if claimed:
-                            claimed_total += len(claimed)
-                        if next_cursor == "0-0" or not claimed:
-                            break
-                        cursor = next_cursor
+                    claimed_total = xautoclaim_all(self.REDIS, queue_name, group_name, consumer_name)
                     if claimed_total:
                         logging.info(f"RedisDB.get_unacked_iterator XAUTOCLAIM {queue_name} → {consumer_name}: claimed {claimed_total} stale msgs")
                 except Exception as e:
