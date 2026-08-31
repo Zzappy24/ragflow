@@ -253,6 +253,10 @@
 
   footer p { margin: .35rem 0; color: var(--ink-faint); font-size: .85rem; max-width: 72ch; }
   footer code { font-family: "IBM Plex Mono", monospace; background: var(--surface-2); padding: .1rem .38rem; border-radius: 4px; color: var(--ink-soft); }
+  .paraph { position: fixed; right: 1.1rem; bottom: .9rem; z-index: 9;
+    font-family: "IBM Plex Mono", monospace; font-size: .72rem; font-weight: 600;
+    letter-spacing: .08em; color: var(--ink-faint); opacity: .8; }
+  @media print { .paraph { position: absolute; } .slide { position: relative; } }
 </style>
 
 <div class="dots" id="dots"></div>
@@ -263,6 +267,7 @@
     <div class="kicker">Benchmark indépendant · CRAG (Meta) · 27–29 août 2026</div>
     <h1 style="font-size:clamp(2.1rem,5.6vw,3.6rem);font-weight:800;letter-spacing:-.025em">La plateforme RAG<br>à l'épreuve du benchmark<br>de référence</h1>
     <p class="punch" style="margin:1.4rem auto 0">200 questions réelles · 960 pages web · deux moteurs de recherche comparés<br>protocole public de la compétition mondiale KDD Cup 2024</p>
+    <p style="margin-top:1.6rem;font-family:'IBM Plex Mono',monospace;font-size:.85rem;color:var(--ink-soft)">Yoann Sapienza · Groupe Cyllene</p>
     <p class="note" style="margin-left:auto;margin-right:auto">Naviguez avec les flèches ← →</p>
   </div></section>
 
@@ -620,6 +625,7 @@
 
 </div>
 
+<span class="paraph" aria-hidden="true">YS</span>
 <div class="nav">
   <button id="prev" aria-label="Diapositive précédente">←</button>
   <span class="cnt" id="cnt"></span>
