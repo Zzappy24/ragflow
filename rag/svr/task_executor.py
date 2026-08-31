@@ -76,7 +76,7 @@ import exceptiongroup
 import faulthandler
 import numpy as np
 from peewee import DoesNotExist
-from common.constants import LLMType, ParserType, PipelineTaskType
+from common.constants import LLMType, MAXIMUM_PAGE_NUMBER, ParserType, PipelineTaskType
 from api.db.services.document_service import DocumentService
 from api.db.services.doc_metadata_service import DocMetadataService
 from api.db.services.llm_service import LLMBundle
@@ -247,7 +247,11 @@ def set_progress(task_id, from_page=0, to_page=-1, prog=None, msg="Processing...
 
         if to_page > 0:
             if msg:
-                if from_page < to_page:
+                # CUSTOM B2B SaaS — n'affiche la plage que pour un VRAI découpage
+                # par pages : to_page = MAXIMUM_PAGE_NUMBER (×1000 côté task) est
+                # le sentinel « tout le document » et fuyait dans l'UI en
+                # « Page(1~10000001) » (constaté 2026-08-31).
+                if from_page < to_page < MAXIMUM_PAGE_NUMBER:
                     msg = f"Page({from_page + 1}~{to_page + 1}): " + msg
         if msg:
             msg = datetime.now().strftime("%H:%M:%S") + " " + msg
