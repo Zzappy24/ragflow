@@ -340,7 +340,11 @@
       <div class="tick cx" style="left:92%"><span class="dot"></span><span class="lbl above">jugé Claude&nbsp;+27,5</span></div>
       <div class="tick win" style="left:97%"><span class="dot"></span><span class="lbl below">vainqueur&nbsp;+28,4</span></div>
     </div>
-    <p class="punch">Notre score vit dans <strong>la bande entre les deux juges</strong>, et son plafond touche le vainqueur mondial, qui jouait avec un modèle affiné sur le test et des bases métier pré-câblées.</p>
+    <p class="punch">En corsant le test au-delà du protocole officiel, notre score vit dans <strong>la bande entre les deux juges</strong>, et son plafond touche le vainqueur mondial, qui jouait avec un modèle affiné sur le test, des bases métier pré-câblées, et ses 5 pages servies d'office.</p>
+    <ul class="bullets">
+      <li><strong>Nous avons corsé l'épreuve</strong> : le protocole officiel fournit à chaque question ses 5 bonnes pages ; notre mode produit doit d'abord les retrouver parmi les 960 du corpus. Espace de recherche ×192.</li>
+      <li>Et le score y est <strong>plus haut</strong> : +14 en jouant la partie difficile, contre +8,5 au protocole. La recherche est un atout, pas un handicap.</li>
+    </ul>
   </div></section>
 
   <!-- 7 · Pourquoi deux juges -->
@@ -395,7 +399,7 @@
       </div>
     </div>
     <div class="jlegend" style="margin-top:.8rem"><span style="color:var(--qwen);font-weight:700">■ juge Qwen</span><span style="color:var(--claude);font-weight:700">■ contre-expertise Claude</span></div>
-    <p class="note">Chaque marche est mesurée sur les mêmes 200 questions. Le retrieval Elasticsearch est vérifié sain à chaque étape : 86,7 % des pages de référence retrouvées, 82,5 % de précision en tête de classement avec reranking.</p>
+    <p class="note">Chaque marche est mesurée sur les mêmes 200 questions ; à partir de la 2ᵉ, le système cherche dans tout le corpus (plus difficile que le protocole, qui fournit les bonnes pages). Le retrieval Elasticsearch est vérifié sain à chaque étape : 86,7 % des pages de référence retrouvées, 82,5 % de précision en tête de classement avec reranking.</p>
   </div></section>
 
   <!-- 9 · Pourquoi changer de moteur -->
