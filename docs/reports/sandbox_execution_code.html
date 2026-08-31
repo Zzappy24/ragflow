@@ -1,0 +1,112 @@
+<!doctype html>
+<html lang="fr">
+<head>
+<meta charset="utf-8">
+<title>Sandbox d'exécution de code</title>
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Archivo:wght@600;700;800&family=IBM+Plex+Mono:wght@500;600&family=IBM+Plex+Sans:wght@400;500;600&display=swap">
+<style>
+  @page { size: A4; margin: 16mm 18mm; }
+  :root {
+    --ink: #1a2530; --ink-soft: #46545f; --ink-faint: #6d7a84;
+    --hair: #dde3e8; --accent: #0e7c6b; --accent-soft: #e7f3f0;
+    --warn: #b0872a; --danger: #c2544b; --surface: #f6f8f9;
+  }
+  * { box-sizing: border-box; }
+  body { margin: 0 auto; max-width: 176mm; background: #fff; color: var(--ink);
+    font-family: "IBM Plex Sans", system-ui, sans-serif; font-size: 10.5pt; line-height: 1.55;
+    -webkit-print-color-adjust: exact; print-color-adjust: exact; }
+  h1, h2, h3 { font-family: "Archivo", sans-serif; letter-spacing: -.015em; }
+  h1 { font-size: 22pt; font-weight: 800; margin: 0 0 2mm; }
+  h2 { font-size: 13pt; font-weight: 700; margin: 8mm 0 2.5mm; color: var(--ink);
+    border-bottom: 2px solid var(--accent); padding-bottom: 1.2mm; }
+  h3 { font-size: 10.5pt; font-weight: 700; margin: 4mm 0 1mm; }
+  p { margin: 0 0 2.5mm; }
+  .kicker { font-family: "IBM Plex Mono", monospace; font-size: 7.5pt; font-weight: 600;
+    letter-spacing: .16em; text-transform: uppercase; color: var(--accent); margin: 10mm 0 2mm; }
+  .byline { font-family: "IBM Plex Mono", monospace; font-size: 8pt; color: var(--ink-faint); margin-bottom: 8mm; }
+  .lead { font-size: 11.5pt; color: var(--ink-soft); max-width: 62ch; }
+  .box { background: var(--surface); border: 1px solid var(--hair); border-left: 3px solid var(--accent);
+    border-radius: 6px; padding: 3mm 4mm; margin: 3mm 0; }
+  .box.danger { border-left-color: var(--danger); }
+  .box.warn { border-left-color: var(--warn); }
+  table { border-collapse: collapse; width: 100%; margin: 3mm 0; font-size: 9.5pt; }
+  th, td { border: 1px solid var(--hair); padding: 2mm 3mm; text-align: left; vertical-align: top; }
+  th { background: var(--surface); font-family: "IBM Plex Mono", monospace; font-size: 8pt;
+    text-transform: uppercase; letter-spacing: .06em; color: var(--ink-faint); }
+  code { font-family: "IBM Plex Mono", monospace; font-size: 9pt; background: var(--surface);
+    padding: .3mm 1.2mm; border-radius: 3px; }
+  ul { margin: 1mm 0 3mm; padding-left: 5mm; }
+  li { margin: 1mm 0; }
+  .cols2 { display: grid; grid-template-columns: 1fr 1fr; gap: 4mm; }
+  .flow { display: flex; align-items: stretch; gap: 2mm; margin: 4mm 0; }
+  .fstep { flex: 1; background: var(--surface); border: 1px solid var(--hair); border-radius: 6px;
+    padding: 2.5mm 3mm; font-size: 8.5pt; }
+  .fstep b { display: block; font-size: 9pt; margin-bottom: .5mm; }
+  .farrow { align-self: center; color: var(--ink-faint); font-family: "IBM Plex Mono", monospace; }
+  .paraph { position: fixed; bottom: 6mm; right: 0; font-family: "IBM Plex Mono", monospace;
+    font-size: 8pt; font-weight: 600; color: var(--ink-faint); }
+  .avoid-break { break-inside: avoid; }
+</style>
+</head>
+<body>
+<span class="paraph">YS</span>
+
+<div class="kicker">Plateforme RAG Cyllene · Note d'architecture · Août 2026</div>
+<h1>Sandbox d'exécution de code</h1>
+<div class="byline">Yoann Sapienza · Groupe Cyllene</div>
+
+<p class="lead">Nos agents IA savent désormais <strong>écrire et exécuter du code</strong> pour analyser des données : statistiques, requêtes SQL, cartes de contrôle, rapports. Cette note explique pourquoi cette capacité exigeait un environnement d'exécution isolé, comment il est construit, et ce qui a été validé en production.</p>
+
+<h2>1. Le besoin : des agents qui calculent au lieu d'estimer</h2>
+<p>Un modèle de langage seul ne sait pas compter de façon fiable : demandez-lui une moyenne sur 90&nbsp;000 mesures et il produira une estimation plausible, pas un résultat. La seule réponse rigoureuse est de lui faire <strong>écrire un programme</strong> qui calcule sur les vraies données, puis d'interpréter le résultat réel. C'est ce que fait notre agent data : il télécharge le fichier du client (via une URL interne à durée de vie courte), exécute une recette d'analyse (Python + SQL DuckDB), et rédige son rapport à partir des chiffres exacts — graphiques compris, affichés directement dans la conversation.</p>
+
+<h2>2. Le risque : du code généré par un modèle est du code non fiable</h2>
+<div class="box danger">
+<p style="margin:0"><strong>Principe de sécurité :</strong> tout code écrit par un modèle doit être traité comme du code potentiellement hostile — qu'il soit défaillant par accident, ou malveillant parce qu'un utilisateur a manipulé le modèle pour le produire (injection de prompt).</p>
+</div>
+<p>Exécuter ce code dans les serveurs de la plateforme serait inacceptable : il y côtoierait les bases de données, le stockage des documents de tous les clients, et les secrets d'infrastructure. Un simple <code>rm&nbsp;-rf</code>, une boucle infinie, ou un script d'exfiltration auraient un rayon d'action maximal.</p>
+
+<h2>3. La solution : un bac à sable éphémère par exécution</h2>
+<p>Chaque exécution de code se déroule dans un <strong>Job Kubernetes jetable</strong>, créé à la demande dans un espace dédié (<code>rag-sandbox</code>), séparé du reste de la plateforme, et <strong>détruit dès la fin de l'exécution</strong>. Le code n'a jamais accès à l'environnement qui l'a lancé.</p>
+<div class="flow avoid-break">
+  <div class="fstep"><b>1 · L'agent</b>écrit la recette d'analyse (Python/SQL)</div>
+  <span class="farrow">→</span>
+  <div class="fstep"><b>2 · Job éphémère</b>créé dans l'espace isolé rag-sandbox</div>
+  <span class="farrow">→</span>
+  <div class="fstep"><b>3 · Exécution</b>sur les vraies données, ressources plafonnées</div>
+  <span class="farrow">→</span>
+  <div class="fstep"><b>4 · Résultat</b>chiffres + graphiques renvoyés à l'agent</div>
+  <span class="farrow">→</span>
+  <div class="fstep"><b>5 · Destruction</b>le bac à sable disparaît sans trace</div>
+</div>
+
+<h2>4. Les couches de défense</h2>
+<table class="avoid-break">
+<tr><th>Couche</th><th>Ce qu'elle garantit</th></tr>
+<tr><td><strong>Espace dédié</strong></td><td>Les Jobs vivent dans <code>rag-sandbox</code>, un namespace séparé des applications, des bases et des secrets de la plateforme.</td></tr>
+<tr><td><strong>Droits minimaux</strong></td><td>Le seul droit accordé au lanceur : créer et suivre des Jobs dans cet espace — rien d'autre, nulle part ailleurs. Le code exécuté, lui, n'a aucun droit sur le cluster.</td></tr>
+<tr><td><strong>Réseau verrouillé</strong></td><td>Politique « tout est interdit par défaut » : le bac à sable ne peut joindre que le stockage de fichiers interne (pour lire la donnée à analyser) et la résolution de noms. Pas d'internet, pas d'accès aux bases, pas d'accès aux autres services.</td></tr>
+<tr><td><strong>Ressources plafonnées</strong></td><td>Quota global sur l'espace (nombre de pods, CPU, mémoire) : une boucle infinie ou une bombe mémoire s'étouffe dans son bac à sable sans affecter la plateforme.</td></tr>
+<tr><td><strong>Aucun secret embarqué</strong></td><td>L'environnement d'exécution ne contient ni identifiant, ni clé, ni configuration d'infrastructure. La donnée à analyser arrive par une URL signée à durée de vie courte, valable pour ce fichier uniquement.</td></tr>
+<tr><td><strong>Image figée</strong></td><td>L'environnement Python (bibliothèques d'analyse, recettes métier) est une image versionnée et auditée — le code ne peut pas installer d'outils supplémentaires.</td></tr>
+</table>
+<div class="box">
+<p style="margin:0"><strong>Conséquence :</strong> si le modèle génère un script destructeur — ou si quelqu'un le lui fait générer — le rayon d'action se limite au bac à sable éphémère, qui est détruit de toute façon quelques secondes plus tard.</p>
+</div>
+
+<h2>5. Validé en production</h2>
+<p>Le dispositif a été éprouvé de bout en bout sur un cas réel (analyse qualité process pour FAMAT, usinage aéronautique) : 90&nbsp;000 mesures machine analysées par trois recettes (dérive SPC, backtest d'alertes, corrélation température), <strong>~25 à 30 secondes par analyse</strong>, cartes de contrôle générées et affichées dans la conversation, résultats identiques d'un run à l'autre. L'agent gère aussi les questions libres (SQL agrégé à la volée) et la vulgarisation des résultats pour un lecteur non technique.</p>
+
+<h2>6. Limites connues et prochaines étapes</h2>
+<ul>
+<li><strong>Accès stockage à resserrer</strong> : le bac à sable peut aujourd'hui joindre le service de stockage entier ; un accès par bucket est prévu avant d'ouvrir la capacité à des usages moins encadrés.</li>
+<li><strong>Résolution de noms ouverte</strong> : nécessaire au fonctionnement, elle laisse un canal d'exfiltration théorique (tunnel DNS) — connu, documenté, à traiter dans une passe de durcissement.</li>
+<li><strong>Généralisation</strong> : le même socle servira à tout agent nécessitant du calcul — analyse de fichiers clients, rapports périodiques, contrôles de cohérence de données.</li>
+</ul>
+
+<p style="margin-top:8mm; color:var(--ink-faint); font-size:8.5pt">Document interne Cyllene · les détails d'implémentation (manifests, politiques réseau, runbook d'exploitation) sont versionnés dans le dépôt de la plateforme.</p>
+
+</body>
+</html>
