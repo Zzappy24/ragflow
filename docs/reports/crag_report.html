@@ -147,6 +147,19 @@
   .bullets li { padding-left: 1.15rem; position: relative; margin: .5rem 0; color: var(--ink-soft); font-size: .95rem; }
   .bullets li::before { content: "·"; position: absolute; left: 0; color: var(--qwen); }
 
+  /* barres horizontales de positionnement */
+  .hbars { display: grid; gap: .65rem; margin: 1.6rem 0 .4rem; }
+  .hrow { display: grid; grid-template-columns: 175px 1fr; align-items: center; gap: .9rem; }
+  @media (max-width: 640px) { .hrow { grid-template-columns: 120px 1fr; } }
+  .hrow .hlabel { font-size: .86rem; color: var(--ink-soft); text-align: right; line-height: 1.25; }
+  .hrow.us .hlabel { color: var(--ink); font-weight: 600; }
+  .hrow .htrack { position: relative; height: 30px; }
+  .hrow .zero { position: absolute; top: -4px; bottom: -4px; width: 1.5px; background: var(--hair); }
+  .hbar { position: absolute; top: 3px; height: 24px; border-radius: 6px; }
+  .hval { position: absolute; top: 50%; transform: translateY(-50%); font-family: "IBM Plex Mono", monospace;
+    font-size: .82rem; font-weight: 600; white-space: nowrap; }
+  .axis-note { font-size: .74rem; color: var(--ink-faint); font-family: "IBM Plex Mono", monospace; margin-top: .5rem; }
+
   /* exemples de sévérité */
   .cases { display: grid; gap: .8rem; }
   .case { display: grid; grid-template-columns: 1fr auto; gap: .9rem; align-items: center;
@@ -330,16 +343,41 @@
   <section class="slide"><div class="inner">
     <div class="kicker">Positionnement · repères publiés (Task 1)</div>
     <h2>Où on se situe</h2>
-    <div class="scale-track" role="img" aria-label="RAG simple 8B moins 17 ; zéro ; GPT-4 Turbo +7,7 ; nous protocole +8,5 ; meilleure config +14 a +27,5 ; vainqueur +28,4">
-      <div class="range-band" style="left:66%;width:26%"></div>
-      <div class="tick" style="left:6%"><span class="dot"></span><span class="lbl below">RAG simple 8B&nbsp;−17</span></div>
-      <div class="tick" style="left:40%"><span class="dot"></span><span class="lbl above">0</span></div>
-      <div class="tick" style="left:55%"><span class="dot"></span><span class="lbl below">GPT-4T&nbsp;+7,7</span></div>
-      <div class="tick us" style="left:58%"><span class="dot"></span><span class="lbl above">protocole&nbsp;+8,5</span></div>
-      <div class="tick us" style="left:66%"><span class="dot"></span><span class="lbl below">meilleure config&nbsp;+14</span></div>
-      <div class="tick cx" style="left:92%"><span class="dot"></span><span class="lbl above">jugé Claude&nbsp;+27,5</span></div>
-      <div class="tick win" style="left:97%"><span class="dot"></span><span class="lbl below">vainqueur&nbsp;+28,4</span></div>
+    <div class="hbars" role="img" aria-label="RAG simple 8B moins 17 ; GPT-4 Turbo +7,7 ; nous protocole +8,5 ; nous meilleure config +14, juge Claude +27,5 ; vainqueur +28,4">
+      <div class="hrow">
+        <div class="hlabel">RAG simple · modèle 8B</div>
+        <div class="htrack"><span class="zero" style="left:36.2%"></span>
+          <span class="hbar" style="right:63.8%;width:36.2%;background:var(--hallu);opacity:.75"></span>
+          <span class="hval" style="right:100.0%;padding-right:.5rem;color:var(--hallu)">−17</span></div>
+      </div>
+      <div class="hrow">
+        <div class="hlabel">RAG simple · GPT-4 Turbo</div>
+        <div class="htrack"><span class="zero" style="left:36.2%"></span>
+          <span class="hbar" style="left:36.2%;width:16.4%;background:var(--ink-faint)"></span>
+          <span class="hval" style="left:52.6%;padding-left:.5rem;color:var(--ink-soft)">+7,7</span></div>
+      </div>
+      <div class="hrow us">
+        <div class="hlabel">Nous · protocole officiel</div>
+        <div class="htrack"><span class="zero" style="left:36.2%"></span>
+          <span class="hbar" style="left:36.2%;width:18.1%;background:var(--qwen)"></span>
+          <span class="hval" style="left:54.3%;padding-left:.5rem;color:var(--qwen)">+8,5</span></div>
+      </div>
+      <div class="hrow us">
+        <div class="hlabel">Nous · meilleure config<br><span style="font-weight:400;font-size:.74rem;color:var(--ink-faint)">épreuve corsée, 2 juges</span></div>
+        <div class="htrack"><span class="zero" style="left:36.2%"></span>
+          <span class="hbar" style="left:36.2%;width:29.8%;background:var(--qwen)"></span>
+          <span class="hbar" style="left:66.0%;width:28.7%;background:linear-gradient(90deg,var(--qwen-soft),var(--claude-soft));border:1px solid var(--claude)"></span>
+          <span class="hval" style="left:66.0%;padding-left:.35rem;color:var(--qwen);top:-8px">+14</span>
+          <span class="hval" style="left:94.7%;padding-left:.5rem;color:var(--claude)">+27,5</span></div>
+      </div>
+      <div class="hrow">
+        <div class="hlabel">Vainqueur KDD Cup '24</div>
+        <div class="htrack"><span class="zero" style="left:36.2%"></span>
+          <span class="hbar" style="left:36.2%;width:60.4%;background:transparent;border:1.5px solid var(--gold)"></span>
+          <span class="hval" style="left:96.6%;padding-left:.5rem;color:var(--gold)">+28,4</span></div>
+      </div>
     </div>
+    <div class="axis-note">score = % justes − % fausses · barre teal = juge Qwen · extension bleue = contre-expertise Claude</div>
     <p class="punch">En corsant le test au-delà du protocole officiel, notre score vit dans <strong>la bande entre les deux juges</strong>, et son plafond touche le vainqueur mondial, qui jouait avec un modèle affiné sur le test, des bases métier pré-câblées, et ses 5 pages servies d'office.</p>
     <ul class="bullets">
       <li><strong>Nous avons corsé l'épreuve</strong> : le protocole officiel fournit à chaque question ses 5 bonnes pages ; notre mode produit doit d'abord les retrouver parmi les 960 du corpus. Espace de recherche ×192.</li>
