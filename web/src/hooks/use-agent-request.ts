@@ -206,7 +206,7 @@ export function useFetchAllAgentList() {
         {
           params: buildAgentListParams({
             page: 1,
-            pageSize: 100000,
+            pageSize: 10000, // REST_API_MAX_PAGE_SIZE côté serveur
             canvasCategory: AgentCategory.AgentCanvas,
           }),
         },
@@ -728,9 +728,10 @@ export const useFetchSessionsByCanvasId = () => {
         page: 1,
         // CUSTOM B2B SaaS: keep userInfo.id (real user) — upstream's
         // tenantInfo.tenant_id is the user_id-as-tenant_id anti-pattern,
-        // returns empty on workspace tenants. page_size 100000 stays
-        // because the UI expects all sessions client-side.
-        page_size: 100000,
+        // returns empty on workspace tenants. page_size = plafond serveur
+        // (REST_API_MAX_PAGE_SIZE) — 100000 déclenchait le ValueError du
+        // validator à chaque refetch des sessions (constaté démo FAMAT).
+        page_size: 10000,
         exp_user_id: userInfo.id,
       });
 

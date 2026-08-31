@@ -22,7 +22,11 @@ REST_API_MAX_PAGE_SIZE = 10000
 
 
 def validate_rest_api_page_size(page_size: int) -> int:
-    """Validate REST API page_size values against the public maximum."""
-    if page_size > REST_API_MAX_PAGE_SIZE:
-        raise ValueError(f"page_size must be less than or equal to {REST_API_MAX_PAGE_SIZE}")
-    return page_size
+    """Clamp REST API page_size values to the public maximum.
+
+    CUSTOM B2B SaaS (2026-08-31) : écrête au lieu de lever. Notre propre
+    front demandait 100000 (liste agents, sessions de canvas) et chaque
+    refetch levait ValueError — une page tronquée à 10000 vaut toujours
+    mieux qu'une requête qui explose (constaté au smoke FAMAT).
+    """
+    return min(page_size, REST_API_MAX_PAGE_SIZE)

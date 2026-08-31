@@ -36,14 +36,14 @@ from api.db import FileType
 from common.constants import RetCode
 
 
-def test_rest_api_page_size_rejects_values_above_100():
+def test_rest_api_page_size_clamps_values_above_max():
+    # CUSTOM B2B SaaS 2026-08-31 : écrêtage au lieu de rejet — le front
+    # demandait 100000 et chaque refetch levait ValueError (smoke FAMAT).
     assert validate_rest_api_page_size(REST_API_MAX_PAGE_SIZE) == REST_API_MAX_PAGE_SIZE
-    with pytest.raises(ValueError, match="page_size must be less than or equal to 100"):
-        validate_rest_api_page_size(REST_API_MAX_PAGE_SIZE + 1)
-    with pytest.raises(ValidationError, match="page_size must be less than or equal to 100"):
-        ListDatasetReq(page_size=REST_API_MAX_PAGE_SIZE + 1)
-    with pytest.raises(ValidationError, match="page_size must be less than or equal to 100"):
-        ListFileReq(page_size=REST_API_MAX_PAGE_SIZE + 1)
+    assert validate_rest_api_page_size(REST_API_MAX_PAGE_SIZE + 1) == REST_API_MAX_PAGE_SIZE
+    assert validate_rest_api_page_size(100000) == REST_API_MAX_PAGE_SIZE
+    assert ListDatasetReq(page_size=REST_API_MAX_PAGE_SIZE + 1).page_size == REST_API_MAX_PAGE_SIZE
+    assert ListFileReq(page_size=REST_API_MAX_PAGE_SIZE + 1).page_size == REST_API_MAX_PAGE_SIZE
 
 
 def test_validate_immutable_fields_no_changes():
