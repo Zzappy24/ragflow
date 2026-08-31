@@ -102,14 +102,30 @@ app.secret_key = settings.get_secret_key()
 commands.register_commands(app)
 
 
+# CUSTOM B2B SaaS — slow-request log : toute requête plus lente que
+# SLOW_REQUEST_LOG_MS (défaut 500, 0 = désactivé) est loguée en WARNING avec
+# sa durée — c'est la boussole pour savoir OÙ optimiser au lieu de deviner.
+SLOW_REQUEST_LOG_MS = int(os.environ.get("SLOW_REQUEST_LOG_MS", "500"))
+
+
 @app.before_request
 async def assign_request_id():
     g.request_id = str(uuid.uuid4())
+    g._req_t0 = time.monotonic()
     logging.info("REQ %s %s %s", g.request_id, request.method, request.path)
 
 
 @app.after_request
 async def set_security_headers(response):
+    t0 = getattr(g, "_req_t0", None)
+    if SLOW_REQUEST_LOG_MS > 0 and t0 is not None:
+        elapsed_ms = (time.monotonic() - t0) * 1000
+        if elapsed_ms >= SLOW_REQUEST_LOG_MS:
+            logging.warning(
+                "SLOW %s %s %s -> %s in %.0fms",
+                getattr(g, "request_id", ""), request.method, request.path,
+                response.status_code, elapsed_ms,
+            )
     response.headers["X-Request-Id"] = getattr(g, "request_id", "")
     response.headers["X-Frame-Options"] = "DENY"
     response.headers["X-Content-Type-Options"] = "nosniff"

@@ -20,9 +20,65 @@ header, inactive workspace, or user not a member).
 Routes that prefer to fail soft can use ``maybe_active_tenant_id()`` instead.
 """
 import logging
+import os
+import time
 
 from quart import g
 from werkzeug.exceptions import Unauthorized
+
+# CUSTOM B2B SaaS — cache de résolution workspace. La résolution complète
+# coûte 2 à 4 requêtes MySQL (workspace, membership, éventuels bypass) sur
+# CHAQUE appel API — c'est la latence plancher de toute la plateforme. On
+# met en cache les résolutions POSITIVES uniquement ((ws_id, user_id) →
+# tenant_id), TTL court : une révocation de membre ou une désactivation de
+# workspace prend effet au pire en WORKSPACE_RESOLVE_CACHE_TTL_S secondes
+# (défaut 30, 0 = cache désactivé). Les refus ne sont jamais cachés (un
+# accès accordé prend effet immédiatement). Effet de bord assumé : les
+# audits SUPERUSER_BYPASS / ORG_ADMIN_BYPASS sont enregistrés au plus une
+# fois par TTL au lieu d'une fois par requête (moins de bruit d'audit).
+WS_RESOLVE_CACHE_TTL_S = float(os.environ.get("WORKSPACE_RESOLVE_CACHE_TTL_S", "30"))
+_WS_RESOLVE_CACHE_MAX = 4096
+_ws_resolve_cache: dict[tuple[str, str], tuple[str, float]] = {}
+
+
+def _ws_cache_get(ws_id: str, user_id: str) -> str | None:
+    if WS_RESOLVE_CACHE_TTL_S <= 0:
+        return None
+    entry = _ws_resolve_cache.get((ws_id, user_id))
+    if not entry:
+        return None
+    tenant_id, expires = entry
+    if time.monotonic() >= expires:
+        _ws_resolve_cache.pop((ws_id, user_id), None)
+        return None
+    return tenant_id
+
+
+def _ws_cache_put(ws_id: str, user_id: str, tenant_id: str) -> None:
+    if WS_RESOLVE_CACHE_TTL_S <= 0 or not tenant_id:
+        return
+    if len(_ws_resolve_cache) >= _WS_RESOLVE_CACHE_MAX:
+        now = time.monotonic()
+        expired = [k for k, (_, exp) in _ws_resolve_cache.items() if now >= exp]
+        for k in expired:
+            _ws_resolve_cache.pop(k, None)
+        if len(_ws_resolve_cache) >= _WS_RESOLVE_CACHE_MAX:
+            _ws_resolve_cache.clear()
+    _ws_resolve_cache[(ws_id, user_id)] = (
+        tenant_id, time.monotonic() + WS_RESOLVE_CACHE_TTL_S)
+
+
+def invalidate_ws_resolve_cache(ws_id: str | None = None) -> None:
+    """Purge le cache (tout, ou toutes les entrées d'un workspace donné).
+
+    À appeler après une mutation de membership/statut si l'on veut un effet
+    immédiat sur le pod courant ; les autres pods convergent au TTL.
+    """
+    if ws_id is None:
+        _ws_resolve_cache.clear()
+        return
+    for k in [k for k in _ws_resolve_cache if k[0] == ws_id]:
+        _ws_resolve_cache.pop(k, None)
 
 
 def _resolve_tenant() -> str | None:
@@ -39,6 +95,10 @@ def _resolve_tenant() -> str | None:
 
     ws_id = getattr(g, "_ws_header", None)
     if ws_id:
+        cached = _ws_cache_get(ws_id, current_user.id)
+        if cached:
+            return cached
+
         from api.db.services.workspace_service import WorkspaceService, WsMemberService
         ok, ws = WorkspaceService.get_by_id(ws_id)
         if not ok or not ws or ws.status != "1":
@@ -46,6 +106,7 @@ def _resolve_tenant() -> str | None:
 
         membership = WsMemberService.get_membership(ws_id, current_user.id)
         if membership:
+            _ws_cache_put(ws_id, current_user.id, ws.tenant_id)
             return ws.tenant_id
 
         if getattr(current_user, "is_superuser", False):
@@ -65,6 +126,7 @@ def _resolve_tenant() -> str | None:
                 )
             except Exception:
                 pass
+            _ws_cache_put(ws_id, current_user.id, ws.tenant_id)
             return ws.tenant_id
 
         # Org admins of the workspace's parent org can access without an
@@ -90,6 +152,7 @@ def _resolve_tenant() -> str | None:
                     )
                 except Exception:
                     pass
+                _ws_cache_put(ws_id, current_user.id, ws.tenant_id)
                 return ws.tenant_id
         except Exception:
             pass
