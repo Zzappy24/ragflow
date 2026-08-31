@@ -161,7 +161,13 @@ class Dealer:
                 orderBy.asc("page_num_int")
                 orderBy.asc("top_int")
                 orderBy.desc("create_timestamp_flt")
-            res = self.dataStore.search(src, [], filters, [], orderBy, offset, limit, idx_names, kb_ids)
+            # CUSTOM B2B SaaS — offload obligatoire : cette branche (listing
+            # sans requête texte, ex. navigation dans un dataset) était le SEUL
+            # appel doc-store SYNCHRONE de la fonction — une recherche lente
+            # gelait la boucle d'événements du pod api jusqu'au timeout (600s),
+            # probes /healthz comprises → 3 pods sur 4 NotReady (prod
+            # 2026-08-31). Même pattern thread_pool_exec que les autres branches.
+            res = await thread_pool_exec(self.dataStore.search, src, [], filters, [], orderBy, offset, limit, idx_names, kb_ids)
             total = self.dataStore.get_total(res)
             logging.debug("Dealer.search TOTAL: {}".format(total))
         else:
