@@ -217,7 +217,7 @@ async def update_doc(tenant_id, dataset_id, document_id):
             )
             if not e:
                 return get_error_data_result(message="Document not found!")
-            settings.docStoreConn.delete({"doc_id": doc.id}, search.index_name(tenant_id), dataset_id)
+            await thread_pool_exec(settings.docStoreConn.delete, {"doc_id": doc.id}, search.index_name(tenant_id), dataset_id)
 
     if "enabled" in req:
         status = int(req["enabled"])
@@ -225,7 +225,7 @@ async def update_doc(tenant_id, dataset_id, document_id):
             try:
                 if not DocumentService.update_by_id(doc.id, {"status": str(status)}):
                     return get_error_data_result(message="Database error (Document update)!")
-                settings.docStoreConn.update({"doc_id": doc.id}, {"available_int": status}, search.index_name(kb.tenant_id), doc.kb_id)
+                await thread_pool_exec(settings.docStoreConn.update, {"doc_id": doc.id}, {"available_int": status}, search.index_name(kb.tenant_id), doc.kb_id)
             except Exception as e:
                 return server_error_response(e)
 
@@ -450,7 +450,7 @@ async def parse(tenant_id, dataset_id):
             == 0
         ):
             return get_error_data_result("Can't parse document that is currently being processed")
-        settings.docStoreConn.delete({"doc_id": id}, search.index_name(tenant_id), dataset_id)
+        await thread_pool_exec(settings.docStoreConn.delete, {"doc_id": id}, search.index_name(tenant_id), dataset_id)
         TaskService.filter_delete([Task.doc_id == id])
         e, doc = DocumentService.get_by_id(id)
         doc = doc.to_dict()
@@ -538,7 +538,7 @@ async def stop_parsing(tenant_id, dataset_id):
         cancel_all_task_of(id)
         info = {"run": "2", "progress": 0, "chunk_num": 0}
         DocumentService.update_by_id(id, info)
-        settings.docStoreConn.delete({"doc_id": doc[0].id}, search.index_name(tenant_id), dataset_id)
+        await thread_pool_exec(settings.docStoreConn.delete, {"doc_id": doc[0].id}, search.index_name(tenant_id), dataset_id)
         success_count += 1
     if duplicate_messages:
         if success_count > 0:
@@ -619,7 +619,7 @@ async def update_chunk(tenant_id, dataset_id, document_id, chunk_id):
         schema:
           type: object
     """
-    chunk = settings.docStoreConn.get(chunk_id, search.index_name(tenant_id), [dataset_id])
+    chunk = await thread_pool_exec(settings.docStoreConn.get, chunk_id, search.index_name(tenant_id), [dataset_id])
     if chunk is None:
         return get_error_data_result(f"Can't find this chunk {chunk_id}")
     # CUSTOM B2B SaaS: direct workspace scope — accessible() uses multi-workspace JOIN that leaks across workspaces
@@ -683,7 +683,7 @@ async def update_chunk(tenant_id, dataset_id, document_id, chunk_id):
     v, c = embd_mdl.encode([doc.name, d["content_with_weight"] if not d.get("question_kwd") else "\n".join(d["question_kwd"])])
     v = 0.1 * v[0] + 0.9 * v[1] if doc.parser_id != ParserType.QA else v[1]
     d["q_%d_vec" % len(v)] = v.tolist()
-    settings.docStoreConn.update({"id": chunk_id}, d, search.index_name(tenant_id), dataset_id)
+    await thread_pool_exec(settings.docStoreConn.update, {"id": chunk_id}, d, search.index_name(tenant_id), dataset_id)
     return get_result()
 
 

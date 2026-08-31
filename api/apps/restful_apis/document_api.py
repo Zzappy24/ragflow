@@ -211,7 +211,7 @@ async def update_document(tenant_id, dataset_id, document_id):
             return get_error_data_result(message="Failed to update metadata")
     # doc name provided from request and diff with existing value, update
     if "name" in req and req["name"] != doc.name:
-        if error := update_document_name_only(document_id, req["name"]):
+        if error := await thread_pool_exec(update_document_name_only, document_id, req["name"]):
             return error
 
     # "parser_id" provided but does not match with existing doc's file type
@@ -226,7 +226,7 @@ async def update_document(tenant_id, dataset_id, document_id):
 
     # pipeline_id provided - reset document for reparse
     if update_doc_req.pipeline_id:
-        if error := reset_document_for_reparse(doc, tenant_id, pipeline_id=update_doc_req.pipeline_id):
+        if error := await thread_pool_exec(lambda: reset_document_for_reparse(doc, tenant_id, pipeline_id=update_doc_req.pipeline_id)):
             return error
     # chunk method provided - the update method will check if it's different with existing one
     elif update_doc_req.chunk_method:
@@ -235,7 +235,7 @@ async def update_document(tenant_id, dataset_id, document_id):
 
     if "enabled" in req: # already checked in UpdateDocumentReq - it's int if present
         # "enabled" flag provided, the update method will check if it's changed and then update if so
-        if error := update_document_status_only(int(req["enabled"]), doc, kb):
+        if error := await thread_pool_exec(update_document_status_only, int(req["enabled"]), doc, kb):
             return error
 
     try:
@@ -1992,12 +1992,10 @@ async def batch_update_document_status(tenant_id, dataset_id):
             status_int = int(status)
             if getattr(doc, "chunk_num", 0) > 0:
                 try:
-                    ok = settings.docStoreConn.update(
-                        {"doc_id": doc_id},
+                    ok = await thread_pool_exec(settings.docStoreConn.update, {"doc_id": doc_id},
                         {"available_int": status_int},
                         search.index_name(kb.tenant_id),
-                        doc.kb_id,
-                    )
+                        doc.kb_id,)
                 except Exception as exc:
                     msg = str(exc)
                     if "3022" in msg:

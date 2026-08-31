@@ -197,8 +197,8 @@ async def parse(tenant_id, dataset_id):
         ):
             return get_error_data_result("Can't parse document that is currently being processed")
         index_name = search.index_name(dataset_tenant_id)
-        if settings.docStoreConn.index_exist(index_name, doc[0].kb_id):
-            settings.docStoreConn.delete({"doc_id": id}, index_name, doc[0].kb_id)
+        if await thread_pool_exec(settings.docStoreConn.index_exist, index_name, doc[0].kb_id):
+            await thread_pool_exec(settings.docStoreConn.delete, {"doc_id": id}, index_name, doc[0].kb_id)
         else:
             logging.info(
                 "Skipping chunk delete during parse for doc %s: index %s/%s does not exist",
@@ -259,8 +259,8 @@ async def stop_parsing(tenant_id, dataset_id):
         info = {"run": "2", "progress": 0, "chunk_num": 0}
         DocumentService.update_by_id(id, info)
         index_name = search.index_name(dataset_tenant_id)
-        if settings.docStoreConn.index_exist(index_name, doc[0].kb_id):
-            settings.docStoreConn.delete({"doc_id": doc[0].id}, index_name, doc[0].kb_id)
+        if await thread_pool_exec(settings.docStoreConn.index_exist, index_name, doc[0].kb_id):
+            await thread_pool_exec(settings.docStoreConn.delete, {"doc_id": doc[0].id}, index_name, doc[0].kb_id)
         else:
             logging.info(
                 "Skipping chunk delete during stop_parsing for doc %s: index %s/%s does not exist",
@@ -431,7 +431,7 @@ async def list_chunks(tenant_id, dataset_id, document_id):
 
     res = {"total": 0, "chunks": [], "doc": _map_doc(doc)}
     if req.get("id"):
-        chunk = settings.docStoreConn.get(req.get("id"), search.index_name(dataset_tenant_id), [dataset_id])
+        chunk = await thread_pool_exec(settings.docStoreConn.get, req.get("id"), search.index_name(dataset_tenant_id), [dataset_id])
         if not chunk:
             return get_result(message=f"Chunk not found: {dataset_id}/{req.get('id')}", code=RetCode.DATA_ERROR)
         if str(chunk.get("doc_id", chunk.get("document_id"))) != str(document_id):
@@ -454,7 +454,7 @@ async def list_chunks(tenant_id, dataset_id, document_id):
         }
         res["chunks"].append(final_chunk)
         _ = Chunk(**final_chunk)
-    elif settings.docStoreConn.index_exist(search.index_name(dataset_tenant_id), dataset_id):
+    elif await thread_pool_exec(settings.docStoreConn.index_exist, search.index_name(dataset_tenant_id), dataset_id):
         sres = await settings.retriever.search(
             query,
             search.index_name(dataset_tenant_id),
@@ -502,7 +502,7 @@ async def get_chunk(tenant_id, dataset_id, document_id, chunk_id):
     if not doc:
         return get_error_data_result(message=f"You don't own the document {document_id}.")
     try:
-        chunk = settings.docStoreConn.get(chunk_id, search.index_name(dataset_tenant_id), [dataset_id])
+        chunk = await thread_pool_exec(settings.docStoreConn.get, chunk_id, search.index_name(dataset_tenant_id), [dataset_id])
         if chunk is None or str(chunk.get("doc_id", chunk.get("document_id"))) != str(document_id):
             return get_result(data=False, message="Chunk not found!", code=RetCode.DATA_ERROR)
         return get_result(data=_strip_chunk_runtime_fields(chunk))
@@ -581,7 +581,7 @@ async def add_chunk(tenant_id, dataset_id, document_id):
     v, c = embd_mdl.encode([doc.name, req["content"] if not d["question_kwd"] else "\n".join(d["question_kwd"])])
     v = 0.1 * v[0] + 0.9 * v[1]
     d[f"q_{len(v)}_vec"] = v.tolist()
-    settings.docStoreConn.insert([d], search.index_name(dataset_tenant_id), dataset_id)
+    await thread_pool_exec(settings.docStoreConn.insert, [d], search.index_name(dataset_tenant_id), dataset_id)
 
     DocumentService.increment_chunk_num(doc.id, doc.kb_id, c, 1, 0)
     key_mapping = {
@@ -626,18 +626,16 @@ async def rm_chunk(tenant_id, dataset_id, document_id):
         if req.get("delete_all") is True:
             doc = docs[0]
             DocumentService.delete_chunk_images(doc, dataset_tenant_id)
-            chunk_number = settings.docStoreConn.delete({"doc_id": document_id}, search.index_name(dataset_tenant_id), dataset_id)
+            chunk_number = await thread_pool_exec(settings.docStoreConn.delete, {"doc_id": document_id}, search.index_name(dataset_tenant_id), dataset_id)
             if chunk_number != 0:
                 DocumentService.decrement_chunk_num(document_id, dataset_id, 1, chunk_number, 0)
             return get_result(message=f"deleted {chunk_number} chunks")
         return get_result()
 
     unique_chunk_ids, duplicate_messages = check_duplicate_ids(chunk_ids, "chunk")
-    chunk_number = settings.docStoreConn.delete(
-        {"doc_id": document_id, "id": unique_chunk_ids},
+    chunk_number = await thread_pool_exec(settings.docStoreConn.delete, {"doc_id": document_id, "id": unique_chunk_ids},
         search.index_name(dataset_tenant_id),
-        dataset_id,
-    )
+        dataset_id,)
     if chunk_number != 0:
         DocumentService.decrement_chunk_num(document_id, dataset_id, 1, chunk_number, 0)
     if chunk_number != len(unique_chunk_ids):
@@ -668,7 +666,7 @@ async def update_chunk(tenant_id, dataset_id, document_id, chunk_id):
     if not doc:
         return get_error_data_result(message=f"You don't own the document {document_id}.")
     doc = doc[0]
-    chunk = settings.docStoreConn.get(chunk_id, search.index_name(dataset_tenant_id), [dataset_id])
+    chunk = await thread_pool_exec(settings.docStoreConn.get, chunk_id, search.index_name(dataset_tenant_id), [dataset_id])
     if chunk is None or str(chunk.get("doc_id", chunk.get("document_id"))) != str(document_id):
         return get_error_data_result(f"Can't find this chunk {chunk_id}")
     req = await get_request_json()
@@ -736,7 +734,7 @@ async def update_chunk(tenant_id, dataset_id, document_id, chunk_id):
     )
     v = 0.1 * v[0] + 0.9 * v[1] if doc.parser_id != ParserType.QA else v[1]
     d[f"q_{len(v)}_vec"] = v.tolist()
-    settings.docStoreConn.update({"id": chunk_id}, d, search.index_name(dataset_tenant_id), dataset_id)
+    await thread_pool_exec(settings.docStoreConn.update, {"id": chunk_id}, d, search.index_name(dataset_tenant_id), dataset_id)
     return get_result()
 
 

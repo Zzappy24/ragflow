@@ -20,6 +20,7 @@ import re
 
 from api.db.joint_services.tenant_model_service import get_model_config_from_provider_instance
 from common.constants import PAGERANK_FLD
+from common.misc_utils import thread_pool_exec
 from common import settings
 from api.db.db_models import File
 from api.db.services.document_service import DocumentService, queue_raptor_o_graphrag_tasks
@@ -168,7 +169,7 @@ async def delete_datasets(tenant_id: str, ids: list = None, delete_all: bool = F
             from rag.nlp import search
 
             idxnm = search.index_name(kb.tenant_id)
-            settings.docStoreConn.delete_idx(idxnm, kb_id)
+            await thread_pool_exec(settings.docStoreConn.delete_idx, idxnm, kb_id)
         except Exception as e:
             errors.append(f"Failed to drop index for dataset {kb_id}: {e}")
 
@@ -330,12 +331,12 @@ async def update_dataset(tenant_id: str, dataset_id: str, req: dict):
         if req["pagerank"] > 0:
             from rag.nlp import search
 
-            settings.docStoreConn.update({"kb_id": kb.id}, {PAGERANK_FLD: req["pagerank"]}, search.index_name(kb.tenant_id), kb.id)
+            await thread_pool_exec(settings.docStoreConn.update, {"kb_id": kb.id}, {PAGERANK_FLD: req["pagerank"]}, search.index_name(kb.tenant_id), kb.id)
         else:
             # Elasticsearch requires PAGERANK_FLD be non-zero!
             from rag.nlp import search
 
-            settings.docStoreConn.update({"exists": PAGERANK_FLD}, {"remove": PAGERANK_FLD}, search.index_name(kb.tenant_id), kb.id)
+            await thread_pool_exec(settings.docStoreConn.update, {"exists": PAGERANK_FLD}, {"remove": PAGERANK_FLD}, search.index_name(kb.tenant_id), kb.id)
     if "parse_type" in req:
         del req["parse_type"]
 
@@ -433,7 +434,7 @@ async def get_knowledge_graph(dataset_id: str, tenant_id: str):
     obj = {"graph": {}, "mind_map": {}}
     from rag.nlp import search
 
-    if not settings.docStoreConn.index_exist(search.index_name(kb.tenant_id), dataset_id):
+    if not await thread_pool_exec(settings.docStoreConn.index_exist, search.index_name(kb.tenant_id), dataset_id):
         return True, obj
     sres = await settings.retriever.search(req, search.index_name(kb.tenant_id), [dataset_id])
     if not len(sres.ids):

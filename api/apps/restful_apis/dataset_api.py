@@ -18,6 +18,7 @@ import logging
 from peewee import OperationalError
 from quart import request
 from common.constants import RetCode
+from common.misc_utils import thread_pool_exec
 from api.apps import login_required, current_user
 from api.utils.api_utils import get_error_argument_result, get_error_data_result, get_json_result, get_result, add_tenant_id_to_kwargs
 from api.utils.pagination_utils import validate_rest_api_page_size
@@ -474,7 +475,7 @@ async def delete_tags(tenant_id, dataset_id):
         return get_error_argument_result("tags must be a list of strings")
 
     try:
-        success, result = dataset_api_service.delete_tags(dataset_id, tenant_id, req["tags"])
+        success, result = await thread_pool_exec(dataset_api_service.delete_tags, dataset_id, tenant_id, req["tags"])
         if success:
             return get_result(data=result)
         else:
@@ -501,7 +502,7 @@ async def rename_tag(tenant_id, dataset_id):
         return get_error_argument_result("from_tag and to_tag must not be empty")
 
     try:
-        success, result = dataset_api_service.rename_tag(dataset_id, tenant_id, req["from_tag"], req["to_tag"])
+        success, result = await thread_pool_exec(dataset_api_service.rename_tag, dataset_id, tenant_id, req["from_tag"], req["to_tag"])
         if success:
             return get_result(data=result)
         else:
@@ -597,7 +598,7 @@ async def get_knowledge_graph(tenant_id, dataset_id):
 @add_tenant_id_to_kwargs
 def delete_knowledge_graph(tenant_id, dataset_id):
     try:
-        success, result = dataset_api_service.delete_knowledge_graph(dataset_id, tenant_id)
+        success, result = await thread_pool_exec(dataset_api_service.delete_knowledge_graph, dataset_id, tenant_id)
         if success:
             return get_result(data=result)
         else:
@@ -662,7 +663,7 @@ def delete_index(tenant_id, dataset_id, index_type):
     wipe_arg = (request.args.get("wipe", "true") or "true").strip().lower()
     wipe = wipe_arg not in ("false", "0", "no", "off")
     try:
-        success, result = dataset_api_service.delete_index(dataset_id, tenant_id, index_type, wipe=wipe)
+        success, result = await thread_pool_exec(lambda: dataset_api_service.delete_index(dataset_id, tenant_id, index_type, wipe=wipe))
         if success:
             return get_result(data=result)
         else:

@@ -1073,8 +1073,8 @@ async def rerun_agent(tenant_id):
     if 0 < doc["progress"] < 1:
         return get_data_error_result(message=f"`{doc['name']}` is processing...")
 
-    if settings.docStoreConn.index_exist(search.index_name(tenant_id), doc["kb_id"]):
-        settings.docStoreConn.delete({"doc_id": doc["id"]}, search.index_name(tenant_id), doc["kb_id"])
+    if await thread_pool_exec(settings.docStoreConn.index_exist, search.index_name(tenant_id), doc["kb_id"]):
+        await thread_pool_exec(settings.docStoreConn.delete, {"doc_id": doc["id"]}, search.index_name(tenant_id), doc["kb_id"])
     doc["progress_msg"] = ""
     doc["chunk_num"] = 0
     doc["token_num"] = 0
