@@ -175,6 +175,7 @@
   .stair.hero .bar-v { background: linear-gradient(180deg, var(--qwen-soft), var(--surface-2)); border-color: var(--qwen); }
   .stair .sv { font-family: "Archivo", sans-serif; font-weight: 800; font-size: clamp(1.3rem, 3.4vw, 2rem); color: var(--ink); }
   .stair.hero .sv { color: var(--qwen); }
+  .stair .svc { font-family: "Archivo", sans-serif; font-weight: 700; font-size: clamp(.95rem, 2.2vw, 1.25rem); color: var(--claude); margin-top: .1rem; }
   .stair .sl { font-size: .74rem; color: var(--ink-faint); text-align: center; margin-top: .6rem; line-height: 1.35; min-height: 2.6em; }
   .stair .se { font-family: "IBM Plex Mono", monospace; font-size: .66rem; color: var(--ink-faint); text-transform: uppercase; letter-spacing: .08em; text-align: center; margin-top: .25rem; }
 
@@ -368,31 +369,32 @@
 
   <!-- 8 · L'escalier -->
   <section class="slide"><div class="inner">
-    <div class="kicker">La progression · juge Qwen · mêmes 200 questions</div>
+    <div class="kicker">La progression · deux juges · mêmes 200 questions</div>
     <h2>+8 → +14, marche par marche</h2>
     <div class="stairs">
       <div class="stair">
-        <div class="bar-v" style="height:38%"><span class="sv num">+8,0</span></div>
+        <div class="bar-v" style="height:42%"><span class="sv num">+8,0</span><span class="svc num">+13,0</span></div>
         <div class="sl">Point de départ<br>protocole officiel</div>
         <div class="se">moteur historique</div>
       </div>
       <div class="stair">
-        <div class="bar-v" style="height:46%"><span class="sv num">+9,5</span></div>
+        <div class="bar-v" style="height:54%"><span class="sv num">+9,5</span><span class="svc num">+18,5</span></div>
         <div class="sl">Corpus entier<br>+ reranking</div>
         <div class="se">moteur historique</div>
       </div>
       <div class="stair">
-        <div class="bar-v" style="height:62%"><span class="sv num">+12,0</span></div>
+        <div class="bar-v" style="height:72%"><span class="sv num">+12,0</span><span class="svc num">+25,0</span></div>
         <div class="sl">Nouveau moteur<br>+ contexte élargi</div>
         <div class="se">Elasticsearch</div>
       </div>
       <div class="stair hero">
-        <div class="bar-v" style="height:78%"><span class="sv num">+14,0</span></div>
+        <div class="bar-v" style="height:88%"><span class="sv num">+14,0</span><span class="svc num">+27,5</span></div>
         <div class="sl">+ chunking<br>parent-enfant</div>
         <div class="se">Elasticsearch</div>
       </div>
     </div>
-    <p class="note">Chaque marche est mesurée sur les mêmes 200 questions, même juge. Le retrieval Elasticsearch est vérifié sain à chaque étape : 86,7 % des pages de référence retrouvées, 82,5 % de précision en tête de classement avec reranking.</p>
+    <div class="jlegend" style="margin-top:.8rem"><span style="color:var(--qwen);font-weight:700">■ juge Qwen</span><span style="color:var(--claude);font-weight:700">■ contre-expertise Claude</span></div>
+    <p class="note">Chaque marche est mesurée sur les mêmes 200 questions. Le retrieval Elasticsearch est vérifié sain à chaque étape : 86,7 % des pages de référence retrouvées, 82,5 % de précision en tête de classement avec reranking.</p>
   </div></section>
 
   <!-- 9 · Pourquoi changer de moteur -->
@@ -461,6 +463,21 @@
   <section class="slide"><div class="inner">
     <div class="kicker">Trajectoire · du POC au SaaS multi-clients</div>
     <h2>Un moteur qui grandit avec la plateforme</h2>
+    <svg viewBox="0 0 720 130" style="width:100%;max-width:720px;display:block;margin:0 auto 1.1rem" role="img" aria-label="Trois axes d'extension indépendants : plus de nœuds pour la lecture, plus de workers pour l'ingestion, le disque pour le volume">
+      <defs><marker id="arr" viewBox="0 0 8 8" refX="7" refY="4" markerWidth="7" markerHeight="7" orient="auto"><path d="M0,0 L8,4 L0,8 z" fill="#6f8290"/></marker></defs>
+      <rect x="310" y="42" width="100" height="46" rx="10" fill="#182229" stroke="#2fd4b2" stroke-width="1.5"/>
+      <text x="360" y="70" text-anchor="middle" font-family="Archivo,sans-serif" font-weight="700" font-size="16" fill="#eef4f8">ES</text>
+      <line x1="300" y1="65" x2="180" y2="65" stroke="#6f8290" stroke-width="1.5" marker-end="url(#arr)"/>
+      <line x1="420" y1="65" x2="540" y2="65" stroke="#6f8290" stroke-width="1.5" marker-end="url(#arr)"/>
+      <line x1="360" y1="34" x2="360" y2="14" stroke="#6f8290" stroke-width="1.5" marker-end="url(#arr)"/>
+      <text x="168" y="58" text-anchor="end" font-family="IBM Plex Mono,monospace" font-size="12" fill="#2fd4b2">+ nœuds</text>
+      <text x="168" y="74" text-anchor="end" font-family="IBM Plex Sans,sans-serif" font-size="11" fill="#a7b8c3">débit de lecture</text>
+      <text x="552" y="58" text-anchor="start" font-family="IBM Plex Mono,monospace" font-size="12" fill="#2fd4b2">+ workers</text>
+      <text x="552" y="74" text-anchor="start" font-family="IBM Plex Sans,sans-serif" font-size="11" fill="#a7b8c3">débit d'ingestion</text>
+      <text x="372" y="18" text-anchor="start" font-family="IBM Plex Mono,monospace" font-size="12" fill="#2fd4b2">disque (DiskBBQ)</text>
+      <text x="372" y="32" text-anchor="start" font-family="IBM Plex Sans,sans-serif" font-size="11" fill="#a7b8c3">taille de corpus</text>
+      <text x="360" y="122" text-anchor="middle" font-family="IBM Plex Sans,sans-serif" font-size="11" fill="#6f8290">trois axes indépendants, activables séparément, sans re-migration</text>
+    </svg>
     <div class="gains">
       <div class="gain">
         <div class="gt"><span class="hl">La lecture scale</span> en ajoutant des nœuds</div>
