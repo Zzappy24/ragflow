@@ -58,6 +58,17 @@ if (nw <= 0.0) {
 """
 
 
+# CUSTOM B2B SaaS — helper module-level (testable malgre le @singleton) :
+# purge les cles body-fields que le client es-py 8.x fusionne EN MUTANT le
+# dict passe. Sans copie, la boucle de retry reutilisait un body pollue et
+# toute 2e tentative levait "Received multiple values for 'timeout'".
+def sanitize_search_body(query: dict) -> dict:
+    q = dict(query)
+    q.pop("timeout", None)
+    q.pop("track_total_hits", None)
+    return q
+
+
 @singleton
 class ESConnection(ESConnectionBase):
     """
@@ -65,9 +76,12 @@ class ESConnection(ESConnectionBase):
     """
 
     def _es_search_once(self, index_names: list[str], query: dict, track_total_hits: bool):
+        # Copie défensive à chaque tentative — voir sanitize_search_body.
+        # Pin : test/multitenant/test_es_search_retry.py
+        q = sanitize_search_body(query)
         return self.es.search(
             index=index_names,
-            body=query,
+            body=q,
             timeout="600s",
             track_total_hits=track_total_hits
         )
