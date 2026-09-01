@@ -320,3 +320,111 @@ def spc_chart(drift_result: dict, out_dir: str = "artifacts", fmt: str = "svg") 
     fig.savefig(path, format=fmt)
     plt.close(fig)
     return path
+
+
+# =============================================================================
+# Loader GÉNÉRIQUE (2026-09-01) — au-delà du POC FAMAT.
+# `load_url`/`load_csv` restent le chemin FAMAT (schéma `events` figé).
+# `load_any(url)` charge N'IMPORTE QUEL fichier de données servi par une URL
+# présignée get_file : Parquet, CSV/TSV, JSON/JSONL, ou XML « de données »
+# (éléments répétés porteurs d'attributs, ex. export Apple Santé
+# <Record type=... value=.../>), en table DuckDB `data` (colonnes VARCHAR
+# pour le XML — CASTer en SQL). Le XML est parsé en STREAMING : mémoire
+# bornée même sur des exports de centaines de Mo.
+# =============================================================================
+
+def load_any(url: str, timeout: int = 300, table: str = "data") -> duckdb.DuckDBPyConnection:
+    """URL présignée (get_file) -> DuckDB, format auto-détecté."""
+    import os
+    import tempfile
+
+    import requests
+
+    resp = requests.get(url, timeout=timeout, stream=True)
+    resp.raise_for_status()
+    fd, path = tempfile.mkstemp()
+    try:
+        with os.fdopen(fd, "wb") as f:
+            for part in resp.iter_content(1 << 20):
+                f.write(part)
+        return load_file(path, table=table)
+    finally:
+        os.unlink(path)
+
+
+def load_file(path: str, table: str = "data") -> duckdb.DuckDBPyConnection:
+    """Fichier local -> DuckDB, format détecté sur le contenu (pas l'extension)."""
+    with open(path, "rb") as f:
+        head = f.read(256)
+    stripped = head.lstrip()
+    if head[:4] == b"PAR1":
+        con = duckdb.connect()
+        con.execute(f"CREATE TABLE {table} AS SELECT * FROM read_parquet(?)", [path])
+        return con
+    if stripped[:1] == b"<":
+        return _load_xml_stream(path, table=table)
+    if stripped[:1] in (b"{", b"["):
+        con = duckdb.connect()
+        con.execute(f"CREATE TABLE {table} AS SELECT * FROM read_json_auto(?)", [path])
+        return con
+    con = duckdb.connect()
+    con.execute(f"CREATE TABLE {table} AS SELECT * FROM read_csv_auto(?)", [path])
+    return con
+
+
+def _load_xml_stream(path: str, table: str = "data", sample_elems: int = 100_000,
+                     batch_rows: int = 50_000) -> duckdb.DuckDBPyConnection:
+    """XML de données -> table des attributs du tag répété majoritaire.
+
+    Passe 1 (échantillon) : élit le tag le plus fréquent parmi les éléments
+    PORTEURS D'ATTRIBUTS et collecte l'union de leurs attributs (colonnes).
+    Passe 2 : re-streame tout le fichier et insère par lots, en libérant les
+    éléments au fil de l'eau (elem.clear + purge de la racine) — mémoire
+    bornée quel que soit le volume.
+    """
+    import xml.etree.ElementTree as ET
+    from collections import Counter
+
+    def _local(tag):
+        return tag.split("}")[-1] if isinstance(tag, str) else str(tag)
+
+    counts, attr_union = Counter(), {}
+    seen = 0
+    for _, elem in ET.iterparse(path, events=("end",)):
+        if elem.attrib:
+            tag = _local(elem.tag)
+            counts[tag] += 1
+            attr_union.setdefault(tag, set()).update(_local(k) for k in elem.attrib)
+        elem.clear()
+        seen += 1
+        if seen >= sample_elems:
+            break
+    if not counts:
+        raise ValueError("XML sans éléments à attributs : pas un XML de données tabulaire")
+
+    record_tag = counts.most_common(1)[0][0]
+    cols = sorted(attr_union[record_tag])
+
+    con = duckdb.connect()
+    con.execute(f"CREATE TABLE {table} ({', '.join(c + ' VARCHAR' for c in cols)})")
+    placeholders = ", ".join("?" for _ in cols)
+
+    root = None
+    batch = []
+    for event, elem in ET.iterparse(path, events=("start", "end")):
+        if event == "start":
+            if root is None:
+                root = elem
+            continue
+        if _local(elem.tag) == record_tag and elem.attrib:
+            attrs = {_local(k): v for k, v in elem.attrib.items()}
+            batch.append([attrs.get(c) for c in cols])
+            if len(batch) >= batch_rows:
+                con.executemany(f"INSERT INTO {table} VALUES ({placeholders})", batch)
+                batch = []
+        elem.clear()
+        if root is not None and len(root) > batch_rows:
+            del root[:]
+    if batch:
+        con.executemany(f"INSERT INTO {table} VALUES ({placeholders})", batch)
+    return con
