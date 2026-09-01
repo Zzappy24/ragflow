@@ -85,6 +85,12 @@ spec:
     - name: ragflow-storage
       objectLock: false
 
-  users:
-    - name: {{ .Values.minio.rootCredentialsSecretRef }}
+  # spec.users RETIRÉ (2026-09-01) : il pointait vers le secret des
+  # credentials ROOT, alors que spec.users sert à créer des utilisateurs
+  # MinIO additionnels et exige un secret au format CONSOLE_ACCESS_KEY/
+  # CONSOLE_SECRET_KEY. L'operator échouait en boucle (~37 s) avec
+  # « UsersCreationFailed: CONSOLE_ACCESS_KEY not provided » (87 001
+  # events en 5 jours). RAGFlow se connecte avec les credentials root :
+  # aucun utilisateur additionnel n'est utilisé, le bloc était un no-op
+  # bruyant. Même famille que le retrait de spec.metrics (bafbbba86).
 {{- end }}
