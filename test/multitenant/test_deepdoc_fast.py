@@ -60,3 +60,19 @@ def test_fast_class_short_circuits_orientation():
 def test_front_exposes_fast_option():
     src = (REPO / "web" / "src" / "components" / "layout-recognize-form-field.tsx").read_text()
     assert "DeepDOC (fast)" in src, "option front « DeepDOC (fast) » absente du dropdown"
+
+
+def test_base_orientation_has_lossless_early_exit():
+    """Early-exit 0° dans _evaluate_table_orientation (pdf_parser.py) : la
+    règle finale ne retient un angle != 0 que si score_0 < 0.8 — quand 0°
+    atteint 0.8, tester les 3 autres angles ne peut pas changer la décision.
+    L'early-exit est donc strictement équivalent, en épargnant ~75 % du coût
+    d'évaluation (et la pression GPU associée) sur les documents non tournés."""
+    src = (REPO / "deepdoc" / "parser" / "pdf_parser.py").read_text()
+    method_start = src.index("def _evaluate_table_orientation")
+    method_src = src[method_start:src.index("def _table_transformer_job")]
+    early = method_src.index("early-exit")
+    final_rule = method_src.index("Absolute threshold rule")
+    assert early < final_rule, "l'early-exit doit précéder la règle finale"
+    assert "combined_score >= 0.8" in method_src, "seuil de l'early-exit != 0.8 (doit refléter la règle finale)"
+    assert "score_0 < 0.8" in method_src, "la règle finale (seuil 0.8) a changé — re-valider l'équivalence de l'early-exit"

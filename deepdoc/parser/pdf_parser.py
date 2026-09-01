@@ -384,6 +384,16 @@ class RAGFlowPdfParser:
             results[angle] = {"avg_confidence": avg_score, "total_regions": total_regions, "combined_score": combined_score}
             if angle == 0:
                 score_0 = combined_score
+                # CUSTOM B2B SaaS — early-exit d'orientation SANS PERTE : la
+                # règle finale ci-dessous ne retient un angle ≠ 0° que si
+                # score_0 < 0.8. Quand 0° atteint 0.8, les 3 autres passes
+                # d'OCR ne peuvent donc jamais changer la décision — on les
+                # épargne (résultat strictement identique, ~75 % du coût
+                # d'évaluation économisé sur les documents jamais tournés,
+                # et autant de pression GPU en moins).
+                if combined_score >= 0.8:
+                    logging.debug(f"Table orientation early-exit: 0° confident (score={combined_score:.4f})")
+                    return 0, table_img, results
 
             logging.debug(f"Table orientation {angle}°: avg_conf={avg_score:.4f}, regions={total_regions}, combined={combined_score:.4f}")
 
