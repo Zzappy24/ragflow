@@ -1755,6 +1755,20 @@ wheels = [
 ]
 
 [[package]]
+name = "docxtpl"
+version = "0.20.2"
+source = { registry = "https://mirrors.aliyun.com/pypi/simple" }
+dependencies = [
+    { name = "jinja2" },
+    { name = "lxml" },
+    { name = "python-docx" },
+]
+sdist = { url = "https://mirrors.aliyun.com/pypi/packages/b2/b4/4435f3fcb1357ec441079c4af1dda3ea926fad6dcead4aed2d93b369944e/docxtpl-0.20.2.tar.gz", hash = "sha256:eddf3350d70b4d123208e801d585bcb313d21044a377a14f75a66d0965841de1" }
+wheels = [
+    { url = "https://mirrors.aliyun.com/pypi/packages/a4/ad/e07939d8e020e513d3860400413ba1e0e06102c469639b440d921337efef/docxtpl-0.20.2-py3-none-any.whl", hash = "sha256:626d5c570a46a62b2ca73b4d08f1c240fa031a5bc45371e1466a4fe184923d10" },
+]
+
+[[package]]
 name = "dropbox"
 version = "12.0.2"
 source = { registry = "https://mirrors.aliyun.com/pypi/simple" }
@@ -7996,6 +8010,7 @@ dependencies = [
     { name = "deepl" },
     { name = "demjson3" },
     { name = "discord-py" },
+    { name = "docxtpl" },
     { name = "dropbox" },
     { name = "duckduckgo-search" },
     { name = "editdistance" },
@@ -8158,6 +8173,7 @@ requires-dist = [
     { name = "demjson3", specifier = "==3.0.6" },
     { name = "discord-py", specifier = "==2.3.2" },
     { name = "discord-py", specifier = ">=2.3.0" },
+    { name = "docxtpl", specifier = ">=0.16.7,<1.0.0" },
     { name = "dropbox", specifier = "==12.0.2" },
     { name = "duckduckgo-search", specifier = ">=7.2.0,<8.0.0" },
     { name = "editdistance", specifier = "==0.8.1" },
