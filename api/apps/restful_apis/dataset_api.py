@@ -596,7 +596,7 @@ async def get_knowledge_graph(tenant_id, dataset_id):
 @login_required
 @require_permission(Permission.DATASET_DELETE)
 @add_tenant_id_to_kwargs
-def delete_knowledge_graph(tenant_id, dataset_id):
+async def delete_knowledge_graph(tenant_id, dataset_id):
     try:
         success, result = await thread_pool_exec(dataset_api_service.delete_knowledge_graph, dataset_id, tenant_id)
         if success:
@@ -652,7 +652,7 @@ def trace_index(tenant_id, dataset_id):
 @login_required
 @require_permission(Permission.DATASET_DELETE)
 @add_tenant_id_to_kwargs
-def delete_index(tenant_id, dataset_id, index_type):
+async def delete_index(tenant_id, dataset_id, index_type):
     index_type = index_type.lower()
     if index_type not in dataset_api_service._VALID_INDEX_TYPES:
         return get_error_argument_result(f"Invalid index type '{index_type}'")

@@ -63,6 +63,21 @@ def _violations_in(path: pathlib.Path):
     return bad
 
 
+def test_all_api_pages_compile():
+    """Toute page sous api/apps/** doit COMPILER. register_page importe ces
+    fichiers au boot : une SyntaxError (ex. un `await` ajouté dans une route
+    restée `def` lors d'une passe d'offload — incident prod 2026-09-01,
+    pods api en CrashLoop) tue le pod entier. py_compile au commit ne
+    suffit pas si on ne compile que les fichiers du dernier commit."""
+    errors = []
+    for path in sorted((REPO / "api" / "apps").rglob("*.py")):
+        try:
+            compile(path.read_text(), str(path), "exec")
+        except SyntaxError as e:
+            errors.append(f"{path.relative_to(REPO)}: {e}")
+    assert not errors, "Pages API qui ne compilent pas :\n" + "\n".join(errors)
+
+
 def test_no_direct_docstore_calls_in_async_api_routes():
     offenders = {}
     for path in sorted((REPO / "api" / "apps").rglob("*.py")):
