@@ -5,34 +5,80 @@ import React, { forwardRef, useEffect, useState } from 'react';
 import SvgIcon from '../svg-icon';
 import { Popover, PopoverContent, PopoverTrigger } from '../ui/popover';
 
+// CUSTOM B2B SaaS — cache mémoire des blob URLs. Le fetch authentifié
+// (obligatoire pour X-Workspace-Id) prive les vignettes du cache HTTP du
+// navigateur : sans cache applicatif, chaque montage re-téléchargeait
+// chaque image → flash « vide puis rempli » à chaque changement de
+// dataset. Les URLs cachées vivent pour la session (plafond FIFO, les
+// évincées sont révoquées) ; `inflight` dédoublonne les fetchs concurrents
+// d'une même image (liste de N docs au même thumbnail par ex.).
+const blobUrlCache = new Map<string, string>();
+const inflightFetches = new Map<string, Promise<string | null>>();
+const BLOB_CACHE_MAX = 300;
+
+function blobCacheKey(url: string) {
+  // Le workspace actif change la réponse (auth) → il fait partie de la clé.
+  return `${localStorage.getItem('active_workspace_id') ?? ''}|${url}`;
+}
+
+function fetchAuthBlobUrl(url: string, key: string): Promise<string | null> {
+  const existing = inflightFetches.get(key);
+  if (existing) return existing;
+
+  const activeWorkspaceId = localStorage.getItem('active_workspace_id');
+  const headers: Record<string, string> = {
+    [Authorization]: getAuthorization(),
+  };
+  if (activeWorkspaceId) {
+    headers['X-Workspace-Id'] = activeWorkspaceId;
+  }
+
+  const promise = fetch(url, { headers })
+    .then((res) => (res.ok ? res.blob() : null))
+    .then((blob) => {
+      inflightFetches.delete(key);
+      if (!blob) return null;
+      const objectUrl = URL.createObjectURL(blob);
+      if (blobUrlCache.size >= BLOB_CACHE_MAX) {
+        const oldestKey = blobUrlCache.keys().next().value;
+        if (oldestKey !== undefined) {
+          URL.revokeObjectURL(blobUrlCache.get(oldestKey)!);
+          blobUrlCache.delete(oldestKey);
+        }
+      }
+      blobUrlCache.set(key, objectUrl);
+      return objectUrl;
+    })
+    .catch(() => {
+      inflightFetches.delete(key);
+      return null;
+    });
+
+  inflightFetches.set(key, promise);
+  return promise;
+}
+
 function useAuthBlobUrl(url: string) {
-  const [blobUrl, setBlobUrl] = useState<string>();
+  const [blobUrl, setBlobUrl] = useState<string | undefined>(() =>
+    url ? blobUrlCache.get(blobCacheKey(url)) : undefined,
+  );
 
   useEffect(() => {
     if (!url) return;
-    let objectUrl: string | undefined;
-    let cancelled = false;
-    const activeWorkspaceId = localStorage.getItem('active_workspace_id');
-    const headers: Record<string, string> = {
-      [Authorization]: getAuthorization(),
-    };
-    if (activeWorkspaceId) {
-      headers['X-Workspace-Id'] = activeWorkspaceId;
+    const key = blobCacheKey(url);
+    const cached = blobUrlCache.get(key);
+    if (cached) {
+      setBlobUrl(cached);
+      return;
     }
-
-    fetch(url, { headers })
-      .then((res) => (res.ok ? res.blob() : null))
-      .then((blob) => {
-        if (blob && !cancelled) {
-          objectUrl = URL.createObjectURL(blob);
-          setBlobUrl(objectUrl);
-        }
-      })
-      .catch(() => {});
-
+    let cancelled = false;
+    fetchAuthBlobUrl(url, key).then((objectUrl) => {
+      if (objectUrl && !cancelled) {
+        setBlobUrl(objectUrl);
+      }
+    });
     return () => {
       cancelled = true;
-      if (objectUrl) URL.revokeObjectURL(objectUrl);
     };
   }, [url]);
 
