@@ -370,7 +370,10 @@ sandbox:
 
 ragflow-frontend:
   enabled: true
-  replicas: 1
+  # 2 replicas (bump 1→2, 2026-09-01) : le nginx front proxifie AUSSI tout
+  # le trafic API (/api/, /v1/) — à 1 pod c'était un SPOF sur le chemin de
+  # chaque requête, et le PDB minAvailable:1 bloquait les drains de nœud.
+  replicas: 2
   resources:
     requests:
       cpu: "100m"
