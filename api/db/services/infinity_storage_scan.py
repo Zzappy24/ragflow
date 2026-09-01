@@ -64,10 +64,52 @@ def parse_size_to_bytes(val) -> int:
     return int(float(m.group(1)) * _SIZE_MULT[unit])
 
 
-def scan() -> dict:
-    """Scan bloquant (2 appels thrift par table) — appeler depuis un thread.
-    Les erreurs par table sont avalées (table en cours de drop, etc.)."""
+def _scan_elasticsearch() -> list[dict]:
+    """Équivalent ES du scan Infinity : un index `ragflow_<tenant_id>` par
+    tenant (pas de découpage par KB côté ES — kb_id vide). Fournit les
+    octets/lignes par tenant, ce dont le quota a besoin."""
     from common import settings as common_settings
+    es = common_settings.docStoreConn.es
+    stats = es.indices.stats(index="ragflow_*", metric="store,docs")
+    tables = []
+    for idx_name, s in (stats.get("indices") or {}).items():
+        m = re.match(r"^ragflow_(.+)$", idx_name)
+        if not m:
+            continue
+        primaries = s.get("primaries") or {}
+        tables.append({
+            "tenant_id": m.group(1),
+            "kb_id": "",
+            "rows": int(((primaries.get("docs") or {}).get("count")) or 0),
+            "bytes": int(((primaries.get("store") or {}).get("size_in_bytes")) or 0),
+        })
+    return tables
+
+
+def scan() -> dict:
+    """Scan bloquant — appeler depuis un thread. Les erreurs par table sont
+    avalées (table en cours de drop, etc.). Dispatch selon DOC_ENGINE :
+    la prod est passée sur Elasticsearch le 2026-08-29, le chemin Infinity
+    levait KeyError('uri') faute de config → panel admin sans quotas et
+    stacktrace toutes les 15 min (constaté 2026-09-01)."""
+    from common import settings as common_settings
+
+    if not getattr(common_settings, "DOC_ENGINE_INFINITY", False):
+        try:
+            tables = _scan_elasticsearch() if getattr(common_settings, "DOC_ENGINE", "") == "elasticsearch" else []
+        except Exception as e:
+            logging.warning(f"storage scan ({getattr(common_settings, 'DOC_ENGINE', '?')}): {e}")
+            tables = []
+        data = {
+            "scanned_at": time.time(),
+            "tables": tables,
+            "total_bytes": sum(t["bytes"] for t in tables),
+            "total_rows": sum(t["rows"] for t in tables),
+        }
+        _cache.update(ts=time.time(), data=data)
+        _redis_put(data)
+        return data
+
     from common.doc_store.infinity_conn_pool import INFINITY_CONN
 
     db_name = common_settings.INFINITY.get("db_name", "default_db") if hasattr(common_settings, "INFINITY") else "default_db"

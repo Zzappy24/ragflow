@@ -85,6 +85,35 @@ def _is_short_header(text, max_tokens=50):
     return num_tokens_from_string(text) < max_tokens
 
 
+# CUSTOM B2B SaaS — support XML : aplatit un document XML en lignes
+# « chemin/balise@attr: texte » pour l'indexation (contexte hiérarchique
+# conservé, namespaces retirés). XML invalide → texte brut inchangé.
+def _xml_to_flat_lines(txt: str) -> str:
+    try:
+        import xml.etree.ElementTree as ET
+        root = ET.fromstring(txt)
+    except Exception:
+        return txt
+    lines = []
+
+    def walk(el, path):
+        tag = el.tag.split("}")[-1] if isinstance(el.tag, str) else str(el.tag)
+        p = f"{path}/{tag}" if path else tag
+        for k, v in el.attrib.items():
+            lines.append(f"{p}@{k.split('}')[-1]}: {v}")
+        text = (el.text or "").strip()
+        if text:
+            lines.append(f"{p}: {text}")
+        for child in el:
+            walk(child, p)
+            tail = (child.tail or "").strip()
+            if tail:
+                lines.append(f"{p}: {tail}")
+
+    walk(root, "")
+    return "\n".join(lines) if lines else txt
+
+
 def _normalize_section_text_for_rtl_presentation_forms(sections):
     if not sections:
         return sections
@@ -1084,6 +1113,20 @@ def chunk(filename, binary=None, from_page=0, to_page=MAXIMUM_PAGE_NUMBER, lang=
         chunk_token_num = int(parser_config.get("chunk_token_num", 128))
         sections = JsonParser(chunk_token_num)(binary)
         sections = [(_, "") for _ in sections if _]
+        sections = _normalize_section_text_for_rtl_presentation_forms(sections)
+        callback(0.8, "Finish parsing.")
+
+    elif re.search(r"\.xml$", filename, re.IGNORECASE):
+        # CUSTOM B2B SaaS — support XML dans le chunker General (2026-09-01) :
+        # l'upload accepte .xml (filename_type → DOC) mais aucune branche de
+        # parsing n'existait → NotImplementedError au parse. Le document est
+        # aplati en lignes « chemin/balise@attr: texte » (le contexte
+        # hiérarchique reste lisible) puis découpé comme du texte ; un XML
+        # mal formé est indexé en texte brut.
+        callback(0.1, "Start to parse.")
+        from deepdoc.parser.utils import get_text
+        txt = _xml_to_flat_lines(get_text(filename, binary))
+        sections = TxtParser.parser_txt(txt, parser_config.get("chunk_token_num", 128), parser_config.get("delimiter", "\n!?;。；！？"))
         sections = _normalize_section_text_for_rtl_presentation_forms(sections)
         callback(0.8, "Finish parsing.")
 
