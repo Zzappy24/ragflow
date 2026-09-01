@@ -608,6 +608,28 @@ async def delete_knowledge_graph(tenant_id, dataset_id):
         return get_error_data_result(message="Internal server error")
 
 
+# CUSTOM B2B SaaS — route absente de l'API Python : upstream ne l'a
+# implémentée que côté serveur Go (non déployé chez nous), mais le front
+# l'appelle au changement de modèle d'embedding d'un dataset → 404 visible.
+# Le service Python complet (échantillonnage + cosinus) existait déjà.
+@manager.route("/datasets/<dataset_id>/embedding/check", methods=["POST"])  # noqa: F821
+@login_required
+@require_permission(Permission.DATASET_UPDATE)
+@add_tenant_id_to_kwargs
+async def check_dataset_embedding(tenant_id, dataset_id):
+    try:
+        req = await request.get_json(force=True, silent=True) or {}
+        success, result = await thread_pool_exec(dataset_api_service.check_embedding, dataset_id, tenant_id, req)
+        if success is True:
+            return get_result(data=result)
+        if success == "not_effective":
+            return get_json_result(code=result["code"], message=result["message"], data=result["data"])
+        return get_error_data_result(message=result)
+    except Exception as e:
+        logging.exception(e)
+        return get_error_data_result(message="Internal server error")
+
+
 @manager.route("/datasets/<dataset_id>/index", methods=["POST"])  # noqa: F821
 @login_required
 @require_permission(Permission.DATASET_UPDATE)

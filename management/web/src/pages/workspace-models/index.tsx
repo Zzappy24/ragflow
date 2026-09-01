@@ -27,6 +27,16 @@ const MODEL_TYPES = [
   { label: 'TTS',            value: 'tts' },
 ];
 
+// Mapping type de modèle → champ de défaut du tenant (PUT /models/defaults).
+const TYPE_TO_DEFAULT_FIELD: Record<string, string> = {
+  chat: 'llm_id',
+  embedding: 'embd_id',
+  image2text: 'img2txt_id',
+  speech2text: 'asr_id',
+  rerank: 'rerank_id',
+  tts: 'tts_id',
+};
+
 const DEFAULT_BASE_URLS: Record<string, string> = {
   Ollama: 'http://localhost:11434',
   VLLM:   'http://localhost:8000/v1',
@@ -94,12 +104,31 @@ export default function WorkspaceModelsPage({ wsId }: { wsId?: string }) {
 
   // ---- Add provider --------------------------------------------------------
 
+  // Pré-coche « set as default » quand aucun défaut n'existe pour le type
+  // choisi — le cas qui laissait des workspaces sans embedding par défaut.
+  const addModelType = Form.useWatch('model_type', addForm);
+  useEffect(() => {
+    if (!addOpen || !addModelType) return;
+    const field = TYPE_TO_DEFAULT_FIELD[addModelType];
+    if (field && defaults && !defaults[field as keyof Defaults]) {
+      addForm.setFieldValue('set_as_default', true);
+    }
+  }, [addOpen, addModelType, defaults, addForm]);
+
   const onAddProvider = async () => {
     try {
-      const values = await addForm.validateFields();
+      const { set_as_default, ...values } = await addForm.validateFields();
       setAddSaving(true);
       await api.post(`/workspaces/${wsId}/models/providers`, values);
-      message.success('Model provider added');
+      const defaultField = TYPE_TO_DEFAULT_FIELD[values.model_type as string];
+      if (set_as_default && defaultField) {
+        await api.put(`/workspaces/${wsId}/models/defaults`, {
+          [defaultField]: `${values.llm_name}@${values.llm_factory}`,
+        });
+        message.success('Model provider added and set as workspace default');
+      } else {
+        message.success('Model provider added');
+      }
       setAddOpen(false);
       addForm.resetFields();
       fetchAll();
@@ -323,26 +352,41 @@ export default function WorkspaceModelsPage({ wsId }: { wsId?: string }) {
 
       {defaults && (
         <Card>
-          <Alert
-            type="info"
-            showIcon
-            className="mb-4"
-            message="These defaults are used for all parsing and chat operations in this workspace. Members cannot change them — only org admins via this panel."
-          />
+          {(!defaults.embd_id || !defaults.llm_id) ? (
+            <Alert
+              type="warning"
+              showIcon
+              className="mb-4"
+              message="Défauts critiques manquants"
+              description={`Ce workspace n'a pas de modèle ${[
+                !defaults.llm_id && 'Chat',
+                !defaults.embd_id && 'Embedding',
+              ].filter(Boolean).join(' ni ')} par défaut : le parsing et/ou le chat échoueront pour ses membres avec une erreur peu explicite. Cliquez sur « Edit Defaults » pour les définir. (L'héritage du workspace template ne s'applique qu'à la création du workspace, jamais rétroactivement.)`}
+            />
+          ) : (
+            <Alert
+              type="info"
+              showIcon
+              className="mb-4"
+              message="These defaults are used for all parsing and chat operations in this workspace. Members cannot change them — only org admins via this panel."
+            />
+          )}
           <Space direction="vertical" className="w-full" size="small">
             {[
-              { label: 'Chat (LLM)',     value: defaults.llm_id },
-              { label: 'Embedding',      value: defaults.embd_id },
-              { label: 'Image to Text',  value: defaults.img2txt_id },
-              { label: 'Speech to Text', value: defaults.asr_id },
-              { label: 'Rerank',         value: defaults.rerank_id },
-              { label: 'TTS',            value: defaults.tts_id },
-            ].map(({ label, value }) => (
+              { label: 'Chat (LLM)',     value: defaults.llm_id,     critical: true },
+              { label: 'Embedding',      value: defaults.embd_id,    critical: true },
+              { label: 'Image to Text',  value: defaults.img2txt_id, critical: false },
+              { label: 'Speech to Text', value: defaults.asr_id,     critical: false },
+              { label: 'Rerank',         value: defaults.rerank_id,  critical: false },
+              { label: 'TTS',            value: defaults.tts_id,     critical: false },
+            ].map(({ label, value, critical }) => (
               <div key={label} className="flex justify-between">
                 <Text type="secondary">{label}</Text>
                 {value
                   ? <Text code className="text-xs">{value}</Text>
-                  : <Text type="secondary">—</Text>}
+                  : critical
+                    ? <Text type="danger">non défini — requis</Text>
+                    : <Text type="secondary">—</Text>}
               </div>
             ))}
           </Space>
@@ -406,6 +450,11 @@ export default function WorkspaceModelsPage({ wsId }: { wsId?: string }) {
           <Form.Item name="is_tools" label="Function calling (tools)" valuePropName="checked"
             initialValue={false}
             extra="Requis pour les composants Agent (tool calling). À activer pour les modèles chat qui supportent les function calls — sinon l'Agent n'appellera jamais ses outils.">
+            <Switch />
+          </Form.Item>
+          <Form.Item name="set_as_default" label="Définir comme modèle par défaut" valuePropName="checked"
+            initialValue={false}
+            extra="Utilisé par défaut pour ce type (parsing, chat…) dans ce workspace. Pré-coché quand aucun défaut n'existe encore pour ce type — sans défaut, le parsing/chat échoue.">
             <Switch />
           </Form.Item>
         </Form>
