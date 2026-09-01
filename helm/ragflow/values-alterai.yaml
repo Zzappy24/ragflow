@@ -130,7 +130,13 @@ ragflow-task-executor:
   # smaller than requested bytes of N" qu'on voyait sur les PDFs un
   # peu lourds. C'est un PLAFOND, pas une réservation — les arenas
   # grossissent power-of-two à la demande.
-  ocrGpuMemLimitMb: "8192"
+  # 8192 → 5120 (2026-09-01) : sous OCR soutenu (PDF Zabbix 2300 pages,
+  # 4 tâches parallèles), 4 sessions ONNX × 8 Go de plafond = 32 Go
+  # potentiels sur un slot MIG de 24 Go → GPU plein, l'arène ne peut plus
+  # s'étendre ("Available memory of 1048576 is smaller than requested"),
+  # tâches de pages en échec. 4 × 5 Go = 20 Go ≤ 24 Go : chaque session
+  # garde un plafond garanti au lieu de s'affamer mutuellement.
+  ocrGpuMemLimitMb: "5120"
   # MIG mixed strategy active depuis 2026-07-01 — GPUs 2,3 splittés en
   # 4 instances de 24 GB chacun (8 instances MIG total). Le task-executor
   # demande une instance MIG (`nvidia.com/mig-1g.24gb: 1`) au lieu d'un
