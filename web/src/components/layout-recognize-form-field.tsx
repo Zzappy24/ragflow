@@ -18,6 +18,10 @@ import {
 
 export const enum ParseDocumentType {
   DeepDOC = 'DeepDOC',
+  // CUSTOM B2B SaaS — « DeepDOC (fast) » : DeepDOC sans l'auto-rotation des
+  // tableaux (~50 % du temps d'analyse de tableaux économisé sur les PDF
+  // numériques jamais tournés). Backend : rag/app/naive.py PARSERS.
+  DeepDOCFast = 'DeepDOC (fast)',
   PlainText = 'Plain Text',
   Docling = 'Docling',
   OpenDataLoader = 'OpenDataLoader',
@@ -51,6 +55,7 @@ export function LayoutRecognizeFormField({
       ? optionsWithoutLLM
       : [
           ParseDocumentType.DeepDOC,
+          ParseDocumentType.DeepDOCFast,
           ParseDocumentType.PlainText,
           ParseDocumentType.Docling,
           ParseDocumentType.OpenDataLoader,

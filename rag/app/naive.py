@@ -156,6 +156,18 @@ def by_deepdoc(filename, binary=None, from_page=0, to_page=MAXIMUM_PAGE_NUMBER, 
     return sections, tables, pdf_parser
 
 
+# CUSTOM B2B SaaS — « DeepDOC (fast) » : DeepDOC complet SANS l'auto-rotation
+# des tableaux. L'orientation teste 4 angles avec une passe d'OCR chacun sur
+# CHAQUE tableau — 70-90 % du temps de tâche sur les manuels denses en
+# tableaux (mesuré 2026-09-01, PDF Zabbix 2300 p. : Table analysis jusqu'à
+# 485 s/12 pages), et ces rafales d'OCR sont ce qui sature l'arène GPU.
+# Inutile sur les PDF numériques jamais tournés (99 % des cas). Même
+# principe éprouvé que paper_fast (résultats identiques quand 0° gagne).
+def by_deepdoc_fast(*args, **kwargs):
+    kwargs["pdf_cls"] = PdfFastTables  # classe définie plus bas, résolue à l'appel
+    return by_deepdoc(*args, **kwargs)
+
+
 def by_mineru(
     filename,
     binary=None,
@@ -352,6 +364,7 @@ def by_plaintext(filename, binary=None, from_page=0, to_page=MAXIMUM_PAGE_NUMBER
 
 PARSERS = {
     "deepdoc": by_deepdoc,
+    "deepdoc (fast)": by_deepdoc_fast,  # CUSTOM B2B SaaS — « DeepDOC (fast) »
     "mineru": by_mineru,
     "docling": by_docling,
     "opendataloader": by_opendataloader,
@@ -675,6 +688,14 @@ class Pdf(PdfParser):
 # Maximum number of HTTP redirects followed when fetching a remote image
 # referenced by a markdown document (each hop is SSRF-validated).
 MAX_IMAGE_REDIRECTS = 5
+
+
+# CUSTOM B2B SaaS — « DeepDOC (fast) » : voir by_deepdoc_fast. L'override
+# court-circuite le test des 4 orientations (0/90/180/270°, une passe d'OCR
+# chacune) et déclare directement 0° — identique à paper_fast.Pdf.
+class PdfFastTables(Pdf):
+    def _evaluate_table_orientation(self, table_img, sample_ratio=0.3):
+        return 0, table_img, {0: {"avg_confidence": 1.0, "total_regions": 0, "combined_score": 1.0}}
 
 
 class Markdown(MarkdownParser):
