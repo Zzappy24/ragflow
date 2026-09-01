@@ -1125,7 +1125,15 @@ def chunk(filename, binary=None, from_page=0, to_page=MAXIMUM_PAGE_NUMBER, lang=
         # mal formé est indexé en texte brut.
         callback(0.1, "Start to parse.")
         from deepdoc.parser.utils import get_text
-        txt = _xml_to_flat_lines(get_text(filename, binary))
+        # Garde mémoire : le DOM ElementTree coûte ~8-10× la taille du
+        # fichier — un XML industriel de centaines de Mo OOM-kill
+        # l'executor (16 Gi). Au-delà du seuil, indexation en texte brut.
+        xml_dom_max = int(os.getenv("XML_DOM_MAX_BYTES", 32 * 1024 * 1024))
+        txt = get_text(filename, binary)
+        if binary is not None and len(binary) <= xml_dom_max:
+            txt = _xml_to_flat_lines(txt)
+        else:
+            callback(0.15, "Large XML: indexed as raw text (no DOM flattening).")
         sections = TxtParser.parser_txt(txt, parser_config.get("chunk_token_num", 128), parser_config.get("delimiter", "\n!?;。；！？"))
         sections = _normalize_section_text_for_rtl_presentation_forms(sections)
         callback(0.8, "Finish parsing.")
