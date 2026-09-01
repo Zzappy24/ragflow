@@ -31,6 +31,20 @@ export default function MembersPage({
   const [form] = Form.useForm();
   const { message } = App.useApp();
 
+  // Scope workspace : les personnes ajoutables sont par définition les
+  // membres de l'org parente pas encore dans le workspace — on les propose
+  // dans un sélecteur au lieu de faire retaper un email déjà connu.
+  const [addable, setAddable] = useState<{ user_id: string; email: string | null; nickname: string | null }[] | null>(null);
+  const openAddModal = () => {
+    setModalOpen(true);
+    if (scope === 'ws') {
+      setAddable(null);
+      api.get(`/workspaces/${scopeId}/addable-members`)
+        .then((res) => setAddable(res.data))
+        .catch(() => setAddable([]));
+    }
+  };
+
   // Invite-user (org-scope only): creates a brand-new user atomically through
   // /api/admin/users and returns a single-use invite URL the admin can copy.
   const [inviteOpen, setInviteOpen] = useState(false);
@@ -253,8 +267,8 @@ export default function MembersPage({
               Pour l'org, indispensable quand le compte existe déjà (superadmin,
               membre d'une autre org, ex-testeur) — l'invitation, elle, CRÉE un
               compte et échoue si l'email existe. */}
-          <Button icon={<PlusOutlined />} onClick={() => setModalOpen(true)}>
-            {scope === 'ws' ? 'Add Member' : 'Ajouter un membre existant'}
+          <Button icon={<PlusOutlined />} onClick={openAddModal}>
+            {scope === 'ws' ? "Ajouter depuis l'organisation" : 'Ajouter un membre existant'}
           </Button>
           {scope === 'org' && (
             <Button type="primary" icon={<UserAddOutlined />} onClick={() => setInviteOpen(true)}>
@@ -276,7 +290,7 @@ export default function MembersPage({
         />
       </Card>
 
-      <Modal title={scope === 'ws' ? 'Add Member' : 'Ajouter un membre existant'}
+      <Modal title={scope === 'ws' ? "Ajouter depuis l'organisation" : 'Ajouter un membre existant'}
              open={modalOpen} onOk={onAdd} onCancel={() => setModalOpen(false)} okText="Ajouter">
         <Form form={form} layout="vertical" className="mt-4">
           {scope === 'org' && (
@@ -285,9 +299,30 @@ export default function MembersPage({
               utilisez « Inviter (nouveau compte) ».
             </p>
           )}
+          {scope === 'ws' ? (
+            <Form.Item name="email" label="Membre de l'organisation"
+                       rules={[{ required: true }]}
+                       extra={addable?.length === 0
+                         ? "Tous les membres de l'organisation sont déjà dans ce workspace — invitez d'abord la personne dans l'organisation."
+                         : 'Seuls les membres de l\'organisation pas encore présents dans ce workspace sont proposés.'}>
+              <Select
+                showSearch
+                loading={addable === null}
+                placeholder="Rechercher par nom ou email…"
+                optionFilterProp="label"
+                options={(addable ?? [])
+                  .filter((u) => u.email)
+                  .map((u) => ({
+                    value: u.email as string,
+                    label: u.nickname ? `${u.nickname} — ${u.email}` : (u.email as string),
+                  }))}
+              />
+            </Form.Item>
+          ) : (
           <Form.Item name="email" label="Email" rules={[{ required: true, type: 'email' }]}>
             <Input placeholder="user@example.com" />
           </Form.Item>
+          )}
           <Form.Item name="role" label="Role" initialValue={roleOptions[roleOptions.length - 1].value}>
             <Select options={roleOptions} />
           </Form.Item>

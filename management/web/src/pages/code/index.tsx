@@ -1,6 +1,6 @@
 import { useEffect, useState, useCallback } from 'react';
 import { useNavigate, useSearchParams } from 'react-router-dom';
-import { Table, Button, Card, Modal, Form, Input, InputNumber, App, Progress, Tag, Popconfirm, Space, Tooltip, Typography, Alert } from 'antd';
+import { Table, Button, Card, Modal, Form, Input, InputNumber, App, Progress, Tag, Popconfirm, Space, Tooltip, Typography, Alert, Collapse, Select, AutoComplete } from 'antd';
 import { PlusOutlined, StopOutlined, CopyOutlined, MailOutlined, ReloadOutlined, DeleteOutlined, EditOutlined, UserAddOutlined } from '@ant-design/icons';
 import api from '@/lib/api';
 import CodeDashboardSection, { fmtTokens } from './dashboard-section';
@@ -84,6 +84,26 @@ export default function CodePage({ orgId: orgIdProp }: { orgId?: string } = {}) 
   const [limitsForm] = Form.useForm();
   const { message } = App.useApp();
 
+  // UX volume : teams repliées par défaut (au-delà de 2), clés révoquées
+  // masquées par défaut, suggestions d'emails depuis les membres de l'org.
+  const [openTeams, setOpenTeams] = useState<string[] | null>(null);
+  const [showRevoked, setShowRevoked] = useState<Record<string, boolean>>({});
+  const [orgMembers, setOrgMembers] = useState<{ email: string | null; nickname: string | null }[]>([]);
+
+  useEffect(() => {
+    if (!orgId) return;
+    api.get(`/orgs/${orgId}/members`)
+      .then((res) => setOrgMembers(res.data))
+      .catch(() => setOrgMembers([]));
+  }, [orgId]);
+
+  const memberEmailOptions = orgMembers
+    .filter((m) => m.email)
+    .map((m) => ({
+      value: m.email as string,
+      label: m.nickname ? `${m.nickname} — ${m.email}` : (m.email as string),
+    }));
+
   // Bulk seat invites — one CodeKeyInvite per email, no key created until claim.
   const [bulkModalTeam, setBulkModalTeam] = useState<CodeTeam | null>(null);
   const [bulkText, setBulkText] = useState('');
@@ -130,6 +150,13 @@ export default function CodePage({ orgId: orgIdProp }: { orgId?: string } = {}) 
   }, [orgId]);
 
   useEffect(fetchOverview, [fetchOverview]);
+
+  // Premier chargement : tout replié dès que le volume dépasse 2 teams.
+  useEffect(() => {
+    if (openTeams === null && overview?.teams) {
+      setOpenTeams(overview.teams.length <= 2 ? overview.teams.map((t) => t.id) : []);
+    }
+  }, [overview, openTeams]);
 
   const fetchInvites = useCallback((teamId: string) => {
     api.get(`/code/teams/${teamId}/invites`)
@@ -494,46 +521,65 @@ export default function CodePage({ orgId: orgIdProp }: { orgId?: string } = {}) 
         </div>
       </Card>
 
-      {(overview?.teams ?? []).map((team) => (
-        <Card key={team.id} className="mb-4"
-              title={<Space>{team.name}
-                     {team.bu && <Tag>{team.bu}</Tag>}
-                     <Tag color={team.spend != null && team.spend >= team.max_budget ? 'red' : 'blue'}>
-                       {team.spend != null ? `${euro(team.spend)} / ${euro(team.max_budget)}` : `— / ${euro(team.max_budget)}`}
-                     </Tag>
-                     <Tag color="geekblue">{team.tokens_today == null ? '— tokens' : `${fmtTokens(team.tokens_today)} tokens auj.`}</Tag>
-                     {syncTag(team.sync_status)}</Space>}
-              extra={<Space>
-                       <Tooltip title="Le flux nominal pour des développeurs : chaque email reçoit un lien one-time et récupère sa clé lui-même — vous ne voyez jamais la clé.">
-                         <Button size="small" type="primary" ghost icon={<MailOutlined />}
-                                 onClick={() => setBulkModalTeam(team)}>Inviter par email</Button>
-                       </Tooltip>
-                       <Tooltip title="Cas service (CI, intégration, test) : la clé est créée et affichée immédiatement, sans email — c'est vous qui la transmettez.">
-                         <Button size="small" icon={<PlusOutlined />}
-                                 onClick={() => setKeyModalTeam(team)}>Clé directe</Button>
-                       </Tooltip>
-                       <Tooltip title="Modifier la team (budget, BU)">
-                         <Button size="small" icon={<EditOutlined />}
-                                 onClick={() => { setBudgetModalTeam(team); budgetForm.setFieldsValue({ max_budget: team.max_budget, bu: team.bu || '' }); }} />
-                       </Tooltip>
-                       <Tooltip title="Déléguer la gestion des clés de cette team à un membre de l'organisation (invitations, rotation, révocation — sans accès aux autres teams).">
-                         <Button size="small" icon={<UserAddOutlined />}
-                                 onClick={() => { setAdminModalTeam(team); setTeamAdmins(null); fetchTeamAdmins(team.id); }} />
-                       </Tooltip>
-                       <Popconfirm
-                         title="Supprimer cette team ?"
-                         description={(team.keys?.length ?? 0) > 0
-                           ? 'Ses clés seront révoquées et ses invitations annulées. L\'historique de dépense est conservé. Le budget alloué est libéré.'
-                           : 'Aucune clé créée : la team sera supprimée définitivement.'}
-                         okText="Supprimer" okButtonProps={{ danger: true }}
-                         onConfirm={() => onDeleteTeam(team)}>
-                         <Button size="small" danger icon={<DeleteOutlined />} />
-                       </Popconfirm>
-                     </Space>}>
-          <Table rowKey="id" size="small" pagination={false}
-                 columns={keyColumns(team)} dataSource={team.keys} />
+      <Collapse
+        className="mb-4 bg-white"
+        activeKey={openTeams ?? []}
+        onChange={(keys) => setOpenTeams(Array.isArray(keys) ? keys : [keys])}
+        items={(overview?.teams ?? []).map((team) => {
+          const activeKeys = (team.keys ?? []).filter((k) => k.status === 'active');
+          const revokedKeys = (team.keys ?? []).filter((k) => k.status !== 'active');
+          const visibleKeys = showRevoked[team.id] ? team.keys : activeKeys;
+          const pendingInvites = invitesByTeam[team.id] ?? [];
+          return {
+            key: team.id,
+            label: <Space wrap>{team.name}
+                   {team.bu && <Tag>{team.bu}</Tag>}
+                   <Tag color={team.spend != null && team.spend >= team.max_budget ? 'red' : 'blue'}>
+                     {team.spend != null ? `${euro(team.spend)} / ${euro(team.max_budget)}` : `— / ${euro(team.max_budget)}`}
+                   </Tag>
+                   <Tag color="geekblue">{team.tokens_today == null ? '— tokens' : `${fmtTokens(team.tokens_today)} tokens auj.`}</Tag>
+                   <Tag>{activeKeys.length} clé{activeKeys.length > 1 ? 's' : ''}{pendingInvites.length > 0 ? ` · ${pendingInvites.length} invit.` : ''}</Tag>
+                   {syncTag(team.sync_status)}</Space>,
+            extra: <span onClick={(e) => e.stopPropagation()}><Space>
+                     <Tooltip title="Le flux nominal pour des développeurs : chaque email reçoit un lien one-time et récupère sa clé lui-même — vous ne voyez jamais la clé.">
+                       <Button size="small" type="primary" ghost icon={<MailOutlined />}
+                               onClick={() => setBulkModalTeam(team)}>Inviter par email</Button>
+                     </Tooltip>
+                     <Tooltip title="Cas service (CI, intégration, test) : la clé est créée et affichée immédiatement, sans email — c'est vous qui la transmettez.">
+                       <Button size="small" icon={<PlusOutlined />}
+                               onClick={() => setKeyModalTeam(team)}>Clé directe</Button>
+                     </Tooltip>
+                     <Tooltip title="Modifier la team (budget, BU)">
+                       <Button size="small" icon={<EditOutlined />}
+                               onClick={() => { setBudgetModalTeam(team); budgetForm.setFieldsValue({ max_budget: team.max_budget, bu: team.bu || '' }); }} />
+                     </Tooltip>
+                     <Tooltip title="Déléguer la gestion des clés de cette team à un membre de l'organisation (invitations, rotation, révocation — sans accès aux autres teams).">
+                       <Button size="small" icon={<UserAddOutlined />}
+                               onClick={() => { setAdminModalTeam(team); setTeamAdmins(null); fetchTeamAdmins(team.id); }} />
+                     </Tooltip>
+                     <Popconfirm
+                       title="Supprimer cette team ?"
+                       description={(team.keys?.length ?? 0) > 0
+                         ? 'Ses clés seront révoquées et ses invitations annulées. L\'historique de dépense est conservé. Le budget alloué est libéré.'
+                         : 'Aucune clé créée : la team sera supprimée définitivement.'}
+                       okText="Supprimer" okButtonProps={{ danger: true }}
+                       onConfirm={() => onDeleteTeam(team)}>
+                       <Button size="small" danger icon={<DeleteOutlined />} />
+                     </Popconfirm>
+                   </Space></span>,
+            children: <>
+          <Table rowKey="id" size="small" pagination={visibleKeys.length > 25 ? { pageSize: 25 } : false}
+                 columns={keyColumns(team)} dataSource={visibleKeys} />
+          {revokedKeys.length > 0 && (
+            <Button type="link" size="small" className="mt-1 px-0"
+                    onClick={() => setShowRevoked((prev) => ({ ...prev, [team.id]: !prev[team.id] }))}>
+              {showRevoked[team.id]
+                ? 'masquer les clés révoquées'
+                : `afficher ${revokedKeys.length} clé${revokedKeys.length > 1 ? 's' : ''} révoquée${revokedKeys.length > 1 ? 's' : ''}`}
+            </Button>
+          )}
 
-          {(invitesByTeam[team.id] ?? []).length > 0 && (
+          {pendingInvites.length > 0 && (
             <div className="mt-3">
               <Space>
                 <Typography.Text type="secondary">Invitations en attente</Typography.Text>
@@ -545,7 +591,7 @@ export default function CodePage({ orgId: orgIdProp }: { orgId?: string } = {}) 
               </Space>
               <Table rowKey="id" size="small" pagination={false} showHeader={false}
                      className="mt-1"
-                     dataSource={invitesByTeam[team.id]}
+                     dataSource={pendingInvites}
                      columns={[
                        { title: 'Email', dataIndex: 'email' },
                        { title: 'Expire', dataIndex: 'expires_at',
@@ -564,8 +610,15 @@ export default function CodePage({ orgId: orgIdProp }: { orgId?: string } = {}) 
                      ]} />
             </div>
           )}
-        </Card>
-      ))}
+            </>,
+          };
+        })}
+      />
+      {(overview?.teams ?? []).length > 2 && (openTeams ?? []).length === 0 && (
+        <Typography.Text type="secondary" className="block -mt-2 mb-4">
+          Cliquez sur une team pour voir ses clés et invitations.
+        </Typography.Text>
+      )}
 
       <Modal title="Nouvelle code-team" open={teamModal} onOk={onCreateTeam}
              onCancel={() => setTeamModal(false)}>
@@ -640,9 +693,14 @@ export default function CodePage({ orgId: orgIdProp }: { orgId?: string } = {}) 
           </div>
         )}
         <Form form={adminForm} layout="vertical">
-          <Form.Item name="email" label="Email du membre"
+          <Form.Item name="email" label="Membre de l'organisation"
                      rules={[{ required: true, type: 'email' }]}>
-            <Input placeholder="prenom.nom@client.com" />
+            <AutoComplete
+              options={memberEmailOptions}
+              placeholder="Rechercher par nom ou email…"
+              filterOption={(input, option) =>
+                (option?.label as string ?? '').toLowerCase().includes(input.toLowerCase())}
+            />
           </Form.Item>
         </Form>
       </Modal>
@@ -711,9 +769,17 @@ export default function CodePage({ orgId: orgIdProp }: { orgId?: string } = {}) 
                  ]} />
         ) : (
           <Form layout="vertical">
-            <Form.Item label="Emails (un par ligne)">
-              <Input.TextArea rows={6} placeholder="un email par ligne"
-                              value={bulkText} onChange={(e) => setBulkText(e.target.value)} />
+            <Form.Item label="Emails"
+                       extra="Les membres de l'organisation sont suggérés ; un email externe se tape librement. Le collage d'une liste (retours à la ligne, virgules) fonctionne.">
+              <Select
+                mode="tags"
+                tokenSeparators={['\n', ',', ';', ' ']}
+                placeholder="Sélectionner ou saisir des emails…"
+                options={memberEmailOptions}
+                value={bulkText ? bulkText.split('\n').filter(Boolean) : []}
+                onChange={(vals: string[]) => setBulkText(vals.join('\n'))}
+                optionFilterProp="label"
+              />
             </Form.Item>
             <Space size="large">
               <Form.Item label={`Budget par siège (€ / ${ent?.budget_period ?? '1mo'}) — optionnel`}

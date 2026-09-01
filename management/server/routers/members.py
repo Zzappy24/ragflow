@@ -222,6 +222,39 @@ def list_ws_members(ws_id: str, user_id: str = Depends(get_current_user_id)):
     return result
 
 
+@router.get("/workspaces/{ws_id}/addable-members")
+def list_ws_addable_members(ws_id: str, user_id: str = Depends(get_current_user_id)):
+    """Membres de l'organisation parente PAS ENCORE membres de ce workspace.
+
+    Alimente le sélecteur « Ajouter depuis l'organisation » du front — on ne
+    retape plus un email qui existe déjà dans l'org, et on ne propose jamais
+    quelqu'un de déjà présent.
+    """
+    from management.server.auth.dependencies import require_ws_admin
+    require_ws_admin(ws_id, user_id)
+
+    from api.db.services.workspace_service import WorkspaceService, WsMemberService
+    ok, ws = WorkspaceService.get_by_id(ws_id)
+    if not ok or not ws:
+        raise HTTPException(status_code=404, detail="Workspace not found")
+
+    from api.db.services.org_service import OrgMemberService
+    existing = {m.user_id for m in WsMemberService.list_by_workspace(ws_id)}
+    result = []
+    for m in OrgMemberService.list_by_org(ws.org_id):
+        if m.user_id in existing:
+            continue
+        user = _load_user(m.user_id)
+        if not user:
+            continue
+        result.append({
+            "user_id": m.user_id,
+            "email": getattr(user, "email", None),
+            "nickname": getattr(user, "nickname", None),
+        })
+    return result
+
+
 @router.post("/workspaces/{ws_id}/members", response_model=MemberResponse, status_code=status.HTTP_201_CREATED)
 def add_ws_member(request: Request, ws_id: str, body: MemberAdd, user_id: str = Depends(get_current_user_id)):
     """Add a member to a workspace. User must already be an org member."""
