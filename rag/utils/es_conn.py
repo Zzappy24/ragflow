@@ -332,12 +332,21 @@ class ESConnection(ESConnectionBase):
                 {"index": {"_index": index_name, "_id": meta_id}})
             operations.append(d_copy)
 
+        # CUSTOM B2B SaaS — refresh d'ingestion : `wait_for` attendait le
+        # prochain cycle de refresh (jusqu'à 1 s) sur CHAQUE bulk et forçait
+        # des micro-segments en rafale. Seul l'ajout interactif d'un chunk
+        # (batch de 1, l'UI re-liste immédiatement) a besoin de visibilité
+        # immédiate ; l'ingestion bulk n'a aucun lecteur avant le refresh
+        # périodique d'ES (1 s par défaut) — GraphRAG/RAPTOR tournent en
+        # tâches séparées bien plus tard.
+        refresh = "wait_for" if len(documents) == 1 else False
+
         res = []
         for _ in range(ATTEMPT_TIME):
             try:
                 res = []
                 r = self.es.bulk(index=index_name, operations=operations,
-                                 refresh="wait_for", timeout="60s")
+                                 refresh=refresh, timeout="60s")
                 if re.search(r"False", str(r["errors"]), re.IGNORECASE):
                     return res
 

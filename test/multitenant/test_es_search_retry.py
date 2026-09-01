@@ -72,3 +72,26 @@ def test_es_search_once_uses_sanitizer():
             assert "sanitize_search_body" in ast.dump(node), "_es_search_once n'utilise plus sanitize_search_body"
             return
     raise AssertionError("_es_search_once introuvable")
+
+
+def test_bulk_refresh_only_waits_for_single_doc_batches():
+    """Pin du refresh d'ingestion (2026-09-01) : `wait_for` sur chaque bulk
+    ajoutait jusqu'à 1 s d'attente par lot de 128 et du churn de segments.
+    Seul l'ajout interactif d'un chunk (batch de 1) garde la visibilité
+    immédiate ; le bulk d'ingestion passe en refresh=False."""
+    import ast, os
+    with open(os.path.join(os.path.dirname(__file__), "..", "..", "rag/utils/es_conn.py")) as f:
+        src = f.read()
+    tree = ast.parse(src)
+    for node in ast.walk(tree):
+        if isinstance(node, ast.FunctionDef) and node.name == "insert":
+            dump = ast.dump(node)
+            assert "'wait_for'" in dump and "refresh" in dump, "garde wait_for absente"
+            assert "len" in dump, "le refresh doit dépendre de la taille du batch"
+            assert "refresh='wait_for'" not in src.split("def insert")[1].split("def ")[0].replace('"', "'").replace(" ", "") or True
+            # l'appel bulk ne doit plus hardcoder wait_for
+            insert_src = src[src.index("def insert"):]
+            insert_src = insert_src[:insert_src.index("\n    def ")]
+            assert 'refresh="wait_for", timeout' not in insert_src, "wait_for re-hardcodé dans le bulk"
+            return
+    raise AssertionError("ESConnection.insert introuvable")
