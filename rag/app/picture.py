@@ -32,7 +32,19 @@ from common.string_utils import clean_markdown_block
 from deepdoc.vision import OCR
 from rag.nlp import attach_media_context, rag_tokenizer, tokenize
 
-ocr = OCR()
+# CUSTOM B2B SaaS — OCR paresseux : l'instanciation module-level chargeait
+# les modèles ONNX det+rec (~150-300 Mo RSS + threads onnxruntime) dans les
+# pods API au boot via la chaîne agent_api → rag.flow.pipeline →
+# figure_parser → picture, alors que seul l'executor parse des images.
+# Chargé au premier appel réel (seul usage : le chunk() ci-dessous).
+_ocr = None
+
+
+def _get_ocr():
+    global _ocr
+    if _ocr is None:
+        _ocr = OCR()
+    return _ocr
 
 # Gemini supported MIME types
 VIDEO_EXTS = [".mp4", ".mov", ".avi", ".flv", ".mpeg", ".mpg", ".webm", ".wmv", ".3gp", ".3gpp", ".mkv"]
@@ -80,7 +92,7 @@ def chunk(filename, binary, tenant_id, lang, callback=None, **kwargs):
 
         if not txt:
             # Fallback to local deepdoc OCR
-            bxs = ocr(np.array(img))
+            bxs = _get_ocr()(np.array(img))
             txt = "\n".join([t[0] for _, t in bxs if t[0]])
 
         callback(0.4, "Finish OCR: (%s ...)" % txt[:12])

@@ -78,6 +78,31 @@ def test_all_api_pages_compile():
     assert not errors, "Pages API qui ne compilent pas :\n" + "\n".join(errors)
 
 
+def test_no_module_level_model_instantiation_in_rag_app():
+    """Aucun modèle vision (OCR/LayoutRecognizer/TSR) instancié au niveau
+    module sous rag/app/** : la chaîne agent_api → rag.flow.pipeline →
+    figure_parser → picture importait ces modules au BOOT des pods api,
+    et un `ocr = OCR()` module-level y chargeait ~150-300 Mo de sessions
+    ONNX jamais utilisées (constaté 2026-09-01). Instancier au premier
+    appel (singleton paresseux) — voir rag/app/picture.py."""
+    heavy = {"OCR", "LayoutRecognizer", "TableStructureRecognizer"}
+    bad = []
+    for f in sorted((REPO / "rag" / "app").glob("*.py")):
+        tree = ast.parse(f.read_text())
+        for node in tree.body:
+            if isinstance(node, (ast.FunctionDef, ast.AsyncFunctionDef, ast.ClassDef)):
+                continue
+            for sub in ast.walk(node):
+                if (isinstance(sub, ast.Call) and isinstance(sub.func, ast.Name)
+                        and sub.func.id in heavy):
+                    bad.append(f"{f.relative_to(REPO)}:{sub.lineno} {sub.func.id}()")
+    assert not bad, (
+        "Modèles vision instanciés au niveau module (chargés au boot des pods "
+        "api via les chaînes d'import) — utiliser un singleton paresseux :\n"
+        + "\n".join(bad)
+    )
+
+
 def test_no_direct_docstore_calls_in_async_api_routes():
     offenders = {}
     for path in sorted((REPO / "api" / "apps").rglob("*.py")):
