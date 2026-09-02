@@ -16,6 +16,8 @@ interface Introspection {
   org_name: string;
   email: string;
   role: string;
+  workspace_name?: string | null;
+  workspace_role?: string | null;
   needs_password: boolean;
 }
 
@@ -91,6 +93,11 @@ export default function OrgInvitePage() {
               <b>{intro.org_name}</b> vous invite à la rejoindre
               (<Typography.Text code>{intro.email}</Typography.Text>, rôle {intro.role}).
             </Typography.Paragraph>
+            {intro.workspace_name && (
+              <Typography.Paragraph type="secondary">
+                Vous rejoindrez le workspace « {intro.workspace_name} » en tant que {intro.workspace_role}.
+              </Typography.Paragraph>
+            )}
             {intro.needs_password && (
               <Form form={form} layout="vertical">
                 <Form.Item name="nickname" label="Votre nom" rules={[{ required: true }]}>
