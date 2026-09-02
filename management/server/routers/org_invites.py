@@ -47,6 +47,9 @@ _JWT_ALGO = "HS256"
 class OrgInviteBatch(BaseModel):
     emails: list[str] = Field(min_length=1, max_length=200)
     role: str = Field(default="member", pattern=r"^(org_admin|member)$")
+    # Pré-affectation optionnelle, matérialisée à l'acceptation.
+    ws_id: str | None = None
+    ws_role: str | None = Field(default=None, pattern=r"^(ws_admin|editor|viewer)$")
 
 
 class OrgInviteAccept(BaseModel):
@@ -114,7 +117,8 @@ def _is_org_member(org_id: str, user) -> bool:
     return OrgMemberService.get_membership(org_id, user.id) is not None
 
 
-async def _create_and_send(org_id: str, email: str, role: str, invited_by: str) -> dict:
+async def _create_and_send(org_id: str, email: str, role: str, invited_by: str,
+                           ws_id: str | None = None, ws_role: str | None = None) -> dict:
     """Row + lien + email — identique quel que soit l'état du compte."""
     from common.misc_utils import get_uuid
     from common.time_utils import current_timestamp
@@ -126,7 +130,8 @@ async def _create_and_send(org_id: str, email: str, role: str, invited_by: str) 
         # create_time/update_time : remplis par les services d'habitude —
         # Model.create() les laisserait NULL (le listing ordonne dessus).
         OrgInvite.create(id=invite_id, org_id=org_id, email=email, role=role,
-                         user_id=None, expires_at=expires_at, invited_by=invited_by,
+                         user_id=None, ws_id=ws_id, ws_role=ws_role,
+                         expires_at=expires_at, invited_by=invited_by,
                          create_time=current_timestamp(), update_time=current_timestamp())
     url = _accept_url(_sign(invite_id, expires_at))
     email_sent = await send_mail(
@@ -143,6 +148,14 @@ async def invite_members(request: Request, org_id: str, body: OrgInviteBatch,
     require_org_admin(org_id, user_id)
     from api.db.db_models import OrgInvite
     from api.db.services.quota_service import check_quota
+
+    if body.ws_id:
+        if not body.ws_role:
+            raise HTTPException(status_code=400, detail="ws_role est requis avec ws_id")
+        from api.db.services.workspace_service import WorkspaceService
+        ok, ws = WorkspaceService.get_by_id(body.ws_id)
+        if not ok or not ws or ws.org_id != org_id or ws.status != "1":
+            raise HTTPException(status_code=400, detail="Workspace introuvable dans cette organisation")
 
     results = []
     seen: set[str] = set()
@@ -167,7 +180,8 @@ async def invite_members(request: Request, org_id: str, body: OrgInviteBatch,
         if not allowed:
             results.append({"email": email, "status": "quota_exceeded", "detail": msg})
             continue
-        results.append(await _create_and_send(org_id, email, body.role, user_id))
+        results.append(await _create_and_send(org_id, email, body.role, user_id,
+                                              ws_id=body.ws_id, ws_role=body.ws_role))
 
     audit_svc.record(
         request=request, actor_user_id=user_id, action=audit_svc.USER_INVITE,
@@ -185,6 +199,7 @@ def list_invitations(org_id: str, user_id: str = Depends(get_current_user_id)):
     rows = (OrgInvite.select().where(OrgInvite.org_id == org_id)
             .order_by(OrgInvite.create_time.desc()))
     return [{"id": r.id, "email": r.email, "role": r.role,
+             "ws_id": r.ws_id, "ws_role": r.ws_role,
              "expires_at": r.expires_at.isoformat() if r.expires_at else None,
              "expired": bool(r.expires_at and r.expires_at < datetime.now())}
             for r in rows]
@@ -227,10 +242,17 @@ def cancel_invitation(invite_id: str, user_id: str = Depends(get_current_user_id
 @router.get("/org-invites/introspect")
 def introspect_invitation(token: str):
     inv = _load_valid_invite(token)
+    ws_name = None
+    if inv.ws_id:
+        from api.db.services.workspace_service import WorkspaceService
+        ok, ws = WorkspaceService.get_by_id(inv.ws_id)
+        ws_name = getattr(ws, "name", None) if ok else None
     return {
         "org_name": _org_name(inv.org_id),
         "email": inv.email,
         "role": inv.role,
+        "workspace_name": ws_name,
+        "workspace_role": inv.ws_role,
         # Côté INVITÉ uniquement — il sait déjà s'il a un compte.
         "needs_password": _existing_active_user(inv.email) is None,
     }
@@ -255,6 +277,7 @@ async def accept_invitation(request: Request, body: OrgInviteAccept):
             new_user_id = provision_user(
                 email=inv.email, nickname=nickname, org_id=inv.org_id,
                 org_role=inv.role, invited_by=inv.invited_by or "org_invite",
+                ws_id=inv.ws_id, ws_role=inv.ws_role,
             )
         except ValueError as e:
             raise HTTPException(status_code=400, detail=str(e))
@@ -279,6 +302,16 @@ async def accept_invitation(request: Request, body: OrgInviteAccept):
                     "role": inv.role, "status": "1",
                     "invited_by": inv.invited_by,
                 })
+        # Pré-affectation workspace du compte existant — même geste que
+        # « Ajouter depuis l'organisation », déclenché par l'acceptation.
+        if inv.ws_id:
+            from api.db.services.workspace_service import WorkspaceService, WsMemberService
+            ok, ws = WorkspaceService.get_by_id(inv.ws_id)
+            if ok and ws and ws.org_id == inv.org_id and ws.status == "1" \
+                    and not WsMemberService.get_membership(inv.ws_id, user.id):
+                from management.server.services.provisioning import grant_workspace_access
+                grant_workspace_access(ws=ws, target_user_id=user.id,
+                                       role=inv.ws_role or "viewer", member_id=get_uuid())
         acting_user = user.id
 
     inv.delete_instance()

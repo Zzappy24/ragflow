@@ -63,3 +63,18 @@ def test_orginvite_model_exists():
     src = (REPO / "api" / "db" / "db_models.py").read_text()
     assert "class OrgInvite(DataBaseModel)" in src
     assert '"org_invite"' in src or "'org_invite'" in src
+
+
+def test_ws_preassignment_materializes_at_accept_only():
+    """La pré-affectation workspace (ws_id/ws_role portée par l'invitation)
+    ne crée AUCUN membership à l'invitation — elle se matérialise à
+    l'acceptation : provision_user(ws_id=...) pour un nouveau compte,
+    grant_workspace_access pour un compte existant (jamais sans le check
+    d'appartenance du ws à l'org)."""
+    dump_invite = ast.dump(_func("invite_members"))
+    assert "grant_workspace_access" not in dump_invite, "l'invitation ne doit rien matérialiser"
+    dump_accept = ast.dump(_func("accept_invitation"))
+    assert "grant_workspace_access" in dump_accept
+    accept_src = ast.get_source_segment(SRC, _func("accept_invitation"))
+    assert "ws_id=inv.ws_id" in accept_src, "provision_user doit recevoir la pré-affectation"
+    assert "ws.org_id == inv.org_id" in accept_src, "le ws doit être re-validé contre l'org à l'acceptation"

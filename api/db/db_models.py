@@ -1517,6 +1517,10 @@ class OrgInvite(DataBaseModel):
     # user_id : renseigné quand un compte provisoire a été créé (email
     # inconnu) ; NULL pour un compte existant tant qu'il n'a pas accepté.
     user_id = CharField(max_length=32, null=True, index=True)
+    # Pré-affectation optionnelle : matérialisée À L'ACCEPTATION seulement
+    # (org + workspace + rôle d'un coup — l'invité accepte le paquet complet).
+    ws_id = CharField(max_length=32, null=True)
+    ws_role = CharField(max_length=16, null=True)
     expires_at = DateTimeField(null=False)
     invited_by = CharField(max_length=32, null=True)
 

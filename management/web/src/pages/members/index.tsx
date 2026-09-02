@@ -55,7 +55,7 @@ export default function MembersPage({
   // Flux unifié « tout est invitation » (zéro-leak) : l'admin soumet des
   // emails, le backend invite sans jamais révéler si un compte existe.
   // La distinction se joue à l'acceptation, côté invité.
-  interface OrgInvitation { id: string; email: string; role: string; expires_at: string | null; expired: boolean }
+  interface OrgInvitation { id: string; email: string; role: string; ws_id?: string | null; ws_role?: string | null; expires_at: string | null; expired: boolean }
   interface InviteResult { email: string; status: string; email_sent?: boolean; invite_url?: string | null; detail?: string }
   const [batchOpen, setBatchOpen] = useState(false);
   const [batchEmails, setBatchEmails] = useState<string[]>([]);
@@ -63,12 +63,18 @@ export default function MembersPage({
   const [batchBusy, setBatchBusy] = useState(false);
   const [batchResults, setBatchResults] = useState<InviteResult[] | null>(null);
   const [invitations, setInvitations] = useState<OrgInvitation[]>([]);
+  const [batchWs, setBatchWs] = useState<string | undefined>(undefined);
+  const [batchWsRole, setBatchWsRole] = useState('viewer');
+  const [orgWorkspaces, setOrgWorkspaces] = useState<{ id: string; name: string }[]>([]);
 
   const fetchInvitations = () => {
     if (scope !== 'org' || !scopeId) return;
     api.get(`/orgs/${scopeId}/members/invitations`)
       .then((res) => setInvitations(res.data))
       .catch(() => setInvitations([]));
+    api.get(`/orgs/${scopeId}/workspaces`)
+      .then((res) => setOrgWorkspaces(res.data))
+      .catch(() => {});
   };
 
   const onBatchInvite = async () => {
@@ -78,6 +84,8 @@ export default function MembersPage({
       const res = await api.post(`/orgs/${scopeId}/members/invitations`, {
         emails: batchEmails,
         role: batchRole,
+        ws_id: batchWs || undefined,
+        ws_role: batchWs ? batchWsRole : undefined,
       });
       setBatchResults(res.data);
       fetchInvitations();
@@ -347,7 +355,12 @@ export default function MembersPage({
                 </Button>
               )}
               <Button type="primary" icon={<UserAddOutlined />}
-                      onClick={() => { setBatchEmails([]); setBatchResults(null); setBatchOpen(true); }}>
+                      onClick={() => {
+                        setBatchEmails([]); setBatchResults(null); setBatchWs(undefined); setBatchOpen(true);
+                        api.get(`/orgs/${scopeId}/workspaces`)
+                          .then((res) => setOrgWorkspaces(res.data))
+                          .catch(() => setOrgWorkspaces([]));
+                      }}>
                 Inviter des membres
               </Button>
             </>
@@ -374,8 +387,17 @@ export default function MembersPage({
                  dataSource={invitations}
                  columns={[
                    { title: 'Email', dataIndex: 'email' },
-                   { title: 'Rôle', dataIndex: 'role', width: 110,
-                     render: (r: string) => <Tag>{r}</Tag> },
+                   { title: 'Rôle', dataIndex: 'role', width: 220,
+                     render: (r: string, inv) => (
+                       <Space size={4}>
+                         <Tag>{r}</Tag>
+                         {inv.ws_id && (
+                           <Tag color="blue">
+                             {orgWorkspaces.find((w) => w.id === inv.ws_id)?.name ?? 'workspace'} · {inv.ws_role}
+                           </Tag>
+                         )}
+                       </Space>
+                     ) },
                    { title: 'Expire', dataIndex: 'expires_at', width: 220,
                      render: (v: string | null, inv) => inv.expired
                        ? <Tag color="red">expirée</Tag>
@@ -443,6 +465,18 @@ export default function MembersPage({
               <Select value={batchRole} onChange={setBatchRole}
                       options={[{ value: 'member', label: 'Member' }, { value: 'org_admin', label: 'Org Admin' }]} />
             </Form.Item>
+            <Form.Item label="Workspace (optionnel)"
+                       extra="Pré-affectation appliquée à l'acceptation. Sans choix : un nouveau compte rejoint le workspace par défaut ; un compte existant rejoint l'organisation seule.">
+              <Select allowClear placeholder="Aucun (comportement par défaut)"
+                      value={batchWs} onChange={setBatchWs}
+                      options={orgWorkspaces.map((w) => ({ value: w.id, label: w.name }))} />
+            </Form.Item>
+            {batchWs && (
+              <Form.Item label="Rôle dans le workspace">
+                <Select value={batchWsRole} onChange={setBatchWsRole}
+                        options={[{ value: 'ws_admin', label: 'WS Admin' }, { value: 'editor', label: 'Editor' }, { value: 'viewer', label: 'Viewer' }]} />
+              </Form.Item>
+            )}
           </Form>
         )}
       </Modal>
