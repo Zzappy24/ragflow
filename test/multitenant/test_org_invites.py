@@ -108,3 +108,12 @@ def test_all_peewee_access_under_connection_context():
                 assert "connection_context" in dump, (
                     f"{node.name} touche Peewee hors DB.connection_context()"
                 )
+
+
+def test_accept_url_carries_router_basename():
+    """La SPA du panel a basename /admin : un lien sans le préfixe sert
+    l'index mais le routeur ne matche rien → page blanche SANS erreur
+    console (constaté au premier test réel, 2026-09-02). Même pattern que
+    claim_url du produit Code."""
+    src = ast.get_source_segment(SRC, _func("_accept_url"))
+    assert "/admin/org-invite" in src, "le lien d'acceptation doit inclure le basename /admin"

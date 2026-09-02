@@ -75,7 +75,10 @@ def _sign(invite_id: str, expires_at: datetime) -> str:
 
 def _accept_url(token: str) -> str:
     base = (settings.PANEL_PUBLIC_URL or "").rstrip("/")
-    return f"{base}/org-invite?token={token}"
+    # La SPA du panel vit sous /admin (basename du router React) — même
+    # pattern que le claim Code. Sans le préfixe : index servi, routeur
+    # muet, page blanche sans erreur (constaté 2026-09-02 au premier test).
+    return f"{base}/admin/org-invite?token={token}"
 
 
 def _load_valid_invite(token: str):
