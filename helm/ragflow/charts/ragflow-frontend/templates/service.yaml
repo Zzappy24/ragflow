@@ -6,6 +6,16 @@ metadata:
     {{- include "ragflow-frontend.labels" . | nindent 4 }}
 spec:
   type: {{ .Values.service.type }}
+  # Affinité client→pod (2026-09-02) : pendant un rolling update à 2
+  # replicas, l'index.html du pod NEUF référence des chunks hachés que le
+  # pod ANCIEN n'a pas — un chunk routé en round-robin vers l'autre pod
+  # fait 404 → page blanche sur les routes lazy (/set-password constaté
+  # par deux invités pendant le rollout .16.4). Coller le client à un pod
+  # rend chaque session cohérente version par version.
+  sessionAffinity: ClientIP
+  sessionAffinityConfig:
+    clientIP:
+      timeoutSeconds: 3600
   selector:
     {{- include "ragflow-frontend.selectorLabels" . | nindent 4 }}
   ports:
