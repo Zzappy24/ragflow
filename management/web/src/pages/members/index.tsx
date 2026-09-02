@@ -52,12 +52,78 @@ export default function MembersPage({
   const [inviteBusy, setInviteBusy] = useState(false);
   const [inviteResult, setInviteResult] = useState<{ email: string; invite_url: string; email_sent: boolean } | null>(null);
 
+  // Flux unifié « tout est invitation » (zéro-leak) : l'admin soumet des
+  // emails, le backend invite sans jamais révéler si un compte existe.
+  // La distinction se joue à l'acceptation, côté invité.
+  interface OrgInvitation { id: string; email: string; role: string; expires_at: string | null; expired: boolean }
+  interface InviteResult { email: string; status: string; email_sent?: boolean; invite_url?: string | null; detail?: string }
+  const [batchOpen, setBatchOpen] = useState(false);
+  const [batchEmails, setBatchEmails] = useState<string[]>([]);
+  const [batchRole, setBatchRole] = useState('member');
+  const [batchBusy, setBatchBusy] = useState(false);
+  const [batchResults, setBatchResults] = useState<InviteResult[] | null>(null);
+  const [invitations, setInvitations] = useState<OrgInvitation[]>([]);
+
+  const fetchInvitations = () => {
+    if (scope !== 'org' || !scopeId) return;
+    api.get(`/orgs/${scopeId}/members/invitations`)
+      .then((res) => setInvitations(res.data))
+      .catch(() => setInvitations([]));
+  };
+
+  const onBatchInvite = async () => {
+    if (batchEmails.length === 0 || batchBusy) return;
+    setBatchBusy(true);
+    try {
+      const res = await api.post(`/orgs/${scopeId}/members/invitations`, {
+        emails: batchEmails,
+        role: batchRole,
+      });
+      setBatchResults(res.data);
+      fetchInvitations();
+    } catch (err: unknown) {
+      const msg = (err as { response?: { data?: { detail?: string } } })?.response?.data?.detail;
+      message.error(msg || "Échec de l'envoi des invitations");
+    } finally {
+      setBatchBusy(false);
+    }
+  };
+
+  const onResendOrgInvite = async (inv: OrgInvitation) => {
+    try {
+      const res = await api.post(`/org-invites/${inv.id}/resend`);
+      if (res.data.invite_url) {
+        Modal.info({
+          title: 'Email non envoyé — lien à transmettre manuellement',
+          content: <Typography.Paragraph copyable code>{res.data.invite_url}</Typography.Paragraph>,
+        });
+      } else {
+        message.success(`Invitation renvoyée à ${inv.email}`);
+      }
+      fetchInvitations();
+    } catch {
+      message.error('Échec du renvoi');
+    }
+  };
+
+  const onCancelOrgInvite = async (inv: OrgInvitation) => {
+    try {
+      await api.delete(`/org-invites/${inv.id}`);
+      message.success('Invitation annulée — le lien est invalidé');
+      fetchInvitations();
+    } catch {
+      message.error("Échec de l'annulation");
+    }
+  };
+
   const isSuperuser = useAuthStore((s) => s.user?.is_superuser ?? false);
 
   const scope = wsId ? 'ws' : 'org';
   const scopeId = wsId || orgId || '';
   const memberUrl = (uid: string) =>
     scope === 'ws' ? `/workspaces/${scopeId}/members/${uid}` : `/orgs/${scopeId}/members/${uid}`;
+
+  useEffect(fetchInvitations, [scopeId, scope]); // eslint-disable-line react-hooks/exhaustive-deps
 
   const refresh = () => {
     fetchMembers();
@@ -267,13 +333,24 @@ export default function MembersPage({
               Pour l'org, indispensable quand le compte existe déjà (superadmin,
               membre d'une autre org, ex-testeur) — l'invitation, elle, CRÉE un
               compte et échoue si l'email existe. */}
-          <Button icon={<PlusOutlined />} onClick={openAddModal}>
-            {scope === 'ws' ? "Ajouter depuis l'organisation" : 'Ajouter un membre existant'}
-          </Button>
-          {scope === 'org' && (
-            <Button type="primary" icon={<UserAddOutlined />} onClick={() => setInviteOpen(true)}>
-              Inviter (nouveau compte)
+          {scope === 'ws' ? (
+            <Button icon={<PlusOutlined />} onClick={openAddModal}>
+              Ajouter depuis l'organisation
             </Button>
+          ) : (
+            <>
+              {/* Escape hatch ops : rattacher un compte existant sans email —
+                  superusers uniquement (pas de leak, ils voient tout). */}
+              {isSuperuser && (
+                <Button icon={<PlusOutlined />} onClick={openAddModal}>
+                  Ajouter un membre existant
+                </Button>
+              )}
+              <Button type="primary" icon={<UserAddOutlined />}
+                      onClick={() => { setBatchEmails([]); setBatchResults(null); setBatchOpen(true); }}>
+                Inviter des membres
+              </Button>
+            </>
           )}
         </Space>
       </div>
@@ -289,6 +366,86 @@ export default function MembersPage({
           rowSelection={rowSelection}
         />
       </Card>
+
+      {scope === 'org' && invitations.length > 0 && (
+        <Card className="mt-4" size="small"
+              title={`Invitations en attente (${invitations.length})`}>
+          <Table rowKey="id" size="small" pagination={false} showHeader={false}
+                 dataSource={invitations}
+                 columns={[
+                   { title: 'Email', dataIndex: 'email' },
+                   { title: 'Rôle', dataIndex: 'role', width: 110,
+                     render: (r: string) => <Tag>{r}</Tag> },
+                   { title: 'Expire', dataIndex: 'expires_at', width: 220,
+                     render: (v: string | null, inv) => inv.expired
+                       ? <Tag color="red">expirée</Tag>
+                       : (v ? `expire le ${new Date(v).toLocaleString()}` : '') },
+                   { title: '', width: 160,
+                     render: (_: unknown, inv) => (
+                       <Space size="small">
+                         <Button size="small" onClick={() => onResendOrgInvite(inv)}>Renvoyer</Button>
+                         <Popconfirm title={`Annuler l'invitation de ${inv.email} ?`}
+                                     okText="Annuler l'invitation" okButtonProps={{ danger: true }}
+                                     onConfirm={() => onCancelOrgInvite(inv)}>
+                           <Button size="small" type="text" danger icon={<MinusCircleOutlined />} />
+                         </Popconfirm>
+                       </Space>
+                     ) },
+                 ]} />
+        </Card>
+      )}
+
+      <Modal title="Inviter des membres" open={batchOpen}
+             onOk={batchResults
+               ? () => { setBatchOpen(false); setBatchResults(null); setBatchEmails([]); }
+               : onBatchInvite}
+             okText={batchResults ? 'Fermer' : 'Envoyer les invitations'}
+             confirmLoading={batchBusy}
+             cancelButtonProps={batchResults ? { style: { display: 'none' } } : undefined}
+             onCancel={() => { setBatchOpen(false); setBatchResults(null); }}>
+        {batchResults ? (
+          <Table rowKey="email" size="small" pagination={false} dataSource={batchResults}
+                 columns={[
+                   { title: 'Email', dataIndex: 'email' },
+                   { title: 'Statut',
+                     render: (_: unknown, r) => {
+                       if (r.status === 'invited') {
+                         return r.email_sent
+                           ? <Tag color="green">✓ invitation envoyée</Tag>
+                           : (
+                             <span>
+                               invité — lien à transmettre :{' '}
+                               <Typography.Text copyable={{ text: r.invite_url ?? '' }} code>
+                                 {r.invite_url}
+                               </Typography.Text>
+                             </span>
+                           );
+                       }
+                       if (r.status === 'already_member') return <Tag>déjà membre</Tag>;
+                       if (r.status === 'quota_exceeded') return <Tag color="red">quota utilisateurs atteint</Tag>;
+                       return <Tag color="red">email invalide</Tag>;
+                     } },
+                 ]} />
+        ) : (
+          <Form layout="vertical" className="mt-4">
+            <p className="text-gray-500 mb-3">
+              Chaque personne reçoit un lien d'invitation : elle crée son compte si
+              elle n'en a pas, ou accepte simplement de rejoindre l'organisation.
+              Personne n'est ajouté sans avoir accepté.
+            </p>
+            <Form.Item label="Emails" required>
+              <Select mode="tags" tokenSeparators={['\n', ',', ';', ' ']}
+                      placeholder="Saisir ou coller des emails…"
+                      value={batchEmails} onChange={setBatchEmails}
+                      open={false} suffixIcon={null} />
+            </Form.Item>
+            <Form.Item label="Rôle dans l'organisation">
+              <Select value={batchRole} onChange={setBatchRole}
+                      options={[{ value: 'member', label: 'Member' }, { value: 'org_admin', label: 'Org Admin' }]} />
+            </Form.Item>
+          </Form>
+        )}
+      </Modal>
 
       <Modal title={scope === 'ws' ? "Ajouter depuis l'organisation" : 'Ajouter un membre existant'}
              open={modalOpen} onOk={onAdd} onCancel={() => setModalOpen(false)} okText="Ajouter">

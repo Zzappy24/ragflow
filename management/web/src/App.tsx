@@ -2,6 +2,7 @@ import { Routes, Route, Navigate } from 'react-router-dom';
 import AppLayout from '@/components/Layout';
 import LoginPage from '@/pages/login';
 import ClaimPage from '@/pages/claim';
+import OrgInvitePage from '@/pages/org-invite';
 import DashboardPage from '@/pages/dashboard';
 import OrganisationsPage from '@/pages/organisations';
 import OrgDetailPage from '@/pages/organisations/detail';
@@ -27,6 +28,7 @@ export default function App() {
     <Routes>
       <Route path="/login" element={<LoginPage />} />
       <Route path="/claim" element={<ClaimPage />} />
+      <Route path="/org-invite" element={<OrgInvitePage />} />
       <Route element={<AppLayout />}>
         <Route index element={<DashboardPage />} />
         <Route path="/organisations" element={<OrganisationsPage />} />

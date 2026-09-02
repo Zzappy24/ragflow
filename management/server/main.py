@@ -125,12 +125,14 @@ from management.server.routers import (
     archives,
     stats,
     code,
+    org_invites,
 )
 
 app.include_router(auth.router, prefix="/api/admin/auth", tags=["Auth"])
 app.include_router(orgs.router, prefix="/api/admin/orgs", tags=["Organisations"])
 app.include_router(workspaces.router, prefix="/api/admin", tags=["Workspaces"])
 app.include_router(members.router, prefix="/api/admin", tags=["Members"])
+app.include_router(org_invites.router, prefix="/api/admin", tags=["Org Invitations"])
 app.include_router(users.router, prefix="/api/admin", tags=["Users"])
 app.include_router(groups.router, prefix="/api/admin", tags=["Groups"])
 app.include_router(api_keys.router, prefix="/api/admin", tags=["API Keys"])

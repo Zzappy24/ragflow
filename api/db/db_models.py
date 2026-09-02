@@ -1494,6 +1494,26 @@ class OrgMember(DataBaseModel):
         db_table = "org_member"
 
 
+# CUSTOM B2B SaaS — invitations d'organisation unifiées (« tout est
+# invitation », zéro-leak) : une row par email invité, que le compte existe
+# déjà (user_id renseigné à l'acceptation, lien « accepter ») ou non
+# (user_id renseigné dès la création provisoire, lien set-password).
+# Le membership org_member réel n'apparaît qu'après acceptation/claim.
+class OrgInvite(DataBaseModel):
+    id = CharField(max_length=32, primary_key=True)
+    org_id = CharField(max_length=32, null=False, index=True)
+    email = CharField(max_length=255, null=False, index=True)
+    role = CharField(max_length=16, null=False, default="member")
+    # user_id : renseigné quand un compte provisoire a été créé (email
+    # inconnu) ; NULL pour un compte existant tant qu'il n'a pas accepté.
+    user_id = CharField(max_length=32, null=True, index=True)
+    expires_at = DateTimeField(null=False)
+    invited_by = CharField(max_length=32, null=True)
+
+    class Meta:
+        db_table = "org_invite"
+
+
 class Workspace(DataBaseModel):
     id = CharField(max_length=32, primary_key=True)
     org_id = CharField(max_length=32, null=False, index=True)
