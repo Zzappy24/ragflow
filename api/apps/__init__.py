@@ -107,6 +107,13 @@ commands.register_commands(app)
 # sa durée — c'est la boussole pour savoir OÙ optimiser au lieu de deviner.
 SLOW_REQUEST_LOG_MS = int(os.environ.get("SLOW_REQUEST_LOG_MS", "500"))
 
+# CUSTOM B2B SaaS — plafond de session : le token signé (itsdangerous) était
+# vérifié SANS max_age → session éternelle tant que l'access_token en base ne
+# tournait pas (logout/re-login). Politique actée 2026-09-02 : access court
+# (60 min côté panel), SESSION 7 JOURS, révocation serveur instantanée
+# (rotation du access_token en base). 0 = désactivé (comportement historique).
+SESSION_MAX_AGE_S = int(os.environ.get("RAGFLOW_SESSION_MAX_AGE_S", str(7 * 24 * 3600))) or None
+
 
 @app.before_request
 async def assign_request_id():
@@ -257,7 +264,9 @@ def _load_user(auth_types=None):
     if AUTH_JWT in auth_types:
         try:
             jwt = Serializer(secret_key=settings.get_secret_key())
-            access_token = str(jwt.loads(auth_token))
+            # max_age : au-delà, SignatureExpired → repli session/anonyme →
+            # re-login. Cf. SESSION_MAX_AGE_S ci-dessus.
+            access_token = str(jwt.loads(auth_token, max_age=SESSION_MAX_AGE_S))
 
             if not access_token or not access_token.strip():
                 logging.warning("Authentication attempt with empty access token")
