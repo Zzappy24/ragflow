@@ -284,7 +284,17 @@ class RetryingPooledMySQLDatabase(PooledMySQLDatabase):
                     self._handle_connection_loss()
                     time.sleep(self.retry_delay * (2 ** attempt))
                 else:
-                    logging.error(f"DB execution failure: {e}")
+                    # CUSTOM B2B SaaS — 1060 « Duplicate column » / 1061
+                    # « Duplicate key » : erreurs ATTENDUES du pattern de
+                    # migrations idempotentes (rejouées à chaque boot,
+                    # avalées en aval). Elles remplissaient les logs
+                    # d'ERROR à chaque démarrage de pod ; on les garde en
+                    # DEBUG, l'exception est relancée à l'identique.
+                    code = e.args[0] if getattr(e, "args", None) else None
+                    if code in (1060, 1061):
+                        logging.debug(f"DB migration already applied: {e}")
+                    else:
+                        logging.error(f"DB execution failure: {e}")
                     raise
         return None
 
