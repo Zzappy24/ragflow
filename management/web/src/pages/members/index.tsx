@@ -26,6 +26,7 @@ export default function MembersPage({
   const orgId = orgIdProp || params.orgId || searchParams.get('org');
   const wsId = wsIdProp || params.wsId || searchParams.get('ws');
   const [members, setMembers] = useState<Member[]>([]);
+  const [memberSearch, setMemberSearch] = useState('');
   const [loading, setLoading] = useState(true);
   const [modalOpen, setModalOpen] = useState(false);
   const [form] = Form.useForm();
@@ -359,6 +360,9 @@ export default function MembersPage({
           Members {scope === 'ws' ? '(Workspace)' : '(Organisation)'}
         </h2>
         <Space>
+          <Input.Search allowClear placeholder="Rechercher nom ou email…"
+                        style={{ width: 240 }} value={memberSearch}
+                        onChange={(e) => setMemberSearch(e.target.value)} />
           <BulkDeleteButton />
           {/* Ajouter un utilisateur DÉJÀ existant (add_org_member / add_ws_member).
               Pour l'org, indispensable quand le compte existe déjà (superadmin,
@@ -395,10 +399,15 @@ export default function MembersPage({
         <Table
           scroll={{ x: 'max-content' }}
           columns={columns}
-          dataSource={members}
+          dataSource={members.filter((m) => {
+            const q = memberSearch.trim().toLowerCase();
+            if (!q) return true;
+            return (m.email ?? '').toLowerCase().includes(q)
+              || (m.nickname ?? '').toLowerCase().includes(q);
+          })}
           rowKey="user_id"
           loading={loading}
-          pagination={false}
+          pagination={{ pageSize: 25, hideOnSinglePage: true, showSizeChanger: false }}
           rowSelection={rowSelection}
         />
       </Card>
@@ -406,7 +415,8 @@ export default function MembersPage({
       {scope === 'org' && invitations.length > 0 && (
         <Card className="mt-4" size="small"
               title={`Invitations en attente (${invitations.length})`}>
-          <Table rowKey="id" size="small" pagination={false} showHeader={false}
+          <Table rowKey="id" size="small" showHeader={false}
+                 pagination={{ pageSize: 25, hideOnSinglePage: true, showSizeChanger: false }}
                  dataSource={invitations}
                  columns={[
                    { title: 'Email', dataIndex: 'email' },

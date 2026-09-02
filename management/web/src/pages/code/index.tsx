@@ -774,7 +774,7 @@ export default function CodePage({ orgId: orgIdProp }: { orgId?: string } = {}) 
               <Select
                 mode="tags"
                 tokenSeparators={['\n', ',', ';', ' ']}
-                placeholder="Sélectionner ou saisir des emails…"
+                placeholder="Tout email accepté — les membres de l'organisation sont suggérés"
                 options={memberEmailOptions}
                 value={bulkText ? bulkText.split('\n').filter(Boolean) : []}
                 onChange={(vals: string[]) => setBulkText(vals.join('\n'))}
