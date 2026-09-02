@@ -90,4 +90,4 @@ def test_pending_invitation_is_editable_without_resend():
     assert "require_org_admin" in dump
     assert "send_mail" not in dump, "l'édition ne doit PAS renvoyer d'email"
     src = ast.get_source_segment(SRC, node)
-    assert "ws.org_id == inv.org_id" in src, "le ws doit être validé contre l'org de l'invitation"
+    assert "ws.org_id != inv.org_id" in src, "le ws doit être validé contre l'org de l'invitation"
