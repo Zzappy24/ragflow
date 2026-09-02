@@ -87,11 +87,23 @@ export function WorkspaceSwitcher() {
   const activeId = userInfo?.active_workspace_id ?? storedId;
 
   useEffect(() => {
-    if (!storedId && workspaces.length > 0) {
-      localStorage.setItem(ACTIVE_WORKSPACE_KEY, workspaces[0].id);
+    if (workspaces.length === 0) return;
+    // CUSTOM B2B SaaS — valider l'id stocké, pas seulement sa présence : un
+    // id PÉRIMÉ (session d'un autre utilisateur sur ce navigateur, workspace
+    // supprimé/retiré) restait envoyé en X-Workspace-Id par request.ts alors
+    // que l'UI affichait un fallback valide — toutes les requêtes se
+    // faisaient rejeter « pas accès à cette ressource » avec une interface
+    // d'apparence normale (constaté 2026-09-02, arrivée par bridge sur un
+    // navigateur ayant servi à un autre compte).
+    const storedIsValid = workspaces.some((w) => w.id === storedId);
+    if (!storedIsValid) {
+      const fallback =
+        workspaces.find((w) => w.id === userInfo?.active_workspace_id)?.id ??
+        workspaces[0].id;
+      localStorage.setItem(ACTIVE_WORKSPACE_KEY, fallback);
       queryClient.clear();
     }
-  }, [storedId, workspaces, queryClient]);
+  }, [storedId, workspaces, queryClient, userInfo?.active_workspace_id]);
 
   const activeWs = useMemo(
     () => workspaces.find((w) => w.id === activeId) ?? workspaces[0],
