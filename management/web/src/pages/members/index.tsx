@@ -66,6 +66,29 @@ export default function MembersPage({
   const [batchWs, setBatchWs] = useState<string | undefined>(undefined);
   const [batchWsRole, setBatchWsRole] = useState('viewer');
   const [orgWorkspaces, setOrgWorkspaces] = useState<{ id: string; name: string }[]>([]);
+  // Édition d'une invitation EN ATTENTE (sans re-mail : le lien déjà envoyé
+  // ne porte que l'id — la destination est lue dans la row à l'acceptation).
+  const [editInvite, setEditInvite] = useState<OrgInvitation | null>(null);
+  const [editWs, setEditWs] = useState<string | undefined>(undefined);
+  const [editWsRole, setEditWsRole] = useState('viewer');
+  const [editRole, setEditRole] = useState('member');
+
+  const onSaveInviteEdit = async () => {
+    if (!editInvite) return;
+    try {
+      await api.patch(`/org-invites/${editInvite.id}`, {
+        role: editRole,
+        ws_id: editWs ?? '',
+        ws_role: editWs ? editWsRole : undefined,
+      });
+      message.success('Invitation mise à jour — le lien déjà envoyé reste valable');
+      setEditInvite(null);
+      fetchInvitations();
+    } catch (err: unknown) {
+      const msg = (err as { response?: { data?: { detail?: string } } })?.response?.data?.detail;
+      message.error(msg || 'Échec de la mise à jour');
+    }
+  };
 
   const fetchInvitations = () => {
     if (scope !== 'org' || !scopeId) return;
@@ -402,9 +425,15 @@ export default function MembersPage({
                      render: (v: string | null, inv) => inv.expired
                        ? <Tag color="red">expirée</Tag>
                        : (v ? `expire le ${new Date(v).toLocaleString()}` : '') },
-                   { title: '', width: 160,
+                   { title: '', width: 240,
                      render: (_: unknown, inv) => (
                        <Space size="small">
+                         <Button size="small" onClick={() => {
+                           setEditInvite(inv);
+                           setEditRole(inv.role);
+                           setEditWs(inv.ws_id ?? undefined);
+                           setEditWsRole(inv.ws_role ?? 'viewer');
+                         }}>Modifier</Button>
                          <Button size="small" onClick={() => onResendOrgInvite(inv)}>Renvoyer</Button>
                          <Popconfirm title={`Annuler l'invitation de ${inv.email} ?`}
                                      okText="Annuler l'invitation" okButtonProps={{ danger: true }}
@@ -479,6 +508,32 @@ export default function MembersPage({
             )}
           </Form>
         )}
+      </Modal>
+
+      <Modal title={editInvite ? `Modifier l'invitation — ${editInvite.email}` : ''}
+             open={!!editInvite} onOk={onSaveInviteEdit} okText="Enregistrer"
+             onCancel={() => setEditInvite(null)}>
+        <p className="text-gray-500 mb-3">
+          Le lien déjà envoyé reste valable : à l'acceptation, la personne rejoindra
+          la destination mise à jour. Aucun email n'est renvoyé.
+        </p>
+        <Form layout="vertical">
+          <Form.Item label="Rôle dans l'organisation">
+            <Select value={editRole} onChange={setEditRole}
+                    options={[{ value: 'member', label: 'Member' }, { value: 'org_admin', label: 'Org Admin' }]} />
+          </Form.Item>
+          <Form.Item label="Workspace (optionnel)">
+            <Select allowClear placeholder="Aucun (comportement par défaut)"
+                    value={editWs} onChange={setEditWs}
+                    options={orgWorkspaces.map((w) => ({ value: w.id, label: w.name }))} />
+          </Form.Item>
+          {editWs && (
+            <Form.Item label="Rôle dans le workspace">
+              <Select value={editWsRole} onChange={setEditWsRole}
+                      options={[{ value: 'ws_admin', label: 'WS Admin' }, { value: 'editor', label: 'Editor' }, { value: 'viewer', label: 'Viewer' }]} />
+            </Form.Item>
+          )}
+        </Form>
       </Modal>
 
       <Modal title={scope === 'ws' ? "Ajouter depuis l'organisation" : 'Ajouter un membre existant'}

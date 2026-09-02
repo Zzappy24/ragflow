@@ -52,6 +52,13 @@ class OrgInviteBatch(BaseModel):
     ws_role: str | None = Field(default=None, pattern=r"^(ws_admin|editor|viewer)$")
 
 
+class OrgInviteUpdate(BaseModel):
+    role: str | None = Field(default=None, pattern=r"^(org_admin|member)$")
+    # ws_id="" (chaîne vide) = retirer la pré-affectation ; None = ne pas toucher.
+    ws_id: str | None = None
+    ws_role: str | None = Field(default=None, pattern=r"^(ws_admin|editor|viewer)$")
+
+
 class OrgInviteAccept(BaseModel):
     token: str
     # Requis uniquement quand l'email n'a pas encore de compte :
@@ -221,6 +228,38 @@ async def resend_invitation(invite_id: str, user_id: str = Depends(get_current_u
     )
     return {"email": inv.email, "email_sent": email_sent,
             "invite_url": None if email_sent else url}
+
+
+@router.patch("/org-invites/{invite_id}")
+def update_invitation(invite_id: str, body: OrgInviteUpdate,
+                      user_id: str = Depends(get_current_user_id)):
+    """Modifie une invitation EN ATTENTE sans renvoyer d'email : le lien
+    déjà envoyé ne porte que l'id — la destination (rôle org, workspace,
+    rôle ws) est lue dans la row à l'acceptation, donc l'éditer suffit."""
+    from api.db.db_models import OrgInvite
+    inv = OrgInvite.get_or_none(OrgInvite.id == invite_id)
+    if not inv:
+        raise HTTPException(status_code=404, detail="Invitation introuvable")
+    require_org_admin(inv.org_id, user_id)
+
+    if body.role is not None:
+        inv.role = body.role
+    if body.ws_id is not None:
+        if body.ws_id == "":
+            inv.ws_id, inv.ws_role = None, None
+        else:
+            if not (body.ws_role or inv.ws_role):
+                raise HTTPException(status_code=400, detail="ws_role est requis avec ws_id")
+            from api.db.services.workspace_service import WorkspaceService
+            ok, ws = WorkspaceService.get_by_id(body.ws_id)
+            if not ok or not ws or ws.org_id != inv.org_id or ws.status != "1":
+                raise HTTPException(status_code=400, detail="Workspace introuvable dans cette organisation")
+            inv.ws_id = body.ws_id
+    if body.ws_role is not None and inv.ws_id:
+        inv.ws_role = body.ws_role
+    inv.save()
+    return {"id": inv.id, "email": inv.email, "role": inv.role,
+            "ws_id": inv.ws_id, "ws_role": inv.ws_role}
 
 
 @router.delete("/org-invites/{invite_id}", status_code=204)

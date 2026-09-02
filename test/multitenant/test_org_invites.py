@@ -78,3 +78,16 @@ def test_ws_preassignment_materializes_at_accept_only():
     accept_src = ast.get_source_segment(SRC, _func("accept_invitation"))
     assert "ws_id=inv.ws_id" in accept_src, "provision_user doit recevoir la pré-affectation"
     assert "ws.org_id == inv.org_id" in accept_src, "le ws doit être re-validé contre l'org à l'acceptation"
+
+
+def test_pending_invitation_is_editable_without_resend():
+    """PATCH /org-invites/{id} : modifier la destination d'une invitation en
+    attente SANS renvoyer d'email — possible parce que le token ne porte que
+    l'invite_id, la destination est lue dans la row à l'acceptation. La garde
+    require_org_admin s'applique, le ws est re-validé contre l'org."""
+    node = _func("update_invitation")
+    dump = ast.dump(node)
+    assert "require_org_admin" in dump
+    assert "send_mail" not in dump, "l'édition ne doit PAS renvoyer d'email"
+    src = ast.get_source_segment(SRC, node)
+    assert "ws.org_id == inv.org_id" in src, "le ws doit être validé contre l'org de l'invitation"
