@@ -65,9 +65,15 @@ def parse_size_to_bytes(val) -> int:
 
 
 def _scan_elasticsearch() -> list[dict]:
-    """Équivalent ES du scan Infinity : un index `ragflow_<tenant_id>` par
-    tenant (pas de découpage par KB côté ES — kb_id vide). Fournit les
-    octets/lignes par tenant, ce dont le quota a besoin."""
+    """Équivalent ES du scan Infinity, VENTILÉ PAR KB.
+
+    ES = un index `ragflow_<tenant_id>` par tenant : les octets exacts ne
+    sont connus qu'au niveau index. Pour conserver la ventilation par
+    dataset du panel admin (identique au scan Infinity), une agrégation
+    `terms` sur `kb_id` (mappé keyword) donne les chunks par KB, et les
+    octets de l'index sont attribués au prorata des chunks — approximation
+    honnête, sommes par tenant exactes à l'arrondi près. Repli : entrée
+    tenant-niveau (kb_id vide) si l'agrégation échoue."""
     from common import settings as common_settings
     es = common_settings.docStoreConn.es
     stats = es.indices.stats(index="ragflow_*", metric="store,docs")
@@ -76,13 +82,32 @@ def _scan_elasticsearch() -> list[dict]:
         m = re.match(r"^ragflow_(.+)$", idx_name)
         if not m:
             continue
+        tenant_id = m.group(1)
         primaries = s.get("primaries") or {}
-        tables.append({
-            "tenant_id": m.group(1),
-            "kb_id": "",
-            "rows": int(((primaries.get("docs") or {}).get("count")) or 0),
-            "bytes": int(((primaries.get("store") or {}).get("size_in_bytes")) or 0),
-        })
+        total_rows = int(((primaries.get("docs") or {}).get("count")) or 0)
+        total_bytes = int(((primaries.get("store") or {}).get("size_in_bytes")) or 0)
+
+        buckets = []
+        if total_rows > 0:
+            try:
+                agg = es.search(index=idx_name, size=0,
+                                aggs={"kb": {"terms": {"field": "kb_id", "size": 10000}}})
+                buckets = (((agg.get("aggregations") or {}).get("kb") or {}).get("buckets")) or []
+            except Exception as e:
+                logging.warning(f"storage scan ES: agrégation kb_id sur {idx_name}: {e}")
+
+        if buckets:
+            for b in buckets:
+                kb_rows = int(b.get("doc_count") or 0)
+                tables.append({
+                    "tenant_id": tenant_id,
+                    "kb_id": str(b.get("key") or ""),
+                    "rows": kb_rows,
+                    "bytes": int(total_bytes * kb_rows / total_rows),
+                })
+        else:
+            tables.append({"tenant_id": tenant_id, "kb_id": "",
+                           "rows": total_rows, "bytes": total_bytes})
     return tables
 
 

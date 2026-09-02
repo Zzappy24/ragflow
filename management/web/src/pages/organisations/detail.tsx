@@ -815,7 +815,7 @@ export default function OrgDetailPage() {
             children: (
               <div className="space-y-4">
                 {storageDetail && !storageDetail.infinity_available && (
-                  <Text type="secondary">Mesure de l'index Infinity indisponible — volumes fichiers uniquement.</Text>
+                  <Text type="secondary">Mesure de l'index de recherche indisponible — volumes fichiers uniquement.</Text>
                 )}
                 <Card title="Par workspace" size="small" loading={storageLoading}>
                   <Table
