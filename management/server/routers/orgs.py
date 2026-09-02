@@ -359,37 +359,14 @@ def org_storage(org_id: str, user_id: str = Depends(get_current_user_id)):
             for ws in ws_list
         ]
 
-        # -- par utilisateur (top 20 par volume de fichiers)
+        # « Par utilisateur » RETIRÉ (2026-09-02) : les documents sont créés
+        # avec created_by = tenant_id (file_service.py) — le classement
+        # groupait donc des TENANTS de workspaces déguisés en utilisateurs et
+        # n'affichait que les comptes techniques @internal, toujours. Une
+        # vraie attribution par humain exigerait de tracer l'uploadeur réel
+        # (feature, pas un filtre) ; la vue « par workspace » ci-dessus porte
+        # déjà l'information exacte.
         users = []
-        if tenant_ids:
-            user_rows = list(
-                Document.select(
-                    Document.created_by.alias("uid"),
-                    fn.COALESCE(fn.SUM(Document.size), 0).alias("b"),
-                    fn.COUNT(Document.id).alias("n"),
-                )
-                .join(Knowledgebase, on=(Document.kb_id == Knowledgebase.id))
-                .where(Knowledgebase.tenant_id.in_(tenant_ids))
-                .group_by(Document.created_by)
-                .order_by(fn.SUM(Document.size).desc())
-                .limit(20)
-                .dicts()
-            )
-            uids = [r["uid"] for r in user_rows if r["uid"]]
-            emails = {
-                u.id: {"email": u.email, "nickname": u.nickname}
-                for u in User.select().where(User.id.in_(uids))
-            } if uids else {}
-            users = [
-                {
-                    "user_id": r["uid"],
-                    "email": emails.get(r["uid"], {}).get("email"),
-                    "nickname": emails.get(r["uid"], {}).get("nickname"),
-                    "minio_bytes": int(r["b"]),
-                    "doc_count": int(r["n"]),
-                }
-                for r in user_rows
-            ]
 
         # -- par groupe (ws_group → ws_group_dataset → KB) : somme des KB liés
         groups = []

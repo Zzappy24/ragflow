@@ -848,19 +848,6 @@ export default function OrgDetailPage() {
                     ]}
                   />
                 </Card>
-                <Card title="Par utilisateur (top 20)" size="small" loading={storageLoading}>
-                  <Table
-                    size="small"
-                    rowKey="user_id"
-                    pagination={false}
-                    dataSource={storageDetail?.users ?? []}
-                    columns={[
-                      { title: 'Utilisateur', render: (_: unknown, u: { email?: string; nickname?: string; user_id: string }) => u.email ?? u.nickname ?? u.user_id },
-                      { title: 'Documents', dataIndex: 'doc_count', align: 'right' as const },
-                      { title: 'Fichiers', dataIndex: 'minio_bytes', align: 'right' as const, render: (v: number) => fmtBytes(v) },
-                    ]}
-                  />
-                </Card>
               </div>
             ),
           },
