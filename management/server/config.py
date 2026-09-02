@@ -10,7 +10,10 @@ class Settings(BaseSettings):
     JWT_SECRET: str = os.getenv("ADMIN_JWT_SECRET", "")
     JWT_ALGORITHM: str = "HS256"
     JWT_ACCESS_TOKEN_EXPIRE_MINUTES: int = 60
-    JWT_REFRESH_TOKEN_EXPIRE_MINUTES: int = 60 * 24 * 7  # 7 days
+    # 7 j → 24 h (2026-09-02) : le panel est l'outil le plus sensible de la
+    # plateforme — reconnexion quotidienne pour les admins, session 7 j
+    # conservée côté RAGFlow (outil de travail, révocable serveur).
+    JWT_REFRESH_TOKEN_EXPIRE_MINUTES: int = 60 * 24  # 24 h
 
     # CORS — override via ADMIN_CORS_ORIGINS="https://admin.example.com,https://app.example.com"
     CORS_ORIGINS: list[str] = [

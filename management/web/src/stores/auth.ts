@@ -42,6 +42,12 @@ export const useAuthStore = create<AuthState>((set, get) => ({
   },
 
   logout: () => {
+    // Révocation serveur best-effort : la row admin_session meurt, le
+    // refresh token devient inutilisable même s'il fuite ensuite.
+    const rt = localStorage.getItem('admin_refresh_token');
+    if (rt) {
+      api.post('/auth/logout', { refresh_token: rt }).catch(() => {});
+    }
     localStorage.removeItem('admin_token');
     localStorage.removeItem('admin_refresh_token');
     set({ user: null });
