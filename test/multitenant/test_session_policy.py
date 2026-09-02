@@ -19,30 +19,24 @@ def test_ragflow_token_has_max_age():
     )
 
 
-def test_panel_front_uses_refresh_token():
-    src = (REPO / "management" / "web" / "src" / "lib" / "api.ts").read_text()
-    assert "auth/refresh" in src, "le front ne consomme plus le refresh token (déconnexion 60 min)"
-    assert "_retried" in src, "garde anti-boucle du rejeu absente"
-    assert "refreshing" in src, "single-flight absent (tempête de refresh sur 401 concurrents)"
+def test_panel_uses_opaque_sessions():
+    """Panel : sessions OPAQUES (modèle GitHub/Slack pour une app web
+    first-party) — le token est aléatoire (rien à forger), seul son sha256
+    vit en base, la row est la session (suppression = révocation
+    instantanée, zéro fenêtre résiduelle)."""
+    sessions = (REPO / "management" / "server" / "auth" / "sessions.py").read_text()
+    assert "sha256" in sessions, "le token doit être stocké hashé, jamais en clair"
+    assert "token_urlsafe" in sessions, "le token doit être aléatoire (rien à forger)"
+    deps = (REPO / "management" / "server" / "auth" / "dependencies.py").read_text()
+    assert "resolve_session" in deps, "l'auth du panel ne passe plus par les sessions opaques"
+    assert "decode_token" not in deps, "retour du JWT dans l'auth du panel"
+    auth = (REPO / "management" / "server" / "routers" / "auth.py").read_text()
+    assert "open_session" in auth and "close_session" in auth
+    assert "/refresh" not in auth, "la route refresh ne doit pas revenir (supprimée avec le JWT)"
 
 
-def test_panel_refresh_is_stateful_with_rotation():
-    """Le refresh du panel doit vérifier la row admin_session (révocation
-    serveur — le JWT seul ne suffit plus, une fuite du secret ne forge plus
-    de session durable) et DÉTRUIRE l'ancien jti (rotation : un refresh
-    rejoué échoue)."""
-    src = (REPO / "management" / "server" / "routers" / "auth.py").read_text()
-    refresh_src = src[src.index('@router.post("/refresh"'):src.index('@router.post("/logout"')]
-    assert "AdminSession.get_or_none" in refresh_src, "refresh sans vérification de session serveur"
-    assert "delete_instance" in refresh_src, "rotation absente — un refresh volé serait rejouable"
-    assert "connection_context" in refresh_src
-    logout_src = src[src.index('@router.post("/logout"'):]
-    assert "delete_instance" in logout_src, "logout ne révoque pas la session serveur"
-    assert "AdminSession" in (REPO / "api" / "db" / "db_models.py").read_text()
-
-
-def test_panel_refresh_ttl_is_24h():
+def test_panel_session_ttl_is_24h():
     src = (REPO / "management" / "server" / "config.py").read_text()
-    assert "JWT_REFRESH_TOKEN_EXPIRE_MINUTES: int = 60 * 24  # 24 h" in src, (
-        "TTL du refresh panel != 24 h — décision 2026-09-02 à re-acter si changement voulu"
+    assert "ADMIN_SESSION_TTL_MINUTES: int = 60 * 24" in src, (
+        "TTL de session panel != 24 h — décision 2026-09-02 à re-acter si changement voulu"
     )

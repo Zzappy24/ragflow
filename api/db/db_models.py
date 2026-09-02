@@ -1528,14 +1528,13 @@ class OrgInvite(DataBaseModel):
         db_table = "org_invite"
 
 
-# CUSTOM B2B SaaS — sessions du panel admin, STATEFUL : le refresh token
-# JWT porte un jti qui doit correspondre à une row ici. Supprimer la row =
-# révoquer la session à effet <= durée de l'access token (60 min) ; une
-# fuite du secret JWT ne permet plus de forger une session DURABLE.
-# Rotation à chaque refresh (l'ancien jti est supprimé — un refresh rejoué
-# échoue). ip/user_agent : matière pour une future vue « sessions actives ».
+# CUSTOM B2B SaaS — sessions OPAQUES du panel admin (modèle GitHub/Slack) :
+# la row EST la session, indexée par le sha256 du token aléatoire (le token
+# en clair n'est jamais stocké — une lecture de la table ne donne rien
+# d'utilisable, et aucun secret ne permet d'en forger). Supprimer la row =
+# révocation INSTANTANÉE. ip/user_agent : future vue « sessions actives ».
 class AdminSession(DataBaseModel):
-    id = CharField(max_length=32, primary_key=True)  # = jti du refresh token
+    id = CharField(max_length=64, primary_key=True)  # sha256 du token opaque
     user_id = CharField(max_length=32, null=False, index=True)
     expires_at = DateTimeField(null=False)
     ip = CharField(max_length=64, null=True)

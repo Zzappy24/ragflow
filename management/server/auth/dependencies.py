@@ -4,7 +4,7 @@ FastAPI dependencies for authentication and authorization.
 from fastapi import Depends, HTTPException, status
 from fastapi.security import HTTPAuthorizationCredentials, HTTPBearer
 
-from management.server.auth.jwt import decode_token
+from management.server.auth.sessions import resolve_session
 
 security = HTTPBearer()
 
@@ -12,8 +12,10 @@ security = HTTPBearer()
 def get_current_user_id(
     credentials: HTTPAuthorizationCredentials = Depends(security),
 ) -> str:
-    """Extract and validate user_id from Bearer token."""
-    user_id = decode_token(credentials.credentials, expected_type="access")
+    """Résout le Bearer token OPAQUE contre la table admin_session
+    (modèle GitHub/Slack) : la row est la session, la supprimer révoque
+    instantanément. Aucun JWT — aucun secret ne peut forger une session."""
+    user_id = resolve_session(credentials.credentials)
     if not user_id:
         raise HTTPException(
             status_code=status.HTTP_401_UNAUTHORIZED,

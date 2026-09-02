@@ -1,32 +1,18 @@
 """
-Auth routes: login, me, refresh.
+Auth routes: login, me, logout — sessions opaques (voir auth/sessions.py).
 """
 from fastapi import APIRouter, Depends, HTTPException, Request, status
 from werkzeug.security import check_password_hash
 
-from management.server.auth.jwt import create_access_token, create_refresh_token, decode_refresh, decode_token
+from management.server.auth.sessions import close_session, open_session
+from fastapi.security import HTTPBearer
+
 from management.server.auth.dependencies import get_current_user
-from management.server.models.schemas import LoginRequest, TokenResponse, RefreshRequest, UserInfo
+
+_bearer = HTTPBearer()
+from management.server.models.schemas import LoginRequest, TokenResponse, UserInfo
 
 router = APIRouter()
-
-
-def _open_session(user_id: str, request) -> str:
-    """Crée la row admin_session et retourne son jti."""
-    from datetime import datetime, timedelta
-    from common.misc_utils import get_uuid
-    from common.time_utils import current_timestamp
-    from api.db.db_models import DB, AdminSession
-    jti = get_uuid()
-    with DB.connection_context():
-        AdminSession.create(
-            id=jti, user_id=user_id,
-            expires_at=datetime.now() + timedelta(minutes=settings.JWT_REFRESH_TOKEN_EXPIRE_MINUTES),
-            ip=(request.client.host if request and request.client else None),
-            user_agent=(request.headers.get("user-agent", "")[:255] if request else None),
-            create_time=current_timestamp(), update_time=current_timestamp(),
-        )
-    return jti
 
 
 @router.post("/login", response_model=TokenResponse)
@@ -74,10 +60,12 @@ def login(request: Request, body: LoginRequest):
                     detail="Admin access required",
                 )
 
-    jti = _open_session(user.id, request)
+    # Session opaque (modèle GitHub/Slack) : un seul token, aléatoire,
+    # révocable serveur à la seconde. refresh_token vide conservé pour la
+    # compatibilité du schéma de réponse.
     return TokenResponse(
-        access_token=create_access_token(user.id),
-        refresh_token=create_refresh_token(user.id, jti),
+        access_token=open_session(user.id, request),
+        refresh_token="",
     )
 
 
@@ -121,46 +109,7 @@ def me(user=Depends(get_current_user)):
     )
 
 
-@router.post("/refresh", response_model=TokenResponse)
-def refresh(request: Request, body: RefreshRequest):
-    """Refresh STATEFUL : le jti du token doit correspondre à une row
-    admin_session vivante — supprimer la row révoque la session (effet
-    <= 60 min, la durée de l'access token). Rotation systématique :
-    l'ancien jti est détruit, un refresh rejoué échoue."""
-    from datetime import datetime
-    from api.db.db_models import DB, AdminSession
-
-    decoded = decode_refresh(body.refresh_token)
-    if not decoded:
-        raise HTTPException(
-            status_code=status.HTTP_401_UNAUTHORIZED,
-            detail="Invalid or expired refresh token",
-        )
-    user_id, jti = decoded
-    with DB.connection_context():
-        row = AdminSession.get_or_none(AdminSession.id == jti)
-        if row is None or row.user_id != user_id or (row.expires_at and row.expires_at < datetime.now()):
-            raise HTTPException(
-                status_code=status.HTTP_401_UNAUTHORIZED,
-                detail="Session revoked or expired",
-            )
-        row.delete_instance()  # rotation : l'ancien refresh est mort
-    new_jti = _open_session(user_id, request)
-    return TokenResponse(
-        access_token=create_access_token(user_id),
-        refresh_token=create_refresh_token(user_id, new_jti),
-    )
-
-
 @router.post("/logout", status_code=status.HTTP_204_NO_CONTENT)
-def logout(body: RefreshRequest):
-    """Révoque la session côté serveur (best-effort : 204 même si le token
-    est déjà invalide — l'objectif est que la row meure)."""
-    from api.db.db_models import DB, AdminSession
-    decoded = decode_refresh(body.refresh_token)
-    if decoded:
-        _, jti = decoded
-        with DB.connection_context():
-            row = AdminSession.get_or_none(AdminSession.id == jti)
-            if row:
-                row.delete_instance()
+def logout(credentials=Depends(_bearer)):
+    """Révoque la session courante côté serveur (204 même si déjà morte)."""
+    close_session(credentials.credentials)

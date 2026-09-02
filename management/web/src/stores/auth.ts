@@ -37,17 +37,13 @@ export const useAuthStore = create<AuthState>((set, get) => ({
       password: rsaPsw(password),
     });
     localStorage.setItem('admin_token', res.data.access_token);
-    localStorage.setItem('admin_refresh_token', res.data.refresh_token);
     await get().fetchMe();
   },
 
   logout: () => {
     // Révocation serveur best-effort : la row admin_session meurt, le
-    // refresh token devient inutilisable même s'il fuite ensuite.
-    const rt = localStorage.getItem('admin_refresh_token');
-    if (rt) {
-      api.post('/auth/logout', { refresh_token: rt }).catch(() => {});
-    }
+    // token devient inutilisable même s'il fuite ensuite.
+    api.post('/auth/logout').catch(() => {});
     localStorage.removeItem('admin_token');
     localStorage.removeItem('admin_refresh_token');
     set({ user: null });
