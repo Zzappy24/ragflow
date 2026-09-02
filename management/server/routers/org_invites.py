@@ -87,7 +87,9 @@ def _load_valid_invite(token: str):
             raise ValueError("wrong type")
     except Exception:
         raise HTTPException(status_code=404, detail="Invitation invalide ou expirée")
-    inv = OrgInvite.get_or_none(OrgInvite.id == payload["invite_id"])
+    from api.db.db_models import DB
+    with DB.connection_context():
+        inv = OrgInvite.get_or_none(OrgInvite.id == payload["invite_id"])
     if not inv:
         raise HTTPException(status_code=404, detail="Invitation invalide ou expirée")
     if inv.expires_at and inv.expires_at < datetime.now():
@@ -96,8 +98,9 @@ def _load_valid_invite(token: str):
 
 
 def _org_name(org_id: str) -> str:
-    from api.db.db_models import Organisation
-    org = Organisation.get_or_none(Organisation.id == org_id)
+    from api.db.db_models import DB, Organisation
+    with DB.connection_context():
+        org = Organisation.get_or_none(Organisation.id == org_id)
     return getattr(org, "name", None) or "votre organisation"
 
 
@@ -180,9 +183,11 @@ async def invite_members(request: Request, org_id: str, body: OrgInviteBatch,
             results.append({"email": email, "status": "already_member"})
             continue
         # Invitation pendante : on re-signe et renvoie (idempotent).
-        pending = OrgInvite.get_or_none((OrgInvite.org_id == org_id) & (OrgInvite.email == email))
-        if pending:
-            pending.delete_instance()
+        from api.db.db_models import DB
+        with DB.connection_context():
+            pending = OrgInvite.get_or_none((OrgInvite.org_id == org_id) & (OrgInvite.email == email))
+            if pending:
+                pending.delete_instance()
         allowed, msg = check_quota(org_id, "user")
         if not allowed:
             results.append({"email": email, "status": "quota_exceeded", "detail": msg})
@@ -202,9 +207,10 @@ async def invite_members(request: Request, org_id: str, body: OrgInviteBatch,
 @router.get("/orgs/{org_id}/members/invitations")
 def list_invitations(org_id: str, user_id: str = Depends(get_current_user_id)):
     require_org_admin(org_id, user_id)
-    from api.db.db_models import OrgInvite
-    rows = (OrgInvite.select().where(OrgInvite.org_id == org_id)
-            .order_by(OrgInvite.create_time.desc()))
+    from api.db.db_models import DB, OrgInvite
+    with DB.connection_context():
+        rows = list(OrgInvite.select().where(OrgInvite.org_id == org_id)
+                    .order_by(OrgInvite.create_time.desc()))
     return [{"id": r.id, "email": r.email, "role": r.role,
              "ws_id": r.ws_id, "ws_role": r.ws_role,
              "expires_at": r.expires_at.isoformat() if r.expires_at else None,
@@ -214,13 +220,15 @@ def list_invitations(org_id: str, user_id: str = Depends(get_current_user_id)):
 
 @router.post("/org-invites/{invite_id}/resend")
 async def resend_invitation(invite_id: str, user_id: str = Depends(get_current_user_id)):
-    from api.db.db_models import OrgInvite
-    inv = OrgInvite.get_or_none(OrgInvite.id == invite_id)
+    from api.db.db_models import DB, OrgInvite
+    with DB.connection_context():
+        inv = OrgInvite.get_or_none(OrgInvite.id == invite_id)
     if not inv:
         raise HTTPException(status_code=404, detail="Invitation introuvable")
     require_org_admin(inv.org_id, user_id)
     inv.expires_at = datetime.now() + timedelta(seconds=settings.INVITE_TOKEN_EXPIRE_SECONDS)
-    inv.save()
+    with DB.connection_context():
+        inv.save()
     url = _accept_url(_sign(inv.id, inv.expires_at))
     email_sent = await send_mail(
         to=inv.email, subject="Invitation à rejoindre une organisation Cyllene",
@@ -236,8 +244,9 @@ def update_invitation(invite_id: str, body: OrgInviteUpdate,
     """Modifie une invitation EN ATTENTE sans renvoyer d'email : le lien
     déjà envoyé ne porte que l'id — la destination (rôle org, workspace,
     rôle ws) est lue dans la row à l'acceptation, donc l'éditer suffit."""
-    from api.db.db_models import OrgInvite
-    inv = OrgInvite.get_or_none(OrgInvite.id == invite_id)
+    from api.db.db_models import DB, OrgInvite
+    with DB.connection_context():
+        inv = OrgInvite.get_or_none(OrgInvite.id == invite_id)
     if not inv:
         raise HTTPException(status_code=404, detail="Invitation introuvable")
     require_org_admin(inv.org_id, user_id)
@@ -257,20 +266,23 @@ def update_invitation(invite_id: str, body: OrgInviteUpdate,
             inv.ws_id = body.ws_id
     if body.ws_role is not None and inv.ws_id:
         inv.ws_role = body.ws_role
-    inv.save()
+    with DB.connection_context():
+        inv.save()
     return {"id": inv.id, "email": inv.email, "role": inv.role,
             "ws_id": inv.ws_id, "ws_role": inv.ws_role}
 
 
 @router.delete("/org-invites/{invite_id}", status_code=204)
 def cancel_invitation(invite_id: str, user_id: str = Depends(get_current_user_id)):
-    from api.db.db_models import OrgInvite
-    inv = OrgInvite.get_or_none(OrgInvite.id == invite_id)
+    from api.db.db_models import DB, OrgInvite
+    with DB.connection_context():
+        inv = OrgInvite.get_or_none(OrgInvite.id == invite_id)
     if not inv:
         return
     require_org_admin(inv.org_id, user_id)
     # La row est la source de vérité : sans elle, le JWT encore valide est mort.
-    inv.delete_instance()
+    with DB.connection_context():
+        inv.delete_instance()
 
 
 # ---------------------------------------------------------------------------
@@ -353,7 +365,8 @@ async def accept_invitation(request: Request, body: OrgInviteAccept):
                                        role=inv.ws_role or "viewer", member_id=get_uuid())
         acting_user = user.id
 
-    inv.delete_instance()
+    with DB.connection_context():
+        inv.delete_instance()
     audit_svc.record(
         request=request, actor_user_id=acting_user, action=audit_svc.ORG_MEMBER_ADD,
         org_id=inv.org_id, resource_type="user", resource_id=acting_user,

@@ -91,3 +91,20 @@ def test_pending_invitation_is_editable_without_resend():
     assert "send_mail" not in dump, "l'édition ne doit PAS renvoyer d'email"
     src = ast.get_source_segment(SRC, node)
     assert "ws.org_id != inv.org_id" in src, "le ws doit être validé contre l'org de l'invitation"
+
+
+def test_all_peewee_access_under_connection_context():
+    """Doctrine mgmt : tout accès Peewee direct passe sous
+    DB.connection_context() — hors contexte, FastAPI (threadpool) ouvre des
+    connexions implicites par thread jamais rendues au pool → épuisement
+    intermittent du pool MySQL, et TOUT le panel attend (recherches gelées,
+    /stats en 504, sans aucun log — suspect du 2026-09-02)."""
+    for node in ast.walk(TREE):
+        if isinstance(node, (ast.FunctionDef, ast.AsyncFunctionDef)):
+            dump = ast.dump(node)
+            touches_db = any(m in dump for m in
+                             ("'get_or_none'", "'select'", "'save'", "'delete_instance'", "'create'"))
+            if touches_db and "OrgInvite" in dump or "Organisation" in dump:
+                assert "connection_context" in dump, (
+                    f"{node.name} touche Peewee hors DB.connection_context()"
+                )
