@@ -1,0 +1,106 @@
+<!doctype html>
+<html lang="fr">
+<head>
+<meta charset="utf-8">
+<title>Architecture des accès</title>
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Archivo:wght@600;700;800&family=IBM+Plex+Mono:wght@500;600&family=IBM+Plex+Sans:wght@400;500;600&display=swap">
+<style>
+  @page { size: A4; margin: 16mm 18mm; }
+  :root {
+    --ink: #1a2530; --ink-soft: #46545f; --ink-faint: #6d7a84;
+    --hair: #dde3e8; --accent: #0e7c6b; --accent-soft: #e7f3f0;
+    --warn: #b0872a; --danger: #c2544b; --surface: #f6f8f9;
+  }
+  * { box-sizing: border-box; }
+  body { margin: 0 auto; max-width: 176mm; background: #fff; color: var(--ink);
+    font-family: "IBM Plex Sans", system-ui, sans-serif; font-size: 10.5pt; line-height: 1.55;
+    -webkit-print-color-adjust: exact; print-color-adjust: exact; }
+  h1, h2, h3 { font-family: "Archivo", sans-serif; letter-spacing: -.015em; }
+  h1 { font-size: 22pt; font-weight: 800; margin: 0 0 2mm; }
+  h2 { font-size: 13pt; font-weight: 700; margin: 8mm 0 2.5mm; color: var(--ink);
+    border-bottom: 2px solid var(--accent); padding-bottom: 1.2mm; }
+  h3 { font-size: 10.5pt; font-weight: 700; margin: 4mm 0 1mm; }
+  p { margin: 0 0 2.5mm; }
+  .kicker { font-family: "IBM Plex Mono", monospace; font-size: 7.5pt; font-weight: 600;
+    letter-spacing: .16em; text-transform: uppercase; color: var(--accent); margin: 10mm 0 2mm; }
+  .byline { font-family: "IBM Plex Mono", monospace; font-size: 8pt; color: var(--ink-faint); margin-bottom: 8mm; }
+  .lead { font-size: 11.5pt; color: var(--ink-soft); max-width: 62ch; }
+  .box { background: var(--surface); border: 1px solid var(--hair); border-left: 3px solid var(--accent);
+    border-radius: 6px; padding: 3mm 4mm; margin: 3mm 0; }
+  .box.danger { border-left-color: var(--danger); }
+  .box.warn { border-left-color: var(--warn); }
+  table { border-collapse: collapse; width: 100%; margin: 3mm 0; font-size: 9.5pt; }
+  th, td { border: 1px solid var(--hair); padding: 2mm 3mm; text-align: left; vertical-align: top; }
+  th { background: var(--surface); font-family: "IBM Plex Mono", monospace; font-size: 8pt;
+    text-transform: uppercase; letter-spacing: .06em; color: var(--ink-faint); }
+  code { font-family: "IBM Plex Mono", monospace; font-size: 9pt; background: var(--surface);
+    padding: .3mm 1.2mm; border-radius: 3px; }
+  ul { margin: 1mm 0 3mm; padding-left: 5mm; }
+  li { margin: 1mm 0; }
+  .cols2 { display: grid; grid-template-columns: 1fr 1fr; gap: 4mm; }
+  .flow { display: flex; align-items: stretch; gap: 2mm; margin: 4mm 0; }
+  .fstep { flex: 1; background: var(--surface); border: 1px solid var(--hair); border-radius: 6px;
+    padding: 2.5mm 3mm; font-size: 8.5pt; }
+  .fstep b { display: block; font-size: 9pt; margin-bottom: .5mm; }
+  .farrow { align-self: center; color: var(--ink-faint); font-family: "IBM Plex Mono", monospace; }
+  .paraph { position: fixed; bottom: 6mm; right: 0; font-family: "IBM Plex Mono", monospace;
+    font-size: 8pt; font-weight: 600; color: var(--ink-faint); }
+  .avoid-break { break-inside: avoid; }
+</style>
+</head>
+<body>
+<span class="paraph">YS</span>
+
+<div class="kicker">Plateforme RAG Cyllene · Note d'architecture · Septembre 2026</div>
+<h1>Architecture des accès</h1>
+<div class="byline">Yoann Sapienza · Groupe Cyllene</div>
+
+<p class="lead">La plateforme sert deux publics aux besoins opposés : des <strong>clients externes</strong> qui doivent y accéder simplement depuis n'importe où, et une <strong>équipe d'exploitation</strong> dont les outils ne doivent être joignables par personne d'autre. Cette note décrit la séparation en deux plans qui répond aux deux exigences, la politique de sessions en vigueur, et la feuille de route d'authentification.</p>
+
+<h2>1. Le principe : deux plans, deux logiques de défense</h2>
+<div class="flow avoid-break">
+  <div class="fstep"><b>Plan produit</b>public, HTTPS, ouvert au monde : la défense est portée par l'identité (sessions révocables, MFA à venir)</div>
+  <span class="farrow">≠</span>
+  <div class="fstep"><b>Plan d'exploitation</b>invisible d'internet : la défense est portée par le réseau (bastion d'entreprise, accès nominatif unique)</div>
+</div>
+<table class="avoid-break">
+<tr><th>Plan</th><th>Surfaces</th><th>Qui y accède</th><th>Défense</th></tr>
+<tr><td><strong>Produit</strong></td><td>Application RAG, panel d'administration client, gateway Code</td><td>Utilisateurs et administrateurs des organisations clientes, depuis n'importe quel réseau</td><td>Identité : mots de passe chiffrés, sessions courtes révocables, MFA (feuille de route)</td></tr>
+<tr><td><strong>Exploitation</strong></td><td>API Kubernetes, déploiement continu, registre d'images, bases de données, index de recherche, supervision</td><td>Équipe d'exploitation Cyllene uniquement</td><td>Réseau : bastion d'entreprise (authentification nominative unique pour toutes les ressources), aucune exposition publique</td></tr>
+</table>
+<div class="box">
+<p style="margin:0"><strong>Règle absolue :</strong> aucune surface d'exploitation n'est joignable depuis internet. Le bastion garde la salle des machines ; l'identité garde les comptes du produit. On n'impose jamais le bastion à un client : ce serait le modèle « déploiement privé », incompatible avec un usage SaaS (télétravail, mobilité, adresses IP dynamiques).</p>
+</div>
+
+<h2>2. La politique de sessions du plan produit</h2>
+<p>Une seule phrase la résume, appliquée aux deux produits : <strong>jeton d'accès court, session bornée, révocation serveur instantanée.</strong></p>
+<table class="avoid-break">
+<tr><th>Surface</th><th>Jeton d'accès</th><th>Durée de session</th><th>Révocation</th></tr>
+<tr><td>Application RAG</td><td>Jeton signé, vérifié en base à chaque requête</td><td>7 jours (plafond dur)</td><td>Instantanée : la validité exige une correspondance en base, révocable à la seconde</td></tr>
+<tr><td>Panel d'administration</td><td>JWT de 60 minutes</td><td>24 heures (renouvellement silencieux)</td><td>Effective en moins de 60 minutes : la session vit en base, sa suppression tue le renouvellement ; rotation anti-rejeu à chaque renouvellement ; déconnexion = révocation serveur réelle</td></tr>
+</table>
+<p>Points notables : le panel, surface la plus sensible, a la session la plus courte (reconnexion quotidienne). Un jeton de renouvellement volé puis rejoué échoue (rotation), et la fuite du secret de signature ne permet plus de forger une session durable, seulement un jeton d'une heure. À titre de comparaison, ces durées sont plus strictes que les défauts d'Azure AD (90 jours glissants) et de GitHub (14 jours).</p>
+
+<h2>3. Feuille de route d'authentification</h2>
+<table class="avoid-break">
+<tr><th>Étape</th><th>Ce que c'est</th><th>Pour qui</th></tr>
+<tr><td><strong>1. MFA universel (TOTP)</strong></td><td>Second facteur par application d'authentification, un standard unique compatible Google Authenticator, Microsoft Authenticator, Authy et équivalents. Enrôlement par QR code, codes de secours.</td><td>Tous les comptes ; prioritairement les administrateurs</td></tr>
+<tr><td><strong>2. Fédération par organisation (SSO/OIDC)</strong></td><td>Chaque organisation cliente branche son propre fournisseur d'identité (Entra ID, Google Workspace, Okta). Le MFA devient la politique du client, appliquée par son service informatique avec ses outils existants.</td><td>Offre entreprise : l'exigence type des RSSI</td></tr>
+<tr><td><strong>3. Restrictions réseau à la demande</strong></td><td>Pour les clients qui l'exigent : liste d'adresses autorisées par organisation, ou connectivité privée dédiée (VPN site à site, instance dédiée) en offre premium.</td><td>Option par organisation, jamais imposée</td></tr>
+</table>
+
+<h2>4. Ce que cette architecture garantit déjà</h2>
+<ul>
+<li><strong>Un compte compromis se neutralise à la seconde</strong> (révocation serveur), et aucune session ne survit à son plafond même sans intervention.</li>
+<li><strong>Un poste partagé ne contamine pas les comptes</strong> : l'identité du workspace actif est validée à chaque session contre les droits réels du compte.</li>
+<li><strong>Le vol du secret de signature a un rayon d'action d'une heure</strong>, au lieu d'une capacité de forge permanente.</li>
+<li><strong>La salle des machines est hors d'atteinte</strong> : bases, orchestrateur, registre et supervision ne répondent qu'au bastion.</li>
+<li>Complémentarité avec la note « Sandbox d'exécution de code » : le code généré par les modèles s'exécute dans un isolat dédié, hors des deux plans décrits ici.</li>
+</ul>
+
+<p style="margin-top:8mm; color:var(--ink-faint); font-size:8.5pt">Document interne Cyllene · les détails d'implémentation (politiques de sessions, manifests, configuration du bastion) sont versionnés dans le dépôt de la plateforme.</p>
+
+</body>
+</html>
