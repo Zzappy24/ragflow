@@ -447,7 +447,7 @@ interface OrgStats {
   quotas: Record<string, { current: number; max: number }>;
   storage?: {
     minio_bytes: number;
-    infinity_bytes: number | null; // null = mesure Infinity indisponible
+    infinity_bytes: number | null; // null = mesure de l'index indisponible
     total_bytes: number;
     max_bytes: number;
   };
@@ -698,7 +698,7 @@ export default function OrgDetailPage() {
   const datasetsQ = getQuota('datasets');
   const docsQ = getQuota('documents');
 
-  // CIA-9 — stockage (fichiers MinIO + index Infinity)
+  // CIA-9 — stockage (fichiers MinIO + index de recherche — ES en prod ; le champ garde son nom API infinity_bytes pour compat)
   const fmtBytes = (b?: number | null) => {
     if (b == null) return '—';
     if (b >= 1024 ** 3) return `${(b / 1024 ** 3).toFixed(2)} Go`;
@@ -828,7 +828,7 @@ export default function OrgDetailPage() {
                       { title: 'Documents', dataIndex: 'doc_count', align: 'right' as const },
                       { title: 'Fichiers', dataIndex: 'minio_bytes', align: 'right' as const, render: (v: number) => fmtBytes(v),
                         sorter: (a: { minio_bytes: number }, b: { minio_bytes: number }) => a.minio_bytes - b.minio_bytes, defaultSortOrder: 'descend' as const },
-                      { title: 'Index Infinity', dataIndex: 'infinity_bytes', align: 'right' as const, render: (v: number | null) => fmtBytes(v) },
+                      { title: 'Index de recherche', dataIndex: 'infinity_bytes', align: 'right' as const, render: (v: number | null) => fmtBytes(v) },
                     ]}
                   />
                 </Card>
@@ -844,7 +844,7 @@ export default function OrgDetailPage() {
                       { title: 'Workspace', dataIndex: 'workspace' },
                       { title: 'Datasets', dataIndex: 'dataset_count', align: 'right' as const },
                       { title: 'Fichiers', dataIndex: 'minio_bytes', align: 'right' as const, render: (v: number) => fmtBytes(v) },
-                      { title: 'Index Infinity', dataIndex: 'infinity_bytes', align: 'right' as const, render: (v: number | null) => fmtBytes(v) },
+                      { title: 'Index de recherche', dataIndex: 'infinity_bytes', align: 'right' as const, render: (v: number | null) => fmtBytes(v) },
                     ]}
                   />
                 </Card>
