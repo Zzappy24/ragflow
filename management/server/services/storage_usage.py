@@ -18,11 +18,18 @@ import httpx
 
 logger = logging.getLogger(__name__)
 
-_CACHE: dict = {"ts": 0.0, "tables": None}
+_CACHE: dict = {"ts": 0.0, "tables": None, "fail_ts": 0.0}
 _CACHE_TTL_S = int(os.environ.get("MGMT_STORAGE_CACHE_TTL_S", "300"))
-# Le premier hit déclenche un scan complet côté api (2 appels thrift par
-# table) — timeout large ; les hits suivants tapent le cache api (900 s).
-_TIMEOUT_S = float(os.environ.get("MGMT_STORAGE_PROXY_TIMEOUT_S", "60"))
+# 60 → 8 s (2026-09-02) : pendant l'incident image .16.3 (api pods morts),
+# chaque affichage d'une fiche org bloquait des threads mgmt 60 s sur ce
+# proxy → 504 gateway sur la fiche ET recherches gelées derrière (le pool
+# de threads FastAPI faisait la queue). Le scan ES est rapide (~1-2 s) ;
+# 8 s suffisent largement, et l'échec doit être RAPIDE : les stats
+# dégradent proprement (infinity_bytes=None) par design.
+_TIMEOUT_S = float(os.environ.get("MGMT_STORAGE_PROXY_TIMEOUT_S", "8"))
+# Mémoire d'échec : sans elle, CHAQUE hit re-payait le timeout complet
+# tant que l'api était injoignable.
+_FAIL_TTL_S = float(os.environ.get("MGMT_STORAGE_FAIL_TTL_S", "45"))
 
 
 def _fetch_tables() -> list[dict] | None:
@@ -30,6 +37,8 @@ def _fetch_tables() -> list[dict] | None:
     now = time.time()
     if _CACHE["tables"] is not None and (now - _CACHE["ts"]) < _CACHE_TTL_S:
         return _CACHE["tables"]
+    if (now - _CACHE["fail_ts"]) < _FAIL_TTL_S:
+        return None  # échec récent : dégrader tout de suite, ne pas re-bloquer
 
     api_base = os.environ.get("RAGFLOW_API_URL", "").rstrip("/")
     secret = os.environ.get("INTERNAL_API_SECRET", "")
@@ -46,7 +55,8 @@ def _fetch_tables() -> list[dict] | None:
         resp.raise_for_status()
         tables = (resp.json().get("data") or {}).get("tables", [])
     except Exception as e:
-        logger.warning(f"storage_usage: mesure Infinity indisponible: {e}")
+        logger.warning(f"storage_usage: mesure de l'index indisponible: {e}")
+        _CACHE["fail_ts"] = time.time()
         return None
 
     _CACHE.update(ts=now, tables=tables)
