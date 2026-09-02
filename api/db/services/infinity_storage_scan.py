@@ -75,7 +75,12 @@ def _scan_elasticsearch() -> list[dict]:
     honnête, sommes par tenant exactes à l'arrondi près. Repli : entrée
     tenant-niveau (kb_id vide) si l'agrégation échoue."""
     from common import settings as common_settings
-    es = common_settings.docStoreConn.es
+    # Timeout court dédié : le client ES global est configuré à 600 s — un
+    # scan lancé pendant un burst d'ingestion campait sur un ES occupé, le
+    # proxy mgmt attendait le scan, la gateway coupait (504 sur /stats,
+    # constaté 2026-09-02). Une mesure de stockage est du best-effort : au
+    # pire, relevé vide et jauges sans index jusqu'au prochain tick.
+    es = common_settings.docStoreConn.es.options(request_timeout=15)
     stats = es.indices.stats(index="ragflow_*", metric="store,docs")
     tables = []
     for idx_name, s in (stats.get("indices") or {}).items():
