@@ -305,6 +305,13 @@ WORKDIR /ragflow
 # Copy Python environment and packages
 ENV VIRTUAL_ENV=/ragflow/.venv
 COPY --from=builder ${VIRTUAL_ENV} ${VIRTUAL_ENV}
+# CUSTOM B2B SaaS — garde-fou venv : un build kaniko interrompu (réseau,
+# clone git de dépendance) peut laisser une couche de cache empoisonnée et
+# produire une image dont le venv est incomplet — constaté 2026-09-02 :
+# executor en CrashLoop sur `ModuleNotFoundError: numpy` APRÈS un build
+# « réussi » en 3e tentative. Le smoke-import fait échouer le BUILD au
+# lieu de la prod (même discipline que les `test -f` des modèles DeepDoc).
+RUN ${VIRTUAL_ENV}/bin/python -c "import numpy, torch, docxtpl, elasticsearch, peewee, quart, tiktoken; print('venv smoke-imports OK')"
 ENV PATH="${VIRTUAL_ENV}/bin:${PATH}"
 
 ENV PYTHONPATH=/ragflow/
