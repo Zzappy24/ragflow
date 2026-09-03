@@ -1471,6 +1471,9 @@ class Organisation(DataBaseModel):
     name = CharField(max_length=255, null=False, index=True)
     slug = CharField(max_length=255, null=False, unique=True, index=True)
     logo = TextField(null=True)
+    # CUSTOM B2B SaaS — DA par organisation : couleur d'accent (#rrggbb)
+    # appliquée par le front avec le logo ci-dessus. NULL = thème Cyllene.
+    brand_color = CharField(max_length=16, null=True)
     status = CharField(max_length=1, null=True, default="1", index=True)
     max_users = IntegerField(default=50)
     max_workspaces = IntegerField(default=10)
@@ -2251,6 +2254,8 @@ def migrate_db():
     alter_db_add_column(migrator, "code_key_invite", "max_budget", FloatField(null=True))
     alter_db_add_column(migrator, "code_key_invite", "rpm_limit", IntegerField(null=True))
     alter_db_add_column(migrator, "code_team", "bu", CharField(max_length=64, null=True))
+    # CUSTOM B2B SaaS — DA par organisation (logo existait déjà)
+    alter_db_add_column(migrator, "organisation", "brand_color", CharField(max_length=16, null=True))
 
 
 def _add_rbac_unique_indexes(migrator):

@@ -12,6 +12,7 @@ import {
 import dayjs from 'dayjs';
 import api from '@/lib/api';
 import { useAuthStore } from '@/stores/auth';
+import BrandingCard from './branding-card';
 import WorkspacesPage from '@/pages/workspaces';
 import CodePage from '@/pages/code';
 import MembersPage from '@/pages/members';
@@ -850,6 +851,11 @@ export default function OrgDetailPage() {
                 </Card>
               </div>
             ),
+          },
+          {
+            key: 'branding',
+            label: 'Identité visuelle',
+            children: <BrandingCard orgId={orgId!} />,
           },
           {
             key: 'quotas',

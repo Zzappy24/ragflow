@@ -10,6 +10,8 @@ from management.server.auth.dependencies import (
     require_superuser,
     require_org_admin,
 )
+from pydantic import BaseModel
+
 from management.server.models.schemas import OrgCreate, OrgUpdate, OrgResponse
 from management.server.services import audit as audit_svc
 
@@ -134,6 +136,81 @@ def update_org(org_id: str, body: OrgUpdate, user_id: str = Depends(get_current_
     OrgService.update_by_id(org_id, update_data)
     ok, org = OrgService.get_by_id(org_id)
     return _org_to_response(org)
+
+
+# ------------------------------------------------------------------
+# CUSTOM B2B SaaS — DA (identité visuelle) par organisation.
+# Logo = data-URI base64 stocké dans Organisation.logo (comme tous les
+# avatars du produit), couleur = #rrggbb dans Organisation.brand_color.
+# Le front produit la lit via GET /api/v1/branding (branding_api.py).
+# ------------------------------------------------------------------
+
+_BRANDING_LOGO_MAX_BYTES = 400_000  # data-URI complet (~300 Ko d'image)
+_BRANDING_MIMES = ("image/png", "image/jpeg", "image/svg+xml", "image/webp")
+
+
+def validate_branding(logo: str | None, brand_color: str | None) -> str | None:
+    """Retourne un message d'erreur, ou None si le branding est valide.
+
+    Fonction pure (épinglée par test) : chaîne vide = effacement (OK),
+    logo doit être un data-URI image base64 sous la limite de taille,
+    couleur au format #rrggbb strict.
+    """
+    import re
+
+    if logo:
+        if not any(logo.startswith(f"data:{m};base64,") for m in _BRANDING_MIMES):
+            return "Logo : format attendu data:image/(png|jpeg|svg+xml|webp);base64"
+        if len(logo) > _BRANDING_LOGO_MAX_BYTES:
+            return f"Logo trop lourd (max {_BRANDING_LOGO_MAX_BYTES // 1000} Ko encodé)"
+    if brand_color and not re.fullmatch(r"#[0-9a-fA-F]{6}", brand_color):
+        return "Couleur : format attendu #rrggbb"
+    return None
+
+
+class BrandingUpdate(BaseModel):
+    logo: str | None = None
+    brand_color: str | None = None
+
+
+@router.get("/{org_id}/branding")
+def get_org_branding(org_id: str, user_id: str = Depends(get_current_user_id)):
+    require_org_admin(org_id, user_id)
+    from api.db.db_models import DB, Organisation
+
+    with DB.connection_context():
+        org = Organisation.get_or_none(Organisation.id == org_id)
+    if not org:
+        raise HTTPException(status_code=404, detail="Organisation introuvable")
+    return {"logo": org.logo or None, "brand_color": org.brand_color or None}
+
+
+@router.put("/{org_id}/branding")
+def update_org_branding(request: Request, org_id: str, body: BrandingUpdate,
+                        user_id: str = Depends(get_current_user_id)):
+    """Champ absent = inchangé ; chaîne vide = effacement (retour Cyllene)."""
+    require_org_admin(org_id, user_id)
+    fields = body.model_dump(exclude_unset=True)
+    if not fields:
+        raise HTTPException(status_code=400, detail="Aucun champ fourni")
+    err = validate_branding(fields.get("logo"), fields.get("brand_color"))
+    if err:
+        raise HTTPException(status_code=400, detail=err)
+
+    from api.db.db_models import DB, Organisation
+
+    with DB.connection_context():
+        org = Organisation.get_or_none(Organisation.id == org_id)
+        if not org:
+            raise HTTPException(status_code=404, detail="Organisation introuvable")
+        for k, v in fields.items():
+            setattr(org, k, v or None)
+        org.save()
+    audit_svc.record(request=request, actor_user_id=user_id,
+                     action="org.branding.update", org_id=org_id,
+                     resource_type="organisation", resource_id=org_id,
+                     details={"fields": sorted(fields)})
+    return {"logo": org.logo or None, "brand_color": org.brand_color or None}
 
 
 @router.delete("/{org_id}", status_code=status.HTTP_204_NO_CONTENT)

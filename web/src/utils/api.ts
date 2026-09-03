@@ -6,6 +6,7 @@ export { restAPIv1, webAPI };
 export default {
   // user
   login: `${restAPIv1}/auth/login`,
+  getOrgBranding: `${restAPIv1}/branding`,
   logout: `${restAPIv1}/auth/logout`,
   register: `${restAPIv1}/users`,
   setting: `${restAPIv1}/users/me`,

@@ -8,6 +8,7 @@ import {
   DropdownMenuTrigger,
 } from '@/components/ui/dropdown-menu';
 import { useChangeLanguage } from '@/hooks/logic-hooks';
+import { useApplyOrgBranding } from '@/hooks/use-org-branding';
 import { useFetchUserInfo } from '@/hooks/use-user-setting-request';
 import { cn } from '@/lib/utils';
 import { Routes } from '@/routes';
@@ -39,6 +40,8 @@ export function Header({
   //   label: <span>{LanguageMap[x as keyof typeof LanguageMap]}</span>,
   // }));
 
+  const branding = useApplyOrgBranding();
+
   return (
     <header
       key="app-navbar"
@@ -53,7 +56,13 @@ export function Header({
           to={Routes.Root}
           aria-current={pathname === Routes.Root ? 'page' : undefined}
         >
-          <img src={'/logo.svg'} alt="Cyllene" className="size-10" />
+          <img
+            src={branding?.logo || '/logo.svg'}
+            alt={branding?.org_name || 'Cyllene'}
+            className={
+              branding?.logo ? 'h-10 w-auto max-w-40 object-contain' : 'size-10'
+            }
+          />
         </Link>
       </div>
 
