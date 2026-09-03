@@ -25,6 +25,30 @@ from api.db.services.file_service import FileService
 from common import settings
 
 
+def _select_candidates(files, folder_hint, base, parent_name_of):
+    """Réduit les candidats homonymes : préfère le match de casse exact sur
+    le basename, puis filtre par nom de dossier parent (insensible à la
+    casse) quand un chemin « dossier/fichier » a été demandé. Chaque filtre
+    ne s'applique que s'il laisse au moins un candidat (jamais de
+    « not found » causé par un filtre de confort). Fonction pure — épinglée
+    par test/multitenant/test_get_file_lookup.py."""
+    if not files:
+        return files
+    exact = [f for f in files if f.name == base]
+    if exact:
+        files = exact
+    if folder_hint:
+        wanted = folder_hint.split("/")[-1].lower()
+        in_folder = []
+        for f in files:
+            pname = parent_name_of(f)
+            if pname and pname.lower() == wanted:
+                in_folder.append(f)
+        if in_folder:
+            files = in_folder
+    return files
+
+
 def _human_size(num_bytes) -> str:
     """Render a byte count as a short human-readable string, e.g. '10.4 MB'."""
     size = float(num_bytes or 0)
@@ -91,8 +115,15 @@ class GetFile(ToolBase, ABC):
             self.set_output("formalized_content", msg)
             return msg
 
+        # Accepte « dossier/fichier » et tolère la casse : les LLM normalisent
+        # spontanément (« santé/export.xml » pour un dossier « Santé ») et le
+        # nom en base est le SEUL basename — le dossier est une row parente.
+        # Incident 2026-09-03 : lookup exact -> « not found » injustifié.
+        raw = name.strip().strip("/")
+        folder_hint, _, base = raw.rpartition("/")
+
         try:
-            files = list(FileService.query(name=name, tenant_id=tenant_id))
+            files = self._lookup_ci(tenant_id, base or raw)
         except Exception:
             logging.exception(f"get_file: lookup failed for '{name}'")
             msg = f"Storage unavailable: could not look up file '{name}'."
@@ -100,6 +131,7 @@ class GetFile(ToolBase, ABC):
             return msg
 
         files = [f for f in files if getattr(f, "type", None) != FileType.FOLDER.value]
+        files = _select_candidates(files, folder_hint, base or raw, self._parent_name)
 
         if not files:
             msg = f"File '{name}' not found in workspace Files."
@@ -129,6 +161,34 @@ class GetFile(ToolBase, ABC):
         msg = f"File '{f.name}' ({_human_size(f.size)}) available at: {url} (valid {minutes} min)"
         self.set_output("formalized_content", msg)
         return msg
+
+    @staticmethod
+    def _lookup_ci(tenant_id: str, base: str):
+        """Basename insensible à la casse, scopé tenant."""
+        from peewee import fn
+
+        from api.db.db_models import DB
+
+        model = FileService.model
+        with DB.connection_context():
+            return list(
+                model.select().where(
+                    (model.tenant_id == tenant_id)
+                    & (fn.LOWER(model.name) == (base or "").lower())
+                )
+            )
+
+    @staticmethod
+    def _parent_name(f) -> str | None:
+        from api.db.db_models import DB
+
+        model = FileService.model
+        try:
+            with DB.connection_context():
+                parent = model.get_or_none(model.id == f.parent_id)
+            return parent.name if parent else None
+        except Exception:
+            return None
 
     def _presigned_url(self, f) -> str:
         # Files-manager files are stored under bucket=parent_id, key=location
