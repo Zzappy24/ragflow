@@ -100,16 +100,49 @@ def _ensure_instance(provider_id: str, api_key: str, extra_json: str = "{}"):
     return TenantModelInstanceService.get_by_provider_id_and_instance_name(provider_id, "default")
 
 
-def _upsert_model(provider_id: str, instance_id: str, model_name: str, model_type: str, status: str):
+def _pick_instance_api_key(api_keys: list[str]) -> str:
+    """Choisit l'api_key à refléter sur l'instance parmi les rows d'un même
+    (tenant, factory).
+
+    CUSTOM B2B SaaS — bug 2026-09-03 : les rows ne sont PAS toujours
+    identiques. Un modèle remplacé (ex. Qwen3.6 -> Qwen3.8) laisse une
+    vieille row à clé brute ; `rows[0]` pouvait la choisir et écraser le
+    payload JSON ({"api_key":..., "is_tools":...}) de l'instance — perdant
+    le flag is_tools sur le chemin de lecture des nouvelles tables, alors
+    que le chemin legacy (canvas anciens, ids 2 parties) le voyait encore.
+    Préférer une row dont l'api_key décode en payload dict."""
+    import json as _json
+
+    for raw in api_keys:
+        try:
+            if isinstance(_json.loads(raw or ""), dict):
+                return raw
+        except Exception:
+            continue
+    return api_keys[0] if api_keys else "x"
+
+
+def _upsert_model(provider_id: str, instance_id: str, model_name: str, model_type: str, status: str,
+                  is_tools: bool | None = None):
     """Upsert one tenant_model row keyed by (provider, instance, type, name)."""
     obj = TenantModelService.get_by_provider_id_and_instance_id_and_model_type_and_model_name(
         provider_id, instance_id, model_type, model_name
     )
     if obj:
+        updates = {}
         if obj.status != status:
+            updates["status"] = status
+        # is_tools par modèle : la lecture (get_model_config_from_provider_instance)
+        # regarde tenant_model.extra["is_tools"] AVANT le payload d'instance.
+        if is_tools is not None:
+            extra = json.loads(obj.extra) if obj.extra else {}
+            if extra.get("is_tools") != is_tools:
+                extra["is_tools"] = is_tools
+                updates["extra"] = json.dumps(extra)
+        if updates:
             TenantModelService.filter_update(
                 [TenantModelService.model.id == obj.id],
-                {"status": status},
+                updates,
             )
         return obj
     row = {
@@ -120,6 +153,8 @@ def _upsert_model(provider_id: str, instance_id: str, model_name: str, model_typ
         "model_type": model_type,
         "status": status,
     }
+    if is_tools is not None:
+        row["extra"] = json.dumps({"is_tools": is_tools})
     TenantModelService.save(**row)
     return TenantModelService.get_by_provider_id_and_instance_id_and_model_type_and_model_name(
         provider_id, instance_id, model_type, model_name
@@ -149,9 +184,10 @@ def sync_tenant_llm_to_new_tables(tenant_id: str, llm_factory: str | None = None
         by_factory.setdefault(row.llm_factory, []).append(row)
 
     for factory, rows in by_factory.items():
-        # api_key is identical across rows of the same (tenant, factory) in
-        # our model — the admin panel writes the same key everywhere.
-        api_key = rows[0].api_key or "x"
+        # NE PAS supposer les api_key identiques entre rows du même
+        # (tenant, factory) : une row vestige (modèle remplacé) porte une
+        # clé brute et écraserait le payload is_tools — cf. _pick_instance_api_key.
+        api_key = _pick_instance_api_key([r.api_key or "" for r in rows]) or "x"
         base_url = rows[0].api_base or ""
         extra_json = json.dumps({"base_url": base_url}) if base_url else "{}"
 
@@ -166,7 +202,9 @@ def sync_tenant_llm_to_new_tables(tenant_id: str, llm_factory: str | None = None
         for row in rows:
             status = "active" if (row.status or "1") == "1" else "inactive"
             bare_name = _bare_model_name(factory, row.llm_name)
-            _upsert_model(provider.id, instance.id, bare_name, row.model_type, status)
+            _, row_is_tools, _ = TenantLLMService._decode_api_key_config(row.api_key or "")
+            _upsert_model(provider.id, instance.id, bare_name, row.model_type, status,
+                          is_tools=row_is_tools)
             desired_model_keys.add((bare_name, row.model_type))
 
         # Prune tenant_model rows that no longer exist in tenant_llm for
