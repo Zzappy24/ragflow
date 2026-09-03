@@ -47,6 +47,9 @@ function QuickStart({ result }: { result: ClaimResult }) {
             // (provider custom = texte-seul par défaut) ; sans limit, il
             // compacte la conversation bien avant le max serveur.
             modalities: { input: ['text', 'image'], output: ['text'] },
+            // Le thinking est actif côté serveur de toute façon (et facturé) :
+            // déclarer la capacité permet au client de l'AFFICHER.
+            reasoning: true,
             limit: { context: 262144, output: 32768 },
           },
         },
