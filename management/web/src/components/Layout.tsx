@@ -10,6 +10,7 @@ import {
   AuditOutlined,
   CodeOutlined,
 } from '@ant-design/icons';
+import cylleneLogo from '@/assets/cyllene-logo.svg';
 import { useAuthStore } from '@/stores/auth';
 
 const { Sider, Content, Header } = AntLayout;
@@ -87,7 +88,8 @@ export default function AppLayout() {
       <Sider width={200} theme="light" className="border-r"
              breakpoint="lg" collapsible collapsedWidth={64}>
         <div className="p-4 text-center border-b">
-          <Text strong className="text-lg">RAGFlow Admin</Text>
+          <img src={cylleneLogo} alt="Cyllene" className="h-5 mx-auto mb-1" />
+          <Text strong className="text-xs text-gray-500 tracking-widest uppercase">Admin</Text>
         </div>
         <Menu
           mode="inline"

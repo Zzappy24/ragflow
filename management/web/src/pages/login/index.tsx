@@ -3,6 +3,7 @@ import { useNavigate } from 'react-router-dom';
 import { Card, Form, Input, Button, Typography, Alert } from 'antd';
 import { LockOutlined, MailOutlined } from '@ant-design/icons';
 import { useAuthStore } from '@/stores/auth';
+import cylleneLogo from '@/assets/cyllene-logo.svg';
 
 const { Title } = Typography;
 
@@ -32,8 +33,8 @@ export default function LoginPage() {
     <div className="min-h-screen flex items-center justify-center bg-gray-50">
       <Card className="w-full max-w-md shadow-lg">
         <div className="text-center mb-8">
-          <Title level={3}>RAGFlow Admin</Title>
-          <p className="text-gray-500">Management Panel</p>
+          <img src={cylleneLogo} alt="Cyllene" className="h-8 mx-auto mb-3" />
+          <Title level={4}>Panneau d'administration</Title>
         </div>
 
         {error && (

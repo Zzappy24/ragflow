@@ -1,5 +1,5 @@
 module.exports = {
-  'primary-color': '#338AFF', // '#338AFF',
+  'primary-color': '#2d6dbb', // Cyllene
   'border-radius-base': '4px',
   // 'menu-dark-color': '',
   // 'menu-dark-danger-color': '',
