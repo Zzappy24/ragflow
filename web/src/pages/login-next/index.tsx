@@ -145,6 +145,14 @@ function LoginFormContent({
               />
 
               {title === 'login' && (
+                <a
+                  href="/forgot-password"
+                  className="text-xs text-text-secondary hover:text-text-primary self-end -mt-2"
+                >
+                  Forgot password?
+                </a>
+              )}
+              {title === 'login' && (
                 <FormField
                   control={form.control}
                   name="remember"

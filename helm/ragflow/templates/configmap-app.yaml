@@ -139,6 +139,23 @@ data:
       host: ${MINIO_HOST}
       bucket: ragflow-storage
       prefix_path: ''
+    smtp:
+      # « Mot de passe oublié » RAGFlow (OTP par email). Alimenté par le
+      # MÊME secret que le mailer du panel (ragflow-mgmt-smtp) via envsubst
+      # dans l'init-container api. Secret absent → variables vides →
+      # mail_server vide → envoi refusé proprement côté api. Ajouter au
+      # secret existant : ADMIN_SMTP_FROM_EMAIL=no-reply@cyllene.com
+      # (sinon repli sur le compte SMTP comme expéditeur).
+      mail_server: '${ADMIN_SMTP_HOST}'
+      mail_port: ${ADMIN_SMTP_PORT}
+      mail_use_ssl: false
+      mail_use_tls: true
+      mail_username: '${ADMIN_SMTP_USERNAME}'
+      mail_password: '${ADMIN_SMTP_PASSWORD}'
+      mail_default_sender:
+        - 'Cyllene'
+        - '${ADMIN_SMTP_FROM_EMAIL}'
+      mail_frontend_url: '{{ .Values.global.scheme | default "https" }}://{{ .Values.global.hostname }}'
     redis:
       # Format expected by rag/utils/redis_conn.py: "host:port" in a single
       # string. Splitting on `:` gives the parts; setting host without port

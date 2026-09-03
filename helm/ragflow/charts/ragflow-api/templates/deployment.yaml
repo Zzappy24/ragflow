@@ -118,6 +118,12 @@ spec:
                 name: {{ .Release.Name }}-app-config
             - secretRef:
                 name: ragflow-app-secrets
+            # SMTP du « mot de passe oublié » — même secret que le panel,
+            # optionnel : absent => section smtp rendue vide, envoi refusé
+            # proprement (jamais de crash au boot).
+            - secretRef:
+                name: ragflow-mgmt-smtp
+                optional: true
           volumeMounts:
             - name: conf-template
               mountPath: /conf-template

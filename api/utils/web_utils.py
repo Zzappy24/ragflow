@@ -225,13 +225,24 @@ async def send_email_html(to_email: str, subject: str, template_key: str, **cont
     body = await render_template_string(EMAIL_TEMPLATES.get(template_key), **context)
     msg = MIMEText(body, "plain", "utf-8")
     msg["Subject"] = Header(subject, "utf-8")
-    msg["From"] = f"{settings.MAIL_DEFAULT_SENDER[0]} <{settings.MAIL_DEFAULT_SENDER[1]}>"
+    # CUSTOM B2B SaaS — expéditeur robuste : mail_default_sender absent de la
+    # conf → repli sur le compte SMTP (cas fréquent : from == username).
+    sender = settings.MAIL_DEFAULT_SENDER if (
+        isinstance(getattr(settings, "MAIL_DEFAULT_SENDER", None), tuple)
+        and len(settings.MAIL_DEFAULT_SENDER) == 2 and settings.MAIL_DEFAULT_SENDER[1]
+    ) else ("Cyllene", settings.MAIL_USERNAME)
+    msg["From"] = f"{sender[0]} <{sender[1]}>"
     msg["To"] = to_email
 
+    # CUSTOM B2B SaaS — upstream hardcodait use_tls=True (TLS implicite,
+    # port 465) : sur un SMTP 587/STARTTLS la connexion échouait. Même
+    # logique éprouvée que le mailer du panel : implicite ssi port 465.
+    implicit_tls = int(settings.MAIL_PORT or 0) == 465
     smtp = aiosmtplib.SMTP(
         hostname=settings.MAIL_SERVER,
         port=settings.MAIL_PORT,
-        use_tls=True,
+        use_tls=implicit_tls,
+        start_tls=(not implicit_tls) or None,
         timeout=10,
     )
 

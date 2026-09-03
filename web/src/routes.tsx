@@ -124,6 +124,11 @@ const routeConfigOptions = [
     layout: false,
   },
   {
+    path: '/forgot-password',
+    Component: () => import('@/pages/forgot-password'),
+    layout: false,
+  },
+  {
     path: '/bridge',
     Component: () => import('@/pages/bridge'),
     layout: false,
