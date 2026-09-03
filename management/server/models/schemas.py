@@ -224,6 +224,7 @@ class WsLlmProviderResponse(BaseModel):
     max_tokens: int = 8192
     used_tokens: int = 0
     status: str = "1"
+    is_tools: bool = False
 
 
 class WsLlmProviderUpdate(BaseModel):

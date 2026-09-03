@@ -40,7 +40,16 @@ function QuickStart({ result }: { result: ClaimResult }) {
         name: 'cyllene',
         npm: '@ai-sdk/openai-compatible',
         options: { baseURL: gw, apiKey: key },
-        models: { [model]: { name: model } },
+        models: {
+          [model]: {
+            name: model,
+            // Sans modalities, OpenCode strippe les images avant l'envoi
+            // (provider custom = texte-seul par défaut) ; sans limit, il
+            // compacte la conversation bien avant le max serveur.
+            modalities: { input: ['text', 'image'], output: ['text'] },
+            limit: { context: 262144, output: 32768 },
+          },
+        },
       },
     },
   }, null, 2);

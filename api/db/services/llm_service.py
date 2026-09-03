@@ -157,8 +157,17 @@ class LLMBundle(LLM4Tenant):
 
     def bind_tools(self, toolcall_session, tools):
         if not self.is_tools:
-            logging.warning(f"Model {self.model_config['llm_name']} does not support tool call, but you have assigned one or more tools to it!")
-            return
+            # CUSTOM B2B SaaS — fail LOUD : l'ancien warning silencieux laissait
+            # l'agent tourner sans tools -> le modèle écrivait ses appels en
+            # texte et l'utilisateur voyait une bulle vide (incident 2026-09-03,
+            # 3h de diagnostic). L'exception remonte dans la conversation via
+            # le chemin d'erreur du composant Agent.
+            raise RuntimeError(
+                f"Model '{self.model_config['llm_name']}' is not configured for "
+                "function calling (tools), but this agent uses tools. Enable "
+                "'Function calling (tools)' for this model in the admin panel, "
+                "or select a tools-capable model in the agent settings."
+            )
         self.mdl.bind_tools(toolcall_session, tools)
 
     def encode(self, texts: list):

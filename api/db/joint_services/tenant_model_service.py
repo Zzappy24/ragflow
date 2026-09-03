@@ -36,6 +36,41 @@ def _model_config_cache_key(tenant_id: str, model_type: str, model_name: str) ->
     return f"{tenant_id}:{model_type}:{model_name}"
 
 
+def _cfg_redis_version(tenant_id: str) -> str | None:
+    """Version des configs modèle du tenant, bumpée par le panel admin à
+    chaque mutation (clé Redis ``mdlcfgver:<tenant>``). None si Redis
+    indisponible -> fail-open, le TTL seul fait foi.
+
+    CUSTOM B2B SaaS — sans ce tampon, une édition dans le panel (process
+    séparé) restait invisible des pods api jusqu'à 5 min (TTL), par pod :
+    deux pods pouvaient servir deux configs différentes (incident 2026-09-03).
+    """
+    try:
+        from rag.utils.redis_conn import REDIS_CONN
+
+        v = REDIS_CONN.REDIS.get(f"mdlcfgver:{tenant_id}")
+        if isinstance(v, bytes):
+            v = v.decode()
+        return v or "0"
+    except Exception:
+        return None
+
+
+def _cache_lookup(cache_key: str, tenant_id: str):
+    """Hit uniquement si TTL respecté ET version Redis inchangée."""
+    cached = _MODEL_CONFIG_CACHE.get(cache_key)
+    if not cached:
+        return None
+    config, ts, ver = cached
+    if time.monotonic() - ts >= _MODEL_CONFIG_TTL:
+        return None
+    cur = _cfg_redis_version(tenant_id)
+    if cur is not None and ver is not None and cur != ver:
+        del _MODEL_CONFIG_CACHE[cache_key]
+        return None
+    return config
+
+
 def _invalidate_model_config_cache(tenant_id: str | None = None):
     if tenant_id is None:
         _MODEL_CONFIG_CACHE.clear()
@@ -82,9 +117,9 @@ def get_model_config_by_type_and_name(tenant_id: str, model_type: str, model_nam
         raise Exception("Model Name is required")
     model_type_val = model_type.value if hasattr(model_type, "value") else model_type
     cache_key = _model_config_cache_key(tenant_id, model_type_val, model_name)
-    cached = _MODEL_CONFIG_CACHE.get(cache_key)
-    if cached and time.monotonic() - cached[1] < _MODEL_CONFIG_TTL:
-        return cached[0]
+    cached_cfg = _cache_lookup(cache_key, tenant_id)
+    if cached_cfg is not None:
+        return cached_cfg
     model_config = TenantLLMService.get_api_key(tenant_id, model_name, model_type_val)
     if not model_config:
         # model_name in format 'name@factory', split model_name and try again
@@ -149,7 +184,7 @@ def get_model_config_by_type_and_name(tenant_id: str, model_type: str, model_nam
     llm = LLMService.query(llm_name=config_dict["llm_name"])
     if "is_tools" not in config_dict and llm:
         config_dict["is_tools"] = llm[0].is_tools
-    _MODEL_CONFIG_CACHE[cache_key] = (config_dict, time.monotonic())
+    _MODEL_CONFIG_CACHE[cache_key] = (config_dict, time.monotonic(), _cfg_redis_version(tenant_id))
     return config_dict
 
 

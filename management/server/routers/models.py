@@ -65,6 +65,24 @@ def _get_ws_tenant(ws_id: str) -> str:
     return ws.tenant_id
 
 
+def _bump_model_cfg_version(tenant_id: str) -> None:
+    """Invalide immédiatement le cache de config modèle des pods api.
+
+    CUSTOM B2B SaaS — les pods api cachent la config modèle 5 min (TTL,
+    par pod) et ne peuvent pas être purgés depuis ce process. On bump une
+    clé Redis que leur cache vérifie à chaque lookup (fail-open sans Redis).
+    Incident 2026-09-03 : une édition is_tools mettait jusqu'à 5 min à
+    prendre effet, différemment selon le pod.
+    """
+    try:
+        from rag.utils.redis_conn import REDIS_CONN
+
+        REDIS_CONN.REDIS.incr(f"mdlcfgver:{tenant_id}")
+    except Exception:
+        pass
+
+
+
 def _encode_api_key_preserving_tools(tenant_id: str, factory: str, stored: str,
                                      raw_api_key: str, is_tools: bool | None) -> str:
     """Encode api_key with the is_tools flag (TenantLLMService payload format).
@@ -145,7 +163,7 @@ def list_workspace_providers(ws_id: str, user_id: str = Depends(get_current_user
             TenantLLM.select(
                 TenantLLM.id, TenantLLM.llm_factory, TenantLLM.model_type,
                 TenantLLM.llm_name, TenantLLM.api_base, TenantLLM.max_tokens,
-                TenantLLM.used_tokens, TenantLLM.status,
+                TenantLLM.used_tokens, TenantLLM.status, TenantLLM.api_key,
             )
             .where(TenantLLM.tenant_id == tenant_id, ~TenantLLM.api_key.is_null())
             .dicts()
@@ -159,6 +177,9 @@ def list_workspace_providers(ws_id: str, user_id: str = Depends(get_current_user
             max_tokens=r.get("max_tokens", 8192),
             used_tokens=r.get("used_tokens", 0),
             status=r.get("status", "1"),
+            is_tools=bool(
+                TenantLLMService._decode_api_key_config(r.get("api_key") or "")[1]
+            ),
         )
         for r in rows
     ]
@@ -218,6 +239,7 @@ def add_workspace_provider(
     # tables in sync so /v1/models and /v1/models/default see the new row.
     from management.server.services.sync_tenant_model_tables import sync_tenant_llm_to_new_tables
     sync_tenant_llm_to_new_tables(tenant_id, body.llm_factory)
+    _bump_model_cfg_version(tenant_id)
     return WsLlmProviderResponse(
         llm_factory=body.llm_factory,
         llm_name=body.llm_name,
@@ -298,6 +320,7 @@ def update_workspace_provider(
     _invalidate_model_config_cache(tenant_id)
     from management.server.services.sync_tenant_model_tables import sync_tenant_llm_to_new_tables
     sync_tenant_llm_to_new_tables(tenant_id, factory)
+    _bump_model_cfg_version(tenant_id)
     # Return updated row — direct query (see _fetch_stored_row).
     row = _fetch_stored_row(tenant_id, factory, stored)
     if not row:
@@ -354,6 +377,7 @@ def toggle_workspace_provider_status(
     _invalidate_model_config_cache(tenant_id)
     from management.server.services.sync_tenant_model_tables import sync_tenant_llm_to_new_tables
     sync_tenant_llm_to_new_tables(tenant_id, factory)
+    _bump_model_cfg_version(tenant_id)
     row = _fetch_stored_row(tenant_id, factory, stored)
 
     return WsLlmProviderResponse(
@@ -399,6 +423,7 @@ def delete_workspace_provider(
     # Whole-tenant sync so orphaned providers/instances get pruned too.
     from management.server.services.sync_tenant_model_tables import sync_tenant_llm_to_new_tables
     sync_tenant_llm_to_new_tables(tenant_id)
+    _bump_model_cfg_version(tenant_id)
 
 
 # ---------------------------------------------------------------------------

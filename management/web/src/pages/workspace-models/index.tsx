@@ -51,6 +51,7 @@ interface Provider {
   max_tokens: number;
   used_tokens: number;
   status: string;
+  is_tools: boolean;
 }
 
 interface Defaults {
@@ -183,7 +184,14 @@ export default function WorkspaceModelsPage({ wsId }: { wsId?: string }) {
 
   const openEdit = (record: Provider) => {
     setEditTarget(record);
-    editForm.setFieldsValue({ api_base: record.api_base, max_tokens: record.max_tokens });
+    // is_tools DOIT être pré-rempli : sinon la checkbox part décochée et
+    // toute édition (même juste max_tokens) efface le flag en base —
+    // suspect n°1 de la ligne BU Cloud à false (incident 2026-09-03).
+    editForm.setFieldsValue({
+      api_base: record.api_base,
+      max_tokens: record.max_tokens,
+      is_tools: record.is_tools,
+    });
     setEditOpen(true);
   };
 
@@ -265,6 +273,17 @@ export default function WorkspaceModelsPage({ wsId }: { wsId?: string }) {
       dataIndex: 'model_type',
       width: 120,
       render: (t: string) => <Tag>{MODEL_TYPES.find((x) => x.value === t)?.label ?? t}</Tag>,
+    },
+    {
+      title: 'Tools',
+      dataIndex: 'is_tools',
+      width: 80,
+      render: (v: boolean, record: Provider) =>
+        record.model_type === 'chat' ? (
+          <Tag color={v ? 'green' : 'red'}>{v ? 'FC \u2713' : 'FC \u2717'}</Tag>
+        ) : (
+          <span className="text-gray-300">{'\u2014'}</span>
+        ),
     },
     {
       title: 'Base URL',
