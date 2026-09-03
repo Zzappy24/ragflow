@@ -74,10 +74,16 @@ class GetFileParam(ToolParamBase):
             "parameters": {
                 "name": {
                     "type": "string",
-                    "description": "Exact file name as uploaded in Files (e.g. 'Payload-20260526.csv')",
+                    "description": "File name as uploaded in Files (e.g. 'Payload-20260526.csv'). A 32-hex file id is also accepted.",
                     "default": "",
                     "required": True,
-                }
+                },
+                "folder": {
+                    "type": "string",
+                    "description": "Name of the folder containing the file, when known (e.g. 'Santé'). Use it to disambiguate files with the same name.",
+                    "default": "",
+                    "required": False,
+                },
             },
         }
         super().__init__()
@@ -93,7 +99,11 @@ class GetFileParam(ToolParamBase):
             "name": {
                 "name": "File name",
                 "type": "line",
-            }
+            },
+            "folder": {
+                "name": "Folder name (optional)",
+                "type": "line",
+            },
         }
 
 
@@ -122,6 +132,12 @@ class GetFile(ToolBase, ABC):
         # Incident 2026-09-03 : lookup exact -> « not found » injustifié.
         raw = name.strip().strip("/")
         folder_hint, _, base = raw.rpartition("/")
+        # Paramètre structuré prioritaire sur le chemin embarqué dans name :
+        # les LLM remplissent un champ dédié plus fiablement qu'ils ne
+        # composent un chemin (demande utilisateur 2026-09-03).
+        folder_kw = (kwargs.get("folder") or "").strip().strip("/")
+        if folder_kw:
+            folder_hint = folder_kw
 
         try:
             # Un LLM à qui on a montré des ids (message de désambiguïsation,
@@ -173,7 +189,17 @@ class GetFile(ToolBase, ABC):
             return msg
 
         minutes = max(1, self._param.url_expires_s // 60)
-        msg = f"File '{f.name}' ({_human_size(f.size)}) available at: {url} (valid {minutes} min)"
+        # La consigne de recopie vit dans le RÉSULTAT du tool : les modèles
+        # mutilent les URLs présignées en les reconstruisant par morceaux
+        # (403 signature en prod 2026-09-03, guillemet échappé collé).
+        msg = (
+            f"File '{f.name}' ({_human_size(f.size)}) available for {minutes} min at:\n"
+            f"{url}\n"
+            "IMPORTANT: pass this URL to your code as ONE single-line string "
+            "literal, copied EXACTLY as-is. Do NOT split, wrap, re-encode or "
+            "rebuild it by concatenation — any altered character breaks its "
+            "signature (HTTP 403)."
+        )
         self.set_output("formalized_content", msg)
         return msg
 

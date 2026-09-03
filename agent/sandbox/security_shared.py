@@ -100,11 +100,27 @@ class SecurePythonAnalyzer(ast.NodeVisitor):
             self.unsafe_items.append((f"Attribute Access: {node.value.id}.{node.attr}", node.lineno))
         self.generic_visit(node)
 
+    # CUSTOM B2B SaaS — ne flagger que les concaténations dont le RÉSULTAT
+    # ressemble à une construction d'appel dangereux. L'heuristique upstream
+    # flaggait TOUTE concaténation de deux littéraux — or c'est la façon la
+    # plus naturelle de découper une longue URL présignée, et les vrais
+    # dangers (eval/exec/__import__/os.system) sont déjà bloqués par leurs
+    # propres règles. Faux positif observé en prod 2026-09-03.
+    _SUSPICIOUS_CONCAT = ("os.", "subprocess", "eval", "exec", "__import__",
+                          "system", "popen", "getattr", "builtins")
+
     def visit_BinOp(self, node: ast.BinOp):
-        """Check for possible unsafe operations like concatenating strings with commands."""
-        # This could be useful to detect `eval("os." + "system")`
-        if isinstance(node.left, ast.Constant) and isinstance(node.right, ast.Constant):
-            self.unsafe_items.append(("Possible unsafe string concatenation", node.lineno))
+        """Flag literal concatenations that assemble dangerous identifiers,
+        e.g. eval("os." + "system") — not benign string/URL building."""
+        if (
+            isinstance(node.left, ast.Constant)
+            and isinstance(node.right, ast.Constant)
+            and isinstance(node.left.value, str)
+            and isinstance(node.right.value, str)
+        ):
+            joined = (node.left.value + node.right.value).lower()
+            if any(tok in joined for tok in self._SUSPICIOUS_CONCAT):
+                self.unsafe_items.append(("Possible unsafe string concatenation", node.lineno))
         self.generic_visit(node)
 
     def visit_FunctionDef(self, node: ast.FunctionDef):
