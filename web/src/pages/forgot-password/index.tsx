@@ -111,8 +111,11 @@ export default function ForgotPasswordPage() {
     }
   };
 
+  const passwordOk =
+    password.length >= 8 && /[A-Z]/.test(password) && /[0-9]/.test(password);
+
   const submitReset = async () => {
-    if (password.length < 8 || password !== confirm || loading) return;
+    if (!passwordOk || password !== confirm || loading) return;
     setLoading(true);
     setError(null);
     try {
@@ -244,7 +247,7 @@ export default function ForgotPasswordPage() {
                 type="password"
                 value={password}
                 onChange={(e) => setPassword(e.target.value)}
-                placeholder="At least 8 characters"
+                placeholder="8+ characters, 1 uppercase, 1 digit"
                 autoFocus
                 disabled={loading}
               />
@@ -273,7 +276,7 @@ export default function ForgotPasswordPage() {
               <Button
                 className="w-full"
                 onClick={submitReset}
-                disabled={password.length < 8 || password !== confirm}
+                disabled={!passwordOk || password !== confirm}
               >
                 Reset password
               </Button>

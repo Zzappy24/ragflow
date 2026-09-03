@@ -1188,6 +1188,12 @@ async def forget_reset_password():
     new_pwd_string = base64.b64decode(new_pwd_base64).decode('utf-8')
     new_pwd2_string = base64.b64decode(decrypt(new_pwd2)).decode('utf-8')
 
+    # CUSTOM B2B SaaS — même règle de force que le profil et l'invitation
+    # (upstream avait oublié ce point d'entrée) : >= 8, 1 majuscule, 1 chiffre.
+    pwd_error = _validate_password_strength(new_pwd_string)
+    if pwd_error:
+        return get_json_result(data=False, code=RetCode.ARGUMENT_ERROR, message=pwd_error)
+
     if not REDIS_CONN.get(_verified_key(email)):
         return get_json_result(data=False, code=RetCode.AUTHENTICATION_ERROR, message="email not verified")
 

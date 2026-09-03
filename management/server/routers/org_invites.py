@@ -323,8 +323,17 @@ async def accept_invitation(request: Request, body: OrgInviteAccept):
 
     if user is None:
         # Nouveau compte : nom + mot de passe requis, pipeline complet réutilisé.
-        if not body.password or len(body.password) < 8:
-            raise HTTPException(status_code=400, detail="Mot de passe requis (8 caractères minimum)")
+        # Même règle de force que partout ailleurs (profil, invitation
+        # RAGFlow, reset) : >= 8, 1 majuscule, 1 chiffre. Dupliquée ici car
+        # le mgmt ne peut pas importer api.apps.* (dépendances Quart).
+        import re as _re
+        pwd = body.password or ""
+        if len(pwd) < 8:
+            raise HTTPException(status_code=400, detail="Mot de passe : 8 caractères minimum")
+        if not _re.search(r"[A-Z]", pwd):
+            raise HTTPException(status_code=400, detail="Mot de passe : au moins une majuscule")
+        if not _re.search(r"[0-9]", pwd):
+            raise HTTPException(status_code=400, detail="Mot de passe : au moins un chiffre")
         nickname = (body.nickname or inv.email.split("@")[0]).strip()[:100]
         from management.server.services.provisioning import provision_user
         try:

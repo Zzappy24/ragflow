@@ -104,7 +104,11 @@ export default function OrgInvitePage() {
                   <Input placeholder="Prénom Nom" maxLength={100} />
                 </Form.Item>
                 <Form.Item name="password" label="Mot de passe"
-                           rules={[{ required: true, min: 8, message: '8 caractères minimum' }]}>
+                           rules={[
+                             { required: true, min: 8, message: '8 caractères minimum' },
+                             { pattern: /[A-Z]/, message: 'Au moins une majuscule' },
+                             { pattern: /[0-9]/, message: 'Au moins un chiffre' },
+                           ]}>
                   <Input.Password />
                 </Form.Item>
                 <Form.Item name="confirm" label="Confirmer le mot de passe"

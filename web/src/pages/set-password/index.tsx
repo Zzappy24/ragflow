@@ -39,8 +39,9 @@ export default function SetPasswordPage() {
       setError('Missing invite code. Ask your admin to re-send the invite.');
   }, [token]);
 
-  const canSubmit =
-    !!token && password.length >= 8 && password === confirm && !loading;
+  const passwordOk =
+    password.length >= 8 && /[A-Z]/.test(password) && /[0-9]/.test(password);
+  const canSubmit = !!token && passwordOk && password === confirm && !loading;
 
   const onSubmit = async () => {
     if (!canSubmit) return;
@@ -111,7 +112,7 @@ export default function SetPasswordPage() {
               type="password"
               value={password}
               onChange={(e) => setPassword(e.target.value)}
-              placeholder="At least 8 characters"
+              placeholder="8+ characters, 1 uppercase, 1 digit"
               autoFocus
               disabled={!token || loading}
             />
