@@ -1,6 +1,7 @@
 export default {
   translation: {
     common: {
+      languageOnRequest: 'On request',
       confirm: 'Confirm',
       back: 'Back',
       noResults: 'No results found',

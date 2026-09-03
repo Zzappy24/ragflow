@@ -12,8 +12,9 @@ import { useApplyOrgBranding } from '@/hooks/use-org-branding';
 import { useFetchUserInfo } from '@/hooks/use-user-setting-request';
 import { cn } from '@/lib/utils';
 import { Routes } from '@/routes';
-import { LucideChevronDown, LucideCircleHelp } from 'lucide-react';
+import { LucideChevronDown } from 'lucide-react';
 import React from 'react';
+import { useTranslation } from 'react-i18next';
 import { Link, useLocation } from 'react-router';
 import GlobalNavbar from './global-navbar';
 import ThemeButton from './theme-button';
@@ -21,11 +22,17 @@ import { WorkspaceSwitcher } from './workspace-switcher';
 
 import { supportedLanguages } from '@/locales/config';
 
+// CUSTOM B2B SaaS — seules fr/en sont servies aux clients ; les autres
+// locales existent (upstream) mais contiennent encore la marque RAGFlow,
+// donc grisées « sur demande » jusqu'à nettoyage au cas par cas.
+const ENABLED_LANGUAGE_CODES = ['en', 'fr'];
+
 export function Header({
   className,
   ...props
 }: React.HTMLAttributes<HTMLElement>) {
   const { pathname } = useLocation();
+  const { t } = useTranslation();
 
   const changeLanguage = useChangeLanguage();
 
@@ -99,27 +106,25 @@ export function Header({
           </DropdownMenuTrigger>
 
           <DropdownMenuContent>
-            {supportedLanguages.map((x) => (
-              <DropdownMenuItem
-                key={x.code}
-                onClick={() => changeLanguage(x.code)}
-              >
-                {x.displayName}
-              </DropdownMenuItem>
-            ))}
+            {supportedLanguages.map((x) => {
+              const enabled = ENABLED_LANGUAGE_CODES.includes(x.code);
+              return (
+                <DropdownMenuItem
+                  key={x.code}
+                  disabled={!enabled}
+                  onClick={() => enabled && changeLanguage(x.code)}
+                >
+                  {x.displayName}
+                  {!enabled && (
+                    <span className="ml-auto pl-4 text-xs text-text-secondary">
+                      {t('common.languageOnRequest')}
+                    </span>
+                  )}
+                </DropdownMenuItem>
+              );
+            })}
           </DropdownMenuContent>
         </DropdownMenu>
-
-        <Button
-          asLink
-          variant="ghost"
-          size="icon"
-          to="https://ragflow.io/docs/dev/category/user-guides"
-          target="_blank"
-          rel="noreferrer noopener"
-        >
-          <LucideCircleHelp className="size-[1em]" />
-        </Button>
 
         <ThemeButton />
 
