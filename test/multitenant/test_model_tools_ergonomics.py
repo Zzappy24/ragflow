@@ -101,3 +101,36 @@ class TestIsToolsExposure:
         from management.server.models.schemas import WsLlmProviderResponse
 
         assert "is_tools" in WsLlmProviderResponse.model_fields
+
+
+class TestMaxRoundsAlwaysVisible:
+    """La sortie « max rounds » ne peut plus être une bulle vide : consigne
+    finale explicite + filet _max_rounds_fallback affichant la dernière
+    erreur d'outil (incident 2026-09-03, run santé bloqué par l'AST)."""
+
+    def test_fallback_surfaces_last_tool_error(self):
+        from rag.llm.chat_model import Base
+
+        b = Base.__new__(Base)
+        b.max_rounds = 5
+        history = [
+            {"role": "user", "content": "q"},
+            {"role": "tool", "content": "Code is unsafe: Line 4"},
+            {"role": "assistant", "content": ""},
+        ]
+        out = b._max_rounds_fallback(history)
+        assert "ERROR" in out and "Code is unsafe" in out
+
+    def test_both_loop_exits_use_final_prompt_and_fallback(self):
+        import inspect
+
+        from rag.llm import chat_model
+
+        src = inspect.getsource(chat_model)
+        assert src.count("_MAX_ROUNDS_FINAL_PROMPT.format") >= 2, (
+            "un des deux chemins max-rounds est revenu au message brut "
+            "« Exceed max rounds » sans consigne de réponse finale"
+        )
+        assert src.count("_max_rounds_fallback(history)") >= 2, (
+            "un des deux chemins max-rounds peut à nouveau finir en bulle vide"
+        )

@@ -502,10 +502,12 @@ class Base(ABC):
                         ans += self._verbose_tool_use(name, args, err if err else result)
 
                 logging.warning(f"Exceed max rounds: {self.max_rounds}")
-                history.append({"role": "user", "content": f"Exceed max rounds: {self.max_rounds}"})
+                history.append({"role": "user", "content": self._MAX_ROUNDS_FINAL_PROMPT.format(n=self.max_rounds)})
                 response, token_count = await self._async_chat(history, gen_conf)
                 ans += response
                 tk_count += token_count
+                if not (ans or "").strip():
+                    ans = self._max_rounds_fallback(history)
                 return ans, tk_count
             except Exception as e:
                 e = await self._exceptions_async(e, attempt)
@@ -513,6 +515,31 @@ class Base(ABC):
                     return e, tk_count
 
         assert False, "Shouldn't be here."
+
+    # CUSTOM B2B SaaS — sortie de boucle d'outils toujours VISIBLE.
+    # Incident 2026-09-03 : après « Exceed max rounds », le tour final du
+    # modèle partait entièrement en reasoning -> contenu vide -> bulle vide
+    # côté utilisateur, sans aucune trace de l'erreur des tools.
+    _MAX_ROUNDS_FINAL_PROMPT = (
+        "You have reached the maximum number of tool-calling rounds ({n}). "
+        "Do NOT call any more tools. Reply to the user in plain text with a "
+        "short summary of what you attempted and the exact error that "
+        "prevented completion."
+    )
+
+    def _max_rounds_fallback(self, history) -> str:
+        last_tool = next(
+            (h.get("content", "") for h in reversed(history) if h.get("role") == "tool"),
+            "",
+        )
+        snippet = (last_tool or "").strip()[:800]
+        msg = (
+            f"**ERROR: the agent stopped after {self.max_rounds} tool-calling "
+            "rounds without producing a final answer.**"
+        )
+        if snippet:
+            msg += f"\nLast tool output:\n```\n{snippet}\n```"
+        return msg
 
     async def async_chat_streamly_with_tools(self, system: str, history: list, gen_conf: dict | None = None):
         gen_conf = dict(gen_conf or {})
@@ -615,10 +642,11 @@ class Base(ABC):
                         yield self._verbose_tool_use(name, args, err if err else result)
 
                 logging.warning(f"Exceed max rounds: {self.max_rounds}")
-                history.append({"role": "user", "content": f"Exceed max rounds: {self.max_rounds}"})
+                history.append({"role": "user", "content": self._MAX_ROUNDS_FINAL_PROMPT.format(n=self.max_rounds)})
 
                 response = await self.async_client.chat.completions.create(model=self.model_name, messages=history, stream=True, tools=tools, tool_choice="auto", **gen_conf)
 
+                final_text = ""
                 async for resp in response:
                     if not hasattr(resp, "choices") or not resp.choices:
                         continue
@@ -630,8 +658,11 @@ class Base(ABC):
                         total_tokens += num_tokens_from_string(delta.content)
                     else:
                         total_tokens = tol
+                    final_text += delta.content
                     yield delta.content
 
+                if not final_text.strip():
+                    yield self._max_rounds_fallback(history)
                 yield total_tokens
                 return
 
