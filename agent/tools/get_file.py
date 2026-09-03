@@ -15,6 +15,7 @@
 #
 import logging
 import os
+import re
 from abc import ABC
 from datetime import timedelta
 
@@ -123,7 +124,12 @@ class GetFile(ToolBase, ABC):
         folder_hint, _, base = raw.rpartition("/")
 
         try:
-            files = self._lookup_ci(tenant_id, base or raw)
+            # Un LLM à qui on a montré des ids (message de désambiguïsation,
+            # UI) réessaie naturellement avec l'id — autant l'accepter.
+            if re.fullmatch(r"[0-9a-f]{32}", raw):
+                files = self._lookup_by_id(tenant_id, raw)
+            else:
+                files = self._lookup_ci(tenant_id, base or raw)
         except Exception:
             logging.exception(f"get_file: lookup failed for '{name}'")
             msg = f"Storage unavailable: could not look up file '{name}'."
@@ -139,8 +145,17 @@ class GetFile(ToolBase, ABC):
             return msg
 
         if len(files) > 1:
-            candidates = "\n".join(f"- '{f.name}' in folder '{f.parent_id}' (id={f.id})" for f in files)
-            msg = f"Multiple files named '{name}' were found, please disambiguate:\n{candidates}"
+            # Donner des références que le modèle peut RÉ-UTILISER dans un
+            # nouvel appel : « dossier/fichier » (compris par ce tool) ou id.
+            lines = []
+            for f in files:
+                pname = self._parent_name(f) or "?"
+                lines.append(f"- '{pname}/{f.name}' (id={f.id})")
+            candidates = "\n".join(lines)
+            msg = (
+                f"Multiple files named '{name}' were found. Call get_file again "
+                f"with one of these exact values (folder/name or id):\n{candidates}"
+            )
             self.set_output("formalized_content", msg)
             return msg
 
@@ -161,6 +176,17 @@ class GetFile(ToolBase, ABC):
         msg = f"File '{f.name}' ({_human_size(f.size)}) available at: {url} (valid {minutes} min)"
         self.set_output("formalized_content", msg)
         return msg
+
+    @staticmethod
+    def _lookup_by_id(tenant_id: str, file_id: str):
+        from api.db.db_models import DB
+
+        model = FileService.model
+        with DB.connection_context():
+            f = model.get_or_none(
+                (model.id == file_id) & (model.tenant_id == tenant_id)
+            )
+        return [f] if f else []
 
     @staticmethod
     def _lookup_ci(tenant_id: str, base: str):
