@@ -1,3 +1,4 @@
+import bannerBg from '@/assets/banner-cyllene.jpg';
 import { Card, CardContent } from '@/components/ui/card';
 import { useFetchUserInfo } from '@/hooks/use-user-setting-request';
 import { ArrowRight, X } from 'lucide-react';
@@ -46,14 +47,24 @@ export function NextBanner() {
     data: { nickname },
   } = useFetchUserInfo();
   return (
-    <h1
-      className="text-5xl leading-normal text-left"
-      dir={i18n.language?.startsWith('ar') ? 'rtl' : 'ltr'}
-    >
-      <span className="font-semibold text-text-primary">
-        {t('header.welcome')}{' '}
-      </span>
-      <span className="font-bold text-accent-primary">{nickname}</span>
-    </h1>
+    <section className="relative rounded-2xl overflow-hidden my-8">
+      <img
+        src={bannerBg}
+        alt=""
+        className="absolute inset-0 size-full object-cover"
+      />
+      <div className="absolute inset-0 bg-gradient-to-r from-black/65 via-black/35 to-black/10" />
+      <h1
+        className="relative px-10 py-12 text-5xl leading-normal text-left"
+        dir={i18n.language?.startsWith('ar') ? 'rtl' : 'ltr'}
+      >
+        <span className="font-semibold text-white/90">
+          {t('header.welcome')}{' '}
+        </span>
+        <span className="font-bold text-white border-b-4 border-accent-primary">
+          {nickname}
+        </span>
+      </h1>
+    </section>
   );
 }

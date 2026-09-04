@@ -12,7 +12,7 @@ import { useContext, useEffect, useState } from 'react';
 import { useTranslation } from 'react-i18next';
 import { useNavigate } from 'react-router';
 
-import Spotlight from '@/components/spotlight';
+import loginBg from '@/assets/login-cyllene.jpg';
 import { Button, ButtonLoading } from '@/components/ui/button';
 import { Checkbox } from '@/components/ui/checkbox';
 import {
@@ -29,7 +29,6 @@ import { zodResolver } from '@hookform/resolvers/zod';
 import { useForm, UseFormReturn } from 'react-hook-form';
 import { z } from 'zod';
 import { NICKNAME_PATTERN } from '../user-setting/profile/constants';
-import { BgSvg } from './bg';
 import FlipCard3D, { FlipFaceContext } from './card';
 import './index.less';
 
@@ -186,7 +185,7 @@ function LoginFormContent({
                 data-testid="auth-submit"
                 type="submit"
                 loading={loading}
-                className="bg-metallic-gradient border-b-[#00BEB4] border-b-2 hover:bg-metallic-gradient hover:border-b-[#02bcdd] w-full my-8"
+                className="bg-metallic-gradient border-b-accent-primary border-b-2 hover:bg-metallic-gradient hover:border-b-[#5b9bd9] w-full my-8"
               >
                 {title === 'login' ? t('login') : t('continue')}
               </ButtonLoading>
@@ -365,25 +364,15 @@ const Login = () => {
 
   return (
     <>
-      <Spotlight opcity={0.4} coverage={60} color={'rgb(128, 255, 248)'} />
-      <Spotlight
-        opcity={0.3}
-        coverage={12}
-        X={'10%'}
-        Y={'-10%'}
-        color={'rgb(128, 255, 248)'}
-      />
-      <Spotlight
-        opcity={0.3}
-        coverage={12}
-        X={'90%'}
-        Y={'-10%'}
-        color={'rgb(128, 255, 248)'}
-      />
       <div className=" h-[inherit] relative overflow-auto">
-        <BgSvg isPaused />
+        <img
+          src={loginBg}
+          alt=""
+          className="absolute inset-0 size-full object-cover"
+        />
+        <div className="absolute inset-0 bg-gradient-to-b from-black/50 via-black/30 to-black/60" />
 
-        <div className="z-20 absolute top-3 flex flex-col items-center mb-12 w-full text-text-primary">
+        <div className="z-20 absolute top-3 flex flex-col items-center mb-12 w-full text-white">
           <div className="flex items-center mb-4 w-full pl-10 pt-10 ">
             <div className="w-12 h-12 p-2 rounded-lg flex items-center justify-center mr-3">
               <img
