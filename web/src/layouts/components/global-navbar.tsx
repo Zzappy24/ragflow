@@ -85,7 +85,7 @@ const GlobalNavbar = supportsCssAnchor
                   <Link
                     {...props}
                     to={path}
-                    className="h-10 px-6 text-base inline-flex items-center justify-center hover:text-current focus-visible:text-current rounded-full transition-all"
+                    className="h-10 px-6 text-base inline-flex items-center justify-center whitespace-nowrap hover:text-current focus-visible:text-current rounded-full transition-all"
                     style={isActive ? activePillStyle : undefined}
                     aria-current={isActive ? 'page' : undefined}
                   >
