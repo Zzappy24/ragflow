@@ -216,6 +216,36 @@ class Language(StrEnum):
     NODEJS = "nodejs"
 
 
+
+def _repair_known_llm_artifacts(script: str, lang: str) -> str:
+    r"""CUSTOM B2B SaaS — réparation SUR ÉCHEC des tics de génération connus.
+
+    Qwen3.8 termine parfois une chaîne contenant une longue URL par la
+    séquence littérale ``\%22`` au lieu du guillemet fermant (observé les
+    03-04/09/2026, parser qwen3_coder ET qwen3_xml : c'est le modèle). Le
+    script devient syntaxiquement invalide et échoue en « Sandbox Job
+    failed » opaque. On ne répare QUE si le script ne parse pas, et on ne
+    garde la réparation QUE si elle rend le script parsable : un script
+    valide n'est jamais modifié.
+    """
+    if lang != "python" or not script or "\\%22" not in script:
+        return script
+    import ast as _ast
+
+    try:
+        _ast.parse(script)
+        return script  # valide tel quel : ne pas toucher
+    except SyntaxError:
+        pass
+    repaired = script.replace('\\%22', '"')
+    try:
+        _ast.parse(repaired)
+    except SyntaxError:
+        return script  # la réparation n'aide pas : rendre l'original
+    logging.warning('[CodeExec] repaired known LLM artifact backslash-percent-22 -> closing quote in script')
+    return repaired
+
+
 class CodeExecutionRequest(BaseModel):
     code_b64: str = Field(..., description="Base64 encoded code string")
     language: str = Field(default=Language.PYTHON.value, description="Programming language")
@@ -340,6 +370,7 @@ class CodeExec(ToolBase, ABC):
 
         lang = kwargs.get("lang", self._param.lang)
         script = kwargs.get("script", self._param.script)
+        script = _repair_known_llm_artifacts(script, lang)
         arguments = {}
         for k, v in self._param.arguments.items():
             if kwargs.get(k):
