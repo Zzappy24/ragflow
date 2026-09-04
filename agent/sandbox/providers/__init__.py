@@ -30,11 +30,29 @@ This package contains:
 
 from .base import SandboxProvider, SandboxInstance, ExecutionResult, SandboxProviderConfigError
 from .manager import ProviderManager
-from .self_managed import SelfManagedProvider
-from .aliyun_codeinterpreter import AliyunCodeInterpreterProvider
-from .e2b import E2BProvider
-from .local import LocalProvider
-from .ssh import SSHProvider
+
+# CUSTOM B2B SaaS — providers en import PARESSEUX (PEP 562) : l'import eager
+# chargeait les SDK cloud tiers de TOUS les providers dans les pods api dès le
+# premier code_exec, même configuré k8s — dont agentrun (Alibaba Cloud), qui
+# imprimait son warning bilingue dans les logs, pour un SDK jamais utilisé.
+# Hygiène souveraineté + logs propres. `from ... import XxxProvider` continue
+# de fonctionner à l'identique, l'import réel n'ayant lieu qu'à l'accès.
+_PROVIDER_MODULES = {
+    "SelfManagedProvider": ".self_managed",
+    "AliyunCodeInterpreterProvider": ".aliyun_codeinterpreter",
+    "E2BProvider": ".e2b",
+    "LocalProvider": ".local",
+    "SSHProvider": ".ssh",
+}
+
+
+def __getattr__(name):
+    module_path = _PROVIDER_MODULES.get(name)
+    if module_path is None:
+        raise AttributeError(f"module {__name__!r} has no attribute {name!r}")
+    from importlib import import_module
+
+    return getattr(import_module(module_path, __name__), name)
 
 __all__ = [
     "SandboxProvider",

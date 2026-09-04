@@ -70,30 +70,26 @@ def _load_provider_from_settings() -> None:
         provider_type = _resolve_provider_type()
         config = _load_provider_config(provider_type)
 
-        # Import and instantiate the provider
-        from agent.sandbox.providers import (
-            SelfManagedProvider,
-            AliyunCodeInterpreterProvider,
-            E2BProvider,
-            LocalProvider,
-            SSHProvider,
-        )
-        from agent.sandbox.providers.k8s import K8sProvider  # CUSTOM B2B SaaS — provider sandbox k8s
-
-        provider_classes = {
-            "self_managed": SelfManagedProvider,
-            "aliyun_codeinterpreter": AliyunCodeInterpreterProvider,
-            "e2b": E2BProvider,
-            "local": LocalProvider,
-            "ssh": SSHProvider,
-            "k8s": K8sProvider,  # CUSTOM B2B SaaS — provider sandbox k8s
+        # CUSTOM B2B SaaS — import PARESSEUX du seul provider configuré :
+        # l'ancien bloc importait les 6 classes (donc les SDK cloud tiers,
+        # agentrun/Alibaba compris) pour n'en instancier qu'une.
+        provider_paths = {
+            "self_managed": ("agent.sandbox.providers.self_managed", "SelfManagedProvider"),
+            "aliyun_codeinterpreter": ("agent.sandbox.providers.aliyun_codeinterpreter", "AliyunCodeInterpreterProvider"),
+            "e2b": ("agent.sandbox.providers.e2b", "E2BProvider"),
+            "local": ("agent.sandbox.providers.local", "LocalProvider"),
+            "ssh": ("agent.sandbox.providers.ssh", "SSHProvider"),
+            "k8s": ("agent.sandbox.providers.k8s", "K8sProvider"),  # CUSTOM B2B SaaS — provider sandbox k8s
         }
 
-        if provider_type not in provider_classes:
+        if provider_type not in provider_paths:
             logger.error(f"Unknown provider type: {provider_type}")
             return
 
-        provider_class = provider_classes[provider_type]
+        from importlib import import_module
+
+        module_path, class_name = provider_paths[provider_type]
+        provider_class = getattr(import_module(module_path), class_name)
         provider = provider_class()
 
         # Initialize the provider
