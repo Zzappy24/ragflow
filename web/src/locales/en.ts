@@ -122,7 +122,7 @@ export default {
       skills: 'Skills',
       flow: 'Agent',
       search: 'Search',
-      welcome: 'Welcome to',
+      welcome: 'Hello,',
       dataset: 'Dataset',
       memories: 'Memory',
     },

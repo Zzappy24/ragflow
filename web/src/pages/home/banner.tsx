@@ -1,4 +1,5 @@
 import { Card, CardContent } from '@/components/ui/card';
+import { useFetchUserInfo } from '@/hooks/use-user-setting-request';
 import { ArrowRight, X } from 'lucide-react';
 import { useTranslation } from 'react-i18next';
 
@@ -22,7 +23,7 @@ export function Banner() {
   return (
     <section className="bg-[url('@/assets/banner.png')] bg-cover h-28 rounded-2xl  my-8 flex gap-8 justify-between">
       <div className="h-full text-3xl font-bold items-center inline-flex ml-6">
-        Welcome to RAGFlow
+        Welcome to Cyllene
       </div>
       <div className="flex justify-between items-center gap-4 mr-5">
         <BannerCard></BannerCard>
@@ -41,6 +42,9 @@ export function Banner() {
 
 export function NextBanner() {
   const { t, i18n } = useTranslation();
+  const {
+    data: { nickname },
+  } = useFetchUserInfo();
   return (
     <h1
       className="text-5xl leading-normal text-left"
@@ -49,9 +53,7 @@ export function NextBanner() {
       <span className="font-semibold text-text-primary">
         {t('header.welcome')}{' '}
       </span>
-      <span className="font-bold text-transparent bg-clip-text bg-gradient-to-l from-[#40EBE3] to-[#4A51FF]">
-        RAGFlow
-      </span>
+      <span className="font-bold text-accent-primary">{nickname}</span>
     </h1>
   );
 }
