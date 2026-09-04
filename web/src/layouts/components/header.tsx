@@ -53,7 +53,7 @@ export function Header({
     <header
       key="app-navbar"
       className={cn(
-        'w-full grid grid-cols-[1fr_auto_1fr] grid-rows-1 items-center gap-8',
+        'w-full grid grid-cols-[minmax(0,1fr)_auto_minmax(0,1fr)] grid-rows-1 items-center gap-4',
         className,
       )}
       {...props}
@@ -76,7 +76,7 @@ export function Header({
       <GlobalNavbar />
 
       <div
-        className="flex items-center justify-end gap-4 text-text-badge"
+        className="flex items-center justify-end gap-3 min-w-0 text-text-badge"
         data-testid="auth-status"
       >
         <a
