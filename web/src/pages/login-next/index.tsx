@@ -368,9 +368,9 @@ const Login = () => {
         <img
           src={loginBg}
           alt=""
-          className="absolute inset-0 size-full object-cover"
+          className="fixed inset-0 size-full object-cover pointer-events-none"
         />
-        <div className="absolute inset-0 bg-gradient-to-b from-black/50 via-black/30 to-black/60" />
+        <div className="fixed inset-0 bg-gradient-to-b from-black/50 via-black/30 to-black/60 pointer-events-none" />
 
         <div className="z-20 absolute top-3 flex flex-col items-center mb-12 w-full text-white">
           <div className="flex items-center mb-4 w-full pl-10 pt-10 ">

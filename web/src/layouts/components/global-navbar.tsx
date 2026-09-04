@@ -85,12 +85,13 @@ const GlobalNavbar = supportsCssAnchor
                   <Link
                     {...props}
                     to={path}
-                    className="h-10 px-6 text-base inline-flex items-center justify-center whitespace-nowrap hover:text-current focus-visible:text-current rounded-full transition-all"
+                    className="h-10 px-3 xl:px-5 text-base inline-flex items-center justify-center gap-2 whitespace-nowrap hover:text-current focus-visible:text-current rounded-full transition-all"
                     style={isActive ? activePillStyle : undefined}
+                    title={t(name)}
                     aria-current={isActive ? 'page' : undefined}
                   >
-                    {Icon && <Icon className="size-6 stroke-[1.5]" />}
-                    <span className={cn(Icon && 'sr-only')}>{t(name)}</span>
+                    {Icon && <Icon className="size-5 stroke-[1.5] shrink-0" />}
+                    <span className="hidden xl:inline">{t(name)}</span>
                   </Link>
                 </li>
               );
@@ -141,20 +142,18 @@ const GlobalNavbar = supportsCssAnchor
                     {...props}
                     to={path}
                     className={cn(
-                      'h-10 px-6 text-base inline-flex items-center justify-center',
+                      'h-10 px-3 xl:px-5 text-base inline-flex items-center justify-center gap-2 whitespace-nowrap',
                       'hover:text-current focus-visible:text-current rounded-full transition-all',
                       isActive &&
                         'border-b-2 border-b-accent-primary rounded-full',
                     )}
                     style={isActive ? activePillStyle : undefined}
+                    title={t(name)}
                     aria-label={t(name)}
                     aria-current={isActive ? 'page' : undefined}
                   >
-                    {Icon ? (
-                      <Icon className="size-6 stroke-[1.5]" />
-                    ) : (
-                      <span>{t(name)}</span>
-                    )}
+                    {Icon && <Icon className="size-5 stroke-[1.5] shrink-0" />}
+                    <span className="hidden xl:inline">{t(name)}</span>
                   </Link>
                 </li>
               );
