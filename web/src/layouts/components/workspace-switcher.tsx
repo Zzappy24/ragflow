@@ -161,7 +161,7 @@ export function WorkspaceSwitcher() {
           variant="ghost"
           role="combobox"
           aria-expanded={open}
-          className="flex items-center gap-2 max-w-[260px]"
+          className="flex items-center gap-2 max-w-[260px] min-w-0 shrink"
           data-testid="workspace-switcher"
         >
           {activeWs ? (

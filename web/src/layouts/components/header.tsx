@@ -72,7 +72,9 @@ export function Header({
         </Link>
       </div>
 
-      <GlobalNavbar />
+      <div className="min-w-0 overflow-x-auto [scrollbar-width:none] [&::-webkit-scrollbar]:hidden">
+        <GlobalNavbar />
+      </div>
 
       <div
         className="flex items-center justify-end gap-3 min-w-0 text-text-badge"
@@ -80,7 +82,10 @@ export function Header({
       >
         <DropdownMenu>
           <DropdownMenuTrigger asChild>
-            <Button className="flex items-center gap-1" variant="ghost">
+            <Button
+              className="flex items-center gap-1 shrink-0"
+              variant="ghost"
+            >
               {currentLanguage?.displayName}
               <LucideChevronDown className="size-[1em]" />
             </Button>
