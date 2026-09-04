@@ -507,6 +507,7 @@ class Base(ABC):
                 ans += response
                 tk_count += token_count
                 if not (ans or "").strip():
+                    logging.warning("[ToolLoop] final answer EMPTY after max rounds — emitting fallback")
                     ans = self._max_rounds_fallback(history)
                 return ans, tk_count
             except Exception as e:
@@ -644,7 +645,10 @@ class Base(ABC):
                 logging.warning(f"Exceed max rounds: {self.max_rounds}")
                 history.append({"role": "user", "content": self._MAX_ROUNDS_FINAL_PROMPT.format(n=self.max_rounds)})
 
-                response = await self.async_client.chat.completions.create(model=self.model_name, messages=history, stream=True, tools=tools, tool_choice="auto", **gen_conf)
+                # tool_choice="none" : le tour final DOIT produire du texte —
+                # en "auto", le modèle répondait parfois par un énième tool
+                # call, donc contenu vide côté UI (2026-09-04).
+                response = await self.async_client.chat.completions.create(model=self.model_name, messages=history, stream=True, tools=tools, tool_choice="none", **gen_conf)
 
                 final_text = ""
                 async for resp in response:
@@ -662,6 +666,7 @@ class Base(ABC):
                     yield delta.content
 
                 if not final_text.strip():
+                    logging.warning("[ToolLoop] final answer EMPTY after max rounds — emitting fallback")
                     yield self._max_rounds_fallback(history)
                 yield total_tokens
                 return
