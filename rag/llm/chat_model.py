@@ -495,6 +495,13 @@ class Base(ABC):
                             logging.exception(f"Tool call failed: {tc}")
                             return tc, name, {}, None, e
 
+                    # CUSTOM B2B SaaS — le thinking accompagnant un tool call était
+                    # JETÉ sur ce chemin (le chemin stream, lui, l'affichait) :
+                    # « zéro thinking » observé sur l'agent santé 2026-09-04.
+                    _tc_reasoning = _extract_reasoning(response.choices[0].message)
+                    if _tc_reasoning:
+                        ans += "<think>" + _tc_reasoning + "</think>"
+
                     logging.info(f"Response tool_calls={response.choices[0].message.tool_calls}")
                     results = await asyncio.gather(*[_exec_tool(tc) for tc in response.choices[0].message.tool_calls])
                     history = self._append_history_batch(history, results)
@@ -506,9 +513,10 @@ class Base(ABC):
                 response, token_count = await self._async_chat(history, gen_conf)
                 ans += response
                 tk_count += token_count
-                if not (ans or "").strip():
+                _visible = re.sub(r"<think>.*?</think>", "", ans or "", flags=re.DOTALL)
+                if not _visible.strip():
                     logging.warning("[ToolLoop] final answer EMPTY after max rounds — emitting fallback")
-                    ans = self._max_rounds_fallback(history)
+                    ans = (ans or "") + "\n" + self._max_rounds_fallback(history)
                 return ans, tk_count
             except Exception as e:
                 e = await self._exceptions_async(e, attempt)
@@ -651,10 +659,17 @@ class Base(ABC):
                 response = await self.async_client.chat.completions.create(model=self.model_name, messages=history, stream=True, tools=tools, tool_choice="none", **gen_conf)
 
                 final_text = ""
+                _fin_reasoning_start = False
                 async for resp in response:
                     if not hasattr(resp, "choices") or not resp.choices:
                         continue
                     delta = resp.choices[0].delta
+                    _fin_reasoning = _extract_reasoning(delta)
+                    if _fin_reasoning:
+                        piece = ("<think>" if not _fin_reasoning_start else "") + _fin_reasoning + "</think>"
+                        _fin_reasoning_start = True
+                        yield piece
+                        continue
                     if not hasattr(delta, "content") or delta.content is None:
                         continue
                     tol = total_token_count_from_response(resp)
@@ -707,9 +722,17 @@ class Base(ABC):
 
         response = await self.async_client.chat.completions.create(model=self.model_name, messages=history, **gen_conf, **kwargs)
 
-        if not response.choices or not response.choices[0].message or not response.choices[0].message.content:
+        if not response.choices or not response.choices[0].message:
             return "", 0
-        ans = response.choices[0].message.content.strip()
+        message = response.choices[0].message
+        ans = (message.content or "").strip()
+        # CUSTOM B2B SaaS — préserver le thinking séparé par le reasoning-parser
+        # (sinon une réponse « tout en reasoning » ressort vide).
+        _fin_reasoning = _extract_reasoning(message)
+        if _fin_reasoning:
+            ans = "<think>" + _fin_reasoning + "</think>" + ans
+        if not ans:
+            return "", 0
         if response.choices[0].finish_reason == "length":
             ans = self._length_stop(ans)
         return ans, total_token_count_from_response(response)
