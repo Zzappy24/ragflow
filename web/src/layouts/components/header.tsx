@@ -52,12 +52,17 @@ export function Header({
     <header
       key="app-navbar"
       className={cn(
-        'w-full grid grid-cols-[minmax(0,1fr)_auto_minmax(0,1fr)] grid-rows-1 items-center gap-4',
+        // CUSTOM B2B SaaS — flex, PAS grid : le logo et le cluster droit sont
+        // shrink-0 (jamais compressés), la nav centrale est flex-1 min-w-0 et
+        // scrolle en interne si besoin. Le cluster droit ne peut donc JAMAIS
+        // être chevauché par la nav, quelle que soit la langue ou le zoom
+        // (l'ancien grid [1fr auto 1fr] laissait la colonne auto déborder).
+        'w-full flex items-center gap-3',
         className,
       )}
       {...props}
     >
-      <div className="inline-flex items-center">
+      <div className="inline-flex items-center shrink-0">
         <Link
           to={Routes.Root}
           aria-current={pathname === Routes.Root ? 'page' : undefined}
@@ -72,10 +77,12 @@ export function Header({
         </Link>
       </div>
 
-      <GlobalNavbar />
+      <div className="flex-1 min-w-0 flex justify-center overflow-x-auto [scrollbar-width:none] [&::-webkit-scrollbar]:hidden">
+        <GlobalNavbar />
+      </div>
 
       <div
-        className="flex items-center justify-end gap-3 min-w-0 text-text-badge"
+        className="flex items-center justify-end gap-3 shrink-0 text-text-badge"
         data-testid="auth-status"
       >
         <DropdownMenu>
