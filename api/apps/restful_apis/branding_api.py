@@ -36,7 +36,7 @@ import time
 from api.apps import login_required
 from api.db.db_models import Organisation, Workspace
 from api.utils.api_utils import get_json_result, server_error_response
-from api.utils.tenant_context import active_tenant_id
+from api.utils.tenant_context import maybe_active_tenant_id
 from common.misc_utils import thread_pool_exec
 
 _BRANDING_CACHE: dict[str, tuple[dict, float]] = {}
@@ -62,7 +62,14 @@ def _load_branding(tenant_id: str) -> dict:
 @login_required
 async def get_branding():
     try:
-        tenant_id = active_tenant_id()
+        # maybe_active_tenant_id() renvoie None sans lever d'erreur : le
+        # branding est cosmétique et appelé sur CHAQUE page (useApplyOrgBranding),
+        # y compris juste après un login /login qui n'a pas encore épinglé de
+        # workspace. active_tenant_id() lèverait un 401 → l'intercepteur front
+        # transforme tout 401 en déconnexion → boucle de login (incident
+        # 2026-09-05, sessions fraîches / navigation privée). Pas de workspace
+        # = pas de branding d'org, on renvoie {} et le thème Cyllene par défaut.
+        tenant_id = maybe_active_tenant_id()
         if not tenant_id:
             return get_json_result(data={})
 

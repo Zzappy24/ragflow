@@ -53,3 +53,34 @@ class TestValidateBranding:
 
         assert hasattr(Organisation, "logo")
         assert hasattr(Organisation, "brand_color")
+
+
+class TestBrandingNeverForcesLogout:
+    """CUSTOM B2B SaaS — incident 2026-09-05 : boucle de login.
+
+    GET /api/v1/branding est appelé sur CHAQUE page (useApplyOrgBranding),
+    parfois avant que le front n'ait épinglé un workspace (login /login,
+    navigation privée, session fraîche). L'intercepteur front transforme
+    tout 401 en déconnexion → boucle. Un endpoint cosmétique ne doit donc
+    JAMAIS lever 401 faute de workspace : il doit renvoyer {}.
+
+    Contrat épinglé statiquement : la route utilise maybe_active_tenant_id
+    (renvoie None) et non active_tenant_id (lève Unauthorized).
+    """
+
+    def test_branding_route_uses_non_raising_tenant_resolver(self):
+        import pathlib
+
+        src = pathlib.Path(
+            pathlib.Path(__file__).resolve().parents[2]
+            / "api/apps/restful_apis/branding_api.py"
+        ).read_text()
+        assert "maybe_active_tenant_id" in src, (
+            "branding doit utiliser maybe_active_tenant_id (renvoie None)"
+        )
+        # active_tenant_id() lève 401 → déconnexion en boucle. Interdit ici.
+        # (maybe_active_tenant_id contient la sous-chaîne active_tenant_id,
+        # donc on vérifie l'absence d'un APPEL nu active_tenant_id().)
+        assert "= active_tenant_id()" not in src and "return active_tenant_id()" not in src, (
+            "branding ne doit pas appeler active_tenant_id() (lève 401)"
+        )
