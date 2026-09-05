@@ -13,6 +13,7 @@
 #  See the License for the specific language governing permissions and
 #  limitations under the License.
 #
+import time
 import logging
 import re
 
@@ -68,9 +69,14 @@ async def create_or_upload(tenant_id: str = None):
     content_type = request.content_type or ""
     try:
         if "multipart/form-data" in content_type:
+            # CUSTOM B2B SaaS — phases d'upload chronométrées (cf. document_api
+            # _upload_local_documents) : body_recv_parse = réception du body
+            # par le pod + parsing ; service = stockage & DB.
+            t_phase = time.monotonic()
             form = await request.form
             pf_id = form.get("parent_id")
             files = await request.files
+            t_parse_ms = (time.monotonic() - t_phase) * 1000
             if 'file' not in files:
                 return get_error_argument_result("No file part!")
             file_objs = files.getlist('file')
@@ -78,7 +84,23 @@ async def create_or_upload(tenant_id: str = None):
                 if file_obj.filename == '':
                     return get_error_argument_result("No file selected!")
 
+            t_phase = time.monotonic()
             success, result = await file_api_service.upload_file(tenant_id, pf_id, file_objs)
+            t_service_ms = (time.monotonic() - t_phase) * 1000
+            total_bytes = 0
+            for file_obj in file_objs:
+                try:
+                    pos = file_obj.stream.tell()
+                    file_obj.stream.seek(0, 2)
+                    total_bytes += file_obj.stream.tell()
+                    file_obj.stream.seek(pos)
+                except (OSError, AttributeError):
+                    pass
+            if t_parse_ms + t_service_ms >= 1000 or total_bytes >= 8 * 1024 * 1024:
+                logging.info(
+                    "UPLOAD-PHASES route=/files files=%d bytes=%d body_recv_parse=%.0fms service=%.0fms",
+                    len(file_objs), total_bytes, t_parse_ms, t_service_ms,
+                )
             if success:
                 return get_result(data=result)
             else:
