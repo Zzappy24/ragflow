@@ -1,5 +1,6 @@
 import { inspectorServer } from '@react-dev-inspector/vite-plugin';
 import react from '@vitejs/plugin-react';
+import https from 'https';
 import path from 'path';
 import { defineConfig, loadEnv } from 'vite';
 import { createHtmlPlugin } from 'vite-plugin-html';
@@ -133,7 +134,77 @@ export default defineConfig(({ mode }) => {
     },
   };
 
-  const proxy = proxySchemes[proxyScheme] || proxySchemes.python;
+  let proxy = proxySchemes[proxyScheme] || proxySchemes.python;
+
+  // CUSTOM B2B SaaS — proxy vers un backend distant (dev front sans stack local)
+  // API_PROXY_TARGET=https://ragflow.cyllene.cloud dans web/.env.local (gitignoré)
+  // route TOUT /api et /v1 vers ce hôte. L'auth est en en-têtes (Authorization,
+  // X-Workspace-Id), pas en cookies, donc changeOrigin suffit. SSE et WS passent.
+  const proxyTarget = env.API_PROXY_TARGET;
+  if (proxyTarget) {
+    console.log(`[vite.config] API_PROXY_TARGET: ${proxyTarget}`);
+    // Agent keep-alive : le navigateur émet des dizaines de requêtes en rafale ;
+    // sans lui chaque requête ouvre sa propre connexion TLS vers le bord distant
+    // (coûteux, et fragile quand le bord perd des handshakes — vécu 2026-09-04).
+    const agent = new https.Agent({
+      keepAlive: true,
+      keepAliveMsecs: 30_000,
+      maxSockets: 6,
+    });
+    // Plafond sur la SEULE phase de négociation TLS (8 s) : un bord qui ne
+    // répond pas au ClientHello bloquait la socket sans limite, le navigateur
+    // épuisait ses 6 connexions vers Vite et toute la page gelait. On ne touche
+    // pas aux requêtes établies (SSE/chat longs), seul le handshake est borné.
+    const TLS_HANDSHAKE_TIMEOUT_MS = 8_000;
+    const configure = (proxy: import('http-proxy').default) => {
+      if (process.env.PROXY_DEBUG)
+        console.error('[proxy-debug] configure() appelé');
+      // http-proxy-3 (Vite 7) émet 'proxyReq' DEPUIS l'événement 'socket' de la
+      // requête sortante et passe la socket en 5e argument — s'abonner à
+      // proxyReq.on('socket') ici arriverait trop tard (événement déjà passé).
+      proxy.on('proxyReq', (proxyReq, _req, _res, _opts, socket) => {
+        if (!socket) return;
+        const tlsSocket = socket as import('tls').TLSSocket;
+        // Socket neuve : connecting=true (TCP en cours) et getProtocol() vaut la
+        // chaîne 'unknown' tant que le handshake n'est pas fini — PAS null.
+        // Socket keep-alive réutilisée : connecting=false et un vrai 'TLSv1.x'.
+        const proto =
+          typeof tlsSocket.getProtocol === 'function'
+            ? tlsSocket.getProtocol()
+            : null;
+        const reused = !socket.connecting && !!proto && proto !== 'unknown';
+        if (process.env.PROXY_DEBUG) {
+          console.error(
+            `[proxy-debug] socket ${reused ? 'RÉUTILISÉE' : 'NEUVE'} connecting=${socket.connecting} pour ${proxyReq.path}`,
+          );
+        }
+        // Socket keep-alive réutilisée : handshake déjà fait, rien à borner.
+        if (reused) return;
+        const timer = setTimeout(() => {
+          console.error(`[proxy-debug] handshake expiré pour ${proxyReq.path}`);
+          proxyReq.destroy(
+            new Error(
+              `TLS handshake > ${TLS_HANDSHAKE_TIMEOUT_MS} ms vers ${proxyTarget}`,
+            ),
+          );
+        }, TLS_HANDSHAKE_TIMEOUT_MS);
+        const clear = () => clearTimeout(timer);
+        socket.once('secureConnect', clear);
+        socket.once('close', clear);
+        socket.once('error', clear);
+      });
+    };
+    const remote = {
+      target: proxyTarget,
+      changeOrigin: true,
+      secure: true,
+      ws: true,
+      agent,
+      configure,
+    };
+    proxy = { '/api': remote, '/v1': remote };
+  }
+  // CUSTOM B2B SaaS — fin proxy distant
 
   return {
     define: {
