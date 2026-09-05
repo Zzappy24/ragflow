@@ -88,6 +88,15 @@ class GetFileParam(ToolParamBase):
         }
         super().__init__()
         self.url_expires_s = 900
+        # CUSTOM B2B SaaS — sortie `url` PROPRE (l'URL présignée seule), en plus
+        # de formalized_content (message humain). Permet de CÂBLER l'URL dans
+        # les arguments d'un CodeExec en aval, pour qu'un agent n'ait JAMAIS à
+        # recopier une URL signée de 400 caractères (que les petits modèles
+        # mutilent — incident agent santé/FAMAT 2026-09-05).
+        self.outputs = {
+            "url": {"value": "", "type": "string"},
+            "formalized_content": {"value": "", "type": "string"},
+        }
 
     def check(self):
         self.check_positive_integer(self.url_expires_s, "[GetFile] URL expiration seconds")
@@ -200,6 +209,7 @@ class GetFile(ToolBase, ABC):
             "rebuild it by concatenation — any altered character breaks its "
             "signature (HTTP 403)."
         )
+        self.set_output("url", url)
         self.set_output("formalized_content", msg)
         return msg
 
