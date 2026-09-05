@@ -23,6 +23,7 @@ import {
   replaceRetrievingToSection,
   replaceTextByOldReg,
   replaceThinkToSection,
+  replaceToolCallToSection,
 } from '@/utils/chat';
 import { citationMarkerReg } from '@/utils/citation-utils';
 import { getDirAttribute } from '@/utils/text-direction';
@@ -170,7 +171,14 @@ function MarkdownContent({
     useFetchDocumentThumbnailsByIds();
   const contentWithCursor = useMemo(() => {
     let text = DOMPurify.sanitize(content, {
-      ADD_TAGS: ['think', 'section', 'details', 'summary', 'retrieving'],
+      ADD_TAGS: [
+        'think',
+        'section',
+        'details',
+        'summary',
+        'retrieving',
+        'tool_call',
+      ],
       ADD_ATTR: ['class'],
     });
     // let text = content;
@@ -181,6 +189,7 @@ function MarkdownContent({
     return pipe(
       replaceThinkToSection,
       replaceRetrievingToSection,
+      replaceToolCallToSection,
       preprocessLaTeX,
     )(nextText);
   }, [content, t]);

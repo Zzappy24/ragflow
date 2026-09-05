@@ -56,6 +56,22 @@
         }
       }
     }
+    :global(details.tool-call) {
+      padding-inline-start: 10px;
+      color: #8b8b8b;
+      border-inline-start: 2px solid #b9a3d5;
+      margin-bottom: 10px;
+      font-size: 12px;
+      summary {
+        cursor: pointer;
+        font-weight: 500;
+        color: #8a6bb0;
+        user-select: none;
+        &:hover {
+          color: #6d4f95;
+        }
+      }
+    }
   }
 
   .messageUserText {

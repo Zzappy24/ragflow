@@ -14,6 +14,7 @@ import {
   replaceRetrievingToSection,
   replaceTextByOldReg,
   replaceThinkToSection,
+  replaceToolCallToSection,
   showImage,
 } from '@/utils/chat';
 import { citationMarkerReg } from '@/utils/citation-utils';
@@ -69,6 +70,7 @@ const FloatingChatWidgetMarkdown = ({
     return pipe(
       replaceThinkToSection,
       replaceRetrievingToSection,
+      replaceToolCallToSection,
       preprocessLaTeX,
     )(nextText);
   }, [content, t]);

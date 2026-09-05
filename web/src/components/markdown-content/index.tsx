@@ -47,6 +47,7 @@ import {
   replaceRetrievingToSection,
   replaceTextByOldReg,
   replaceThinkToSection,
+  replaceToolCallToSection,
 } from '@/utils/chat';
 import classNames from 'classnames';
 import { omit } from 'lodash';
@@ -85,7 +86,14 @@ const MarkdownContent = ({
     useFetchDocumentThumbnailsByIds();
   const contentWithCursor = useMemo(() => {
     let text = DOMPurify.sanitize(content, {
-      ADD_TAGS: ['think', 'section', 'details', 'summary', 'retrieving'],
+      ADD_TAGS: [
+        'think',
+        'section',
+        'details',
+        'summary',
+        'retrieving',
+        'tool_call',
+      ],
       ADD_ATTR: ['class'],
     });
 
@@ -97,6 +105,7 @@ const MarkdownContent = ({
     return pipe(
       replaceThinkToSection,
       replaceRetrievingToSection,
+      replaceToolCallToSection,
       preprocessLaTeX,
     )(nextText);
   }, [content, t]);

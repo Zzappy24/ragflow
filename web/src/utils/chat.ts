@@ -95,8 +95,43 @@ export function replaceThinkToSection(text: string = '') {
 export function replaceRetrievingToSection(text: string = '') {
   const pattern = /<retrieving>([\s\S]*?)<\/retrieving>/g;
 
-  const result = text.replace(pattern, '<details class="retrieving"><summary>Retrieving...</summary>$1</details>');
+  const result = text.replace(
+    pattern,
+    '<details class="retrieving"><summary>Retrieving...</summary>$1</details>',
+  );
 
+  return result;
+}
+
+// CUSTOM B2B SaaS — rendre visible l'activité des outils de l'agent.
+// Le backend émet chaque appel d'outil en bloc <tool_call>{json}</tool_call>
+// (nom, arguments, résultat). Sans transformation, le rendu markdown les
+// avale et l'utilisateur ne voit RIEN pendant que l'agent travaille
+// (incident FAMAT 2026-09-05). On les rend en section repliable, comme
+// <think> et <retrieving>, avec le nom de l'outil en résumé et le détail
+// (arguments + résultat) en JSON à l'intérieur.
+function _toolCallDetails(inner: string, open: boolean): string {
+  let name = 'outil';
+  try {
+    const parsed = JSON.parse(inner);
+    if (parsed && typeof parsed.name === 'string') name = parsed.name;
+  } catch {
+    const m = inner.match(/"name"\s*:\s*"([^"]+)"/);
+    if (m) name = m[1];
+  }
+  const body = '\n\n```json\n' + inner.trim() + '\n```\n';
+  return `<details class="tool-call"${open ? ' open' : ''}><summary>\u{1F527} ${name}</summary>${body}</details>`;
+}
+
+export function replaceToolCallToSection(text: string = '') {
+  // Blocs complets
+  let result = text.replace(/<tool_call>([\s\S]*?)<\/tool_call>/g, (_, inner) =>
+    _toolCallDetails(inner, false),
+  );
+  // Bloc en cours de streaming (balise non encore fermée)
+  result = result.replace(/<tool_call>([\s\S]*)$/, (_, inner) =>
+    _toolCallDetails(inner, true),
+  );
   return result;
 }
 
