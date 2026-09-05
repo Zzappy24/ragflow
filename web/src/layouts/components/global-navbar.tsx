@@ -74,7 +74,7 @@ const GlobalNavbar = supportsCssAnchor
       );
 
       return (
-        <nav>
+        <nav className="mx-auto">
           <ul className="relative flex items-center p-1 bg-bg-card rounded-full border border-border-button">
             {menuItems.map(({ path, name, icon: Icon, ...props }) => {
               const isActive = path === activePath;
@@ -85,7 +85,7 @@ const GlobalNavbar = supportsCssAnchor
                   <Link
                     {...props}
                     to={path}
-                    className="h-10 px-5 text-base inline-flex items-center justify-center whitespace-nowrap hover:text-current focus-visible:text-current rounded-full transition-all"
+                    className="h-10 px-2.5 xl:px-5 text-sm xl:text-base inline-flex items-center justify-center whitespace-nowrap hover:text-current focus-visible:text-current rounded-full transition-all"
                     style={isActive ? activePillStyle : undefined}
                     title={t(name)}
                     aria-current={isActive ? 'page' : undefined}
@@ -134,7 +134,7 @@ const GlobalNavbar = supportsCssAnchor
       }, [pathname]);
 
       return (
-        <nav>
+        <nav className="mx-auto">
           <ul className="flex items-center p-1 bg-bg-card rounded-full border border-border-button">
             {menuItems.map(({ path, name, icon: Icon, ...props }) => {
               const isActive = path === activePath;
@@ -145,7 +145,7 @@ const GlobalNavbar = supportsCssAnchor
                     {...props}
                     to={path}
                     className={cn(
-                      'h-10 px-5 text-base inline-flex items-center justify-center whitespace-nowrap',
+                      'h-10 px-2.5 xl:px-5 text-sm xl:text-base inline-flex items-center justify-center whitespace-nowrap',
                       'hover:text-current focus-visible:text-current rounded-full transition-all',
                       isActive &&
                         'border-b-2 border-b-accent-primary rounded-full',

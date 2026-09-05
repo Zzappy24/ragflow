@@ -77,7 +77,11 @@ export function Header({
         </Link>
       </div>
 
-      <div className="flex-1 min-w-0 flex justify-center overflow-x-auto [scrollbar-width:none] [&::-webkit-scrollbar]:hidden">
+      {/* Pas de justify-center ici : centrer un enfant qui déborde rend son
+          début inatteignable (coupé à gauche, non scrollable). Le centrage
+          vient du mx-auto de la nav : il s'annule de lui-même quand ça déborde,
+          la nav se cale alors à gauche et reste entièrement scrollable. */}
+      <div className="flex-1 min-w-0 flex overflow-x-auto [scrollbar-width:none] [&::-webkit-scrollbar]:hidden">
         <GlobalNavbar />
       </div>
 
