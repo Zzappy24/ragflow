@@ -120,6 +120,16 @@ request.interceptors.request.use((url: string, options: any) => {
   };
 });
 
+// CUSTOM B2B SaaS — un 401 « workspace manquant » N'EST PAS une perte de
+// session : il survient quand une requête part avant que le front ait épinglé
+// un workspace (login /login, navigation privée, premier chargement). Le
+// traiter comme une déconnexion créait une boucle de login (incident
+// 2026-09-05). On le distingue par son message backend et on laisse passer
+// sans purger le token ni rediriger — le sélecteur de workspace épingle un
+// défaut, les appels suivants portent l'en-tête X-Workspace-Id.
+const isWorkspaceContext401 = (msg?: string): boolean =>
+  typeof msg === 'string' && /workspace/i.test(msg);
+
 request.interceptors.response.use(async (response: Response, options) => {
   if (response?.status === 413 || response?.status === 504) {
     message.error(RetcodeMessage[response?.status as ResultCode]);
@@ -136,6 +146,11 @@ request.interceptors.response.use(async (response: Response, options) => {
         .catch(() => ({}));
 
       const messageText = data?.message || RetcodeMessage[401];
+      if (isWorkspaceContext401(data?.message)) {
+        // Pas de déconnexion : contexte workspace non encore résolu.
+        isRedirecting = false;
+        return response;
+      }
       notification.error({
         message: messageText,
         description: messageText,
@@ -165,6 +180,10 @@ request.interceptors.response.use(async (response: Response, options) => {
   if (data?.code === 100) {
     message.error(data?.message);
   } else if (data?.code === 401) {
+    if (isWorkspaceContext401(data?.message)) {
+      // Workspace non résolu : ne pas déconnecter (cf. isWorkspaceContext401).
+      return response;
+    }
     if (!isRedirecting) {
       isRedirecting = true;
       notification.error({
