@@ -646,7 +646,7 @@ async def sequence2txt(tenant_id):
         return get_error_data_result(message=str(e))
     asr_mdl=LLMBundle(tenant_id, default_asr_model_config)
     if not stream_mode:
-        text = asr_mdl.transcription(temp_audio_path)
+        text = await thread_pool_exec(asr_mdl.transcription, temp_audio_path)
         try:
             os.remove(temp_audio_path)
         except Exception as e:

@@ -16,20 +16,46 @@
 """
 CUSTOM B2B SaaS — DA (identité visuelle) par organisation.
 
-GET /api/v1/branding — renvoie le logo (data-URI base64) et la couleur
-d'accent de l'organisation du workspace actif. Le front applique la
-couleur sur ``--accent-primary`` et le logo dans le header après login ;
-la page de login reste toujours aux couleurs Cyllene (produit Cyllene).
+GET /api/v1/branding — logo (data-URI) + couleur d'accent de l'organisation
+du workspace actif. Appelé à CHAQUE chargement de page par le hook
+``useApplyOrgBranding`` : donc chemin CHAUD.
 
-Tenant personnel (pas de workspace actif) ou org sans branding → objet
-vide, le front garde le thème Cyllene par défaut. L'édition se fait dans
-le panel admin (``management/server/routers/orgs.py`` — routes branding).
+Deux garde-fous perf (incident starvation 2026-09-05) :
+  1. Les 2 lookups Peewee sont SYNCHRONES — offloadés hors de l'event loop
+     async via ``thread_pool_exec`` (un appel DB sync dans une coroutine
+     fige l'event loop du worker et, multiplié par la fréquence de cet
+     endpoint, contribue à la starvation).
+  2. Cache mémoire par tenant (TTL court) : le branding ne change qu'à une
+     édition panel, inutile de taper la DB à chaque page. Positifs ET
+     absences cachés (une org sans branding renvoie {} tout aussi souvent).
 """
+
+import os
+import time
 
 from api.apps import login_required
 from api.db.db_models import Organisation, Workspace
 from api.utils.api_utils import get_json_result, server_error_response
 from api.utils.tenant_context import active_tenant_id
+from common.misc_utils import thread_pool_exec
+
+_BRANDING_CACHE: dict[str, tuple[dict, float]] = {}
+_BRANDING_TTL_S = float(os.environ.get("BRANDING_CACHE_TTL_S", "60"))
+
+
+def _load_branding(tenant_id: str) -> dict:
+    """Lookup SYNCHRONE (Peewee) — appelé dans un thread, jamais sur l'event loop."""
+    ws = Workspace.get_or_none(Workspace.tenant_id == tenant_id)
+    if not ws:
+        return {}
+    org = Organisation.get_or_none(Organisation.id == ws.org_id)
+    if not org or getattr(org, "status", "1") != "1":
+        return {}
+    return {
+        "logo": org.logo or None,
+        "brand_color": org.brand_color or None,
+        "org_name": org.name,
+    }
 
 
 @manager.route("/branding", methods=["GET"])  # noqa: F821
@@ -37,18 +63,15 @@ from api.utils.tenant_context import active_tenant_id
 async def get_branding():
     try:
         tenant_id = active_tenant_id()
-        ws = Workspace.get_or_none(Workspace.tenant_id == tenant_id)
-        if not ws:
+        if not tenant_id:
             return get_json_result(data={})
-        org = Organisation.get_or_none(Organisation.id == ws.org_id)
-        if not org or getattr(org, "status", "1") != "1":
-            return get_json_result(data={})
-        return get_json_result(
-            data={
-                "logo": org.logo or None,
-                "brand_color": org.brand_color or None,
-                "org_name": org.name,
-            }
-        )
+
+        cached = _BRANDING_CACHE.get(tenant_id)
+        if cached and time.monotonic() - cached[1] < _BRANDING_TTL_S:
+            return get_json_result(data=cached[0])
+
+        data = await thread_pool_exec(_load_branding, tenant_id)
+        _BRANDING_CACHE[tenant_id] = (data, time.monotonic())
+        return get_json_result(data=data)
     except Exception as e:
         return server_error_response(e)

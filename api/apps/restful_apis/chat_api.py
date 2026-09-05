@@ -991,7 +991,7 @@ async def delete_sessions(chat_id):
                         if not file_id:
                             continue
                         try:
-                            settings.STORAGE_IMPL.rm(f"{current_user.id}-downloads", file_id)
+                            await thread_pool_exec(settings.STORAGE_IMPL.rm, f"{current_user.id}-downloads", file_id)
                         except Exception:
                             logging.warning("Failed to delete chat upload blob %s/%s", current_user.id, file_id)
             ConversationService.delete_by_id(sid)
@@ -1165,7 +1165,7 @@ async def transcription():
 
     asr_mdl = LLMBundle(active_tenant_id(), default_asr_model_config)
     if not stream_mode:
-        text = asr_mdl.transcription(temp_audio_path)
+        text = await thread_pool_exec(asr_mdl.transcription, temp_audio_path)
         try:
             os.remove(temp_audio_path)
         except Exception as e:

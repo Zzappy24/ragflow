@@ -36,12 +36,22 @@ async def stream_blob_response(bucket: str, name: str, filename: str,
     par le thread pool — jamais sur l'event-loop.
     """
     impl = settings.STORAGE_IMPL
-    headers = {"Content-Disposition": _content_disposition(filename)}
+    headers = {
+        "Content-Disposition": _content_disposition(filename),
+        "Cache-Control": "private, no-store",
+        "X-Content-Type-Options": "nosniff",
+    }
 
     if hasattr(impl, "get_stream"):
         it = await thread_pool_exec(impl.get_stream, bucket, name)
         if it is None:
             return None
+        # Content-Length quand le backend sait la taille : sans lui le
+        # navigateur ne peut afficher ni progression ni temps restant.
+        if hasattr(impl, "obj_size"):
+            size = await thread_pool_exec(impl.obj_size, bucket, name)
+            if size is not None:
+                headers["Content-Length"] = str(size)
 
         async def agen():
             while True:

@@ -19,6 +19,7 @@ import json
 import os
 import re
 from abc import ABC
+from common.misc_utils import thread_pool_exec
 from agent.tools.base import ToolParamBase, ToolBase, ToolMeta
 from common.constants import LLMType
 from api.db.services.doc_metadata_service import DocMetadataService
@@ -226,7 +227,7 @@ class Retrieval(ToolBase, ABC):
                     return
                 if cks:
                     kbinfos["chunks"] = cks
-            kbinfos["chunks"] = settings.retriever.retrieval_by_children(kbinfos["chunks"],
+            kbinfos["chunks"] = await thread_pool_exec(settings.retriever.retrieval_by_children, kbinfos["chunks"],
                                                                          [kb.tenant_id for kb in kbs])
             if self._param.use_kg:
                 tenant_id = self._canvas.get_tenant_id()

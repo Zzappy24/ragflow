@@ -23,6 +23,7 @@ try:
 except ImportError:  # pragma: no cover - optional dependency
     QuartBadRequest = None
 
+from common.misc_utils import thread_pool_exec
 from api.db.services.document_service import DocumentService
 from api.db.services.doc_metadata_service import DocMetadataService
 from api.db.services.knowledgebase_service import KnowledgebaseService
@@ -247,7 +248,7 @@ async def retrieval(tenant_id):
             code=RetCode.ARGUMENT_ERROR,
         )
     metadata_condition = req.get("metadata_condition", {}) or {}
-    metas = DocMetadataService.get_flatted_meta_by_kbs([kb_id])
+    metas = await thread_pool_exec(DocMetadataService.get_flatted_meta_by_kbs, [kb_id])
 
     doc_ids = []
     try:
@@ -281,7 +282,7 @@ async def retrieval(tenant_id):
             doc_ids=doc_ids,
             rank_feature=label_question(question, [kb])
         )
-        ranks["chunks"] = settings.retriever.retrieval_by_children(ranks["chunks"], [tenant_id])
+        ranks["chunks"] = await thread_pool_exec(settings.retriever.retrieval_by_children, ranks["chunks"], [tenant_id])
 
         if use_kg:
             model_config = get_tenant_default_model_by_type(kb.tenant_id, LLMType.CHAT)

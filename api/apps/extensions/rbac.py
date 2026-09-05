@@ -9,7 +9,7 @@ import logging
 from enum import Enum
 from functools import wraps
 
-from api.utils.api_utils import get_json_result
+from api.utils.api_utils import get_json_result, call_view
 
 
 # -- Roles -----------------------------------------------------------------
@@ -360,11 +360,7 @@ def require_permission(permission: Permission):
                 # Pure API key caller: tenant_id is set but no individual user identity.
                 # API keys are workspace-level service tokens — role RBAC does not apply.
                 # Login-token callers always have user_id set (stored in g._rbac_user_id).
-                result = func(*args, **kwargs)
-                import inspect
-                if inspect.iscoroutine(result):
-                    return await result
-                return result
+                return await call_view(func, *args, **kwargs)
             if not tenant_id:
                 # Authenticated user but no workspace context. Superusers keep
                 # their global bypass here too (admin scripts / CLI without
@@ -375,11 +371,7 @@ def require_permission(permission: Permission):
                 # 2026-08-18). Audité comme le bypass nominal. Tout autre
                 # utilisateur sans workspace : fail closed, comme avant.
                 if _is_superuser_without_workspace(user_id):
-                    result = func(*args, **kwargs)
-                    import inspect
-                    if inspect.iscoroutine(result):
-                        return await result
-                    return result
+                    return await call_view(func, *args, **kwargs)
                 return get_json_result(
                     data=False, message=f"Permission denied: {permission.value}", code=403
                 )
@@ -388,11 +380,7 @@ def require_permission(permission: Permission):
                     data=False, message=f"Permission denied: {permission.value}",
                     code=403
                 )
-            result = func(*args, **kwargs)
-            import inspect
-            if inspect.iscoroutine(result):
-                return await result
-            return result
+            return await call_view(func, *args, **kwargs)
         return wrapper
     return decorator
 
@@ -407,21 +395,13 @@ def require_org_admin(func):
         try:
             e, user = UserService.get_by_id(user_id)
             if e and user and user.is_superuser:
-                result = func(*args, **kwargs)
-                import inspect
-                if inspect.iscoroutine(result):
-                    return await result
-                return result
+                return await call_view(func, *args, **kwargs)
         except Exception:
             pass
         role = get_user_org_role(user_id, org_id)
         if role != OrgRole.ORG_ADMIN:
             return get_json_result(data=False, message="Org admin required", code=403)
-        result = func(*args, **kwargs)
-        import inspect
-        if inspect.iscoroutine(result):
-            return await result
-        return result
+        return await call_view(func, *args, **kwargs)
     return wrapper
 
 

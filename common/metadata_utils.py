@@ -16,6 +16,7 @@
 import ast
 import logging
 from typing import Any, Callable, Dict
+from common.misc_utils import thread_pool_exec
 
 # CUSTOM B2B SaaS — json_repair lazy-imported dans update_metadata_to() (seule
 # fonction consommatrice). Retirer l'import top-level évite que le mgmt-backend
@@ -223,6 +224,11 @@ async def apply_meta_data_filter(
     # Memoised metadata loader. ``_get_metas`` materialises the dict at most
     # once per call; downstream branches that never reach an in-memory eval
     # leave the loader untouched.
+    # CUSTOM B2B SaaS — le loader (scan paginé de TOUS les docs des KB sur le
+    # doc-store) et le push-down ES/Infinity sont SYNCHRONES : appelés inline
+    # dans cette coroutine ils figeaient l'event loop du pod api sur le chemin
+    # chaud du chat (incident starvation 2026-09-05). Offload via
+    # thread_pool_exec — les closures (nonlocal) restent valides en thread.
     cached_metas: dict | None = metas
 
     def _get_metas() -> dict:
@@ -248,9 +254,9 @@ async def apply_meta_data_filter(
         return meta_filter(_get_metas(), conditions, logic)
 
     if method == "auto":
-        filters: dict = await gen_meta_filter(chat_mdl, _get_metas(), question)
+        filters: dict = await gen_meta_filter(chat_mdl, await thread_pool_exec(_get_metas), question)
         logging.debug(f"Metadata filter(auto) generated: {filters}")
-        doc_ids.extend(_run_metadata_filter(filters["conditions"], filters.get("logic", "and")))
+        doc_ids.extend(await thread_pool_exec(_run_metadata_filter, filters["conditions"], filters.get("logic", "and")))
         if not doc_ids:
             return None
     elif method == "semi_auto":
@@ -267,12 +273,12 @@ async def apply_meta_data_filter(
                     constraints[key] = op
 
         if selected_keys:
-            current_metas = _get_metas()
+            current_metas = await thread_pool_exec(_get_metas)
             filtered_metas = {key: current_metas[key] for key in selected_keys if key in current_metas}
             if filtered_metas:
                 filters: dict = await gen_meta_filter(chat_mdl, filtered_metas, question, constraints=constraints)
                 logging.debug(f"Metadata filter(semi_auto) generated: {filters}")
-                doc_ids.extend(_run_metadata_filter(filters["conditions"], filters.get("logic", "and")))
+                doc_ids.extend(await thread_pool_exec(_run_metadata_filter, filters["conditions"], filters.get("logic", "and")))
                 if not doc_ids:
                     return None
     elif method == "manual":
@@ -280,7 +286,7 @@ async def apply_meta_data_filter(
         if manual_value_resolver:
             filters = [manual_value_resolver(flt) for flt in filters]
         logging.debug(f"Metadata filter(manual): {filters}")
-        doc_ids.extend(_run_metadata_filter(filters, meta_data_filter.get("logic", "and")))
+        doc_ids.extend(await thread_pool_exec(_run_metadata_filter, filters, meta_data_filter.get("logic", "and")))
         if filters and not doc_ids:
             doc_ids = ["-999"]
 

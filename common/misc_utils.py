@@ -17,6 +17,7 @@
 import asyncio
 import base64
 import contextvars
+import inspect
 import functools
 import hashlib
 import logging
@@ -261,3 +262,23 @@ async def thread_pool_exec(func, *args, **kwargs):
         inner = functools.partial(func, *args, **kwargs)
         return await loop.run_in_executor(_thread_pool_executor(), ctx.run, inner)
     return await loop.run_in_executor(_thread_pool_executor(), ctx.run, func, *args)
+
+
+# CUSTOM B2B SaaS — vues synchrones hors de l'event loop (incident 2026-09-05).
+# Quart n'offloade une vue sync (``def``) dans un thread QUE s'il la voit
+# directement. Dès qu'un décorateur async l'enveloppe et l'appelle inline
+# (``return func(**kwargs)``), le corps sync — Peewee, doc-store, MinIO —
+# tourne SUR l'event loop du pod et gèle toutes les autres requêtes, probes
+# comprises. C'est ainsi que ``list_docs`` (listing documents) et
+# ``get_flattened_metadata`` (scan complet du doc-store), toutes deux ``def``,
+# ont figé 4 pods api derrière Envoy (66 routes ``def`` concernées). Tout
+# décorateur de route DOIT appeler la vue via ce helper.
+# Pin : test/multitenant/test_sync_views_offloaded.py
+async def call_view(func, *args, **kwargs):
+    if inspect.iscoroutinefunction(func):
+        return await func(*args, **kwargs)
+    result = await thread_pool_exec(func, *args, **kwargs)
+    if inspect.iscoroutine(result):
+        # wrapper ``def`` d'un décorateur amont qui renvoie une coroutine
+        return await result
+    return result

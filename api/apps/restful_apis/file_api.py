@@ -271,6 +271,37 @@ async def move(tenant_id: str = None):
         return get_error_data_result(message="Internal server error")
 
 
+# CUSTOM B2B SaaS — jeton de téléchargement direct (même mécanisme que
+# POST /documents/<id>/download-token, consommé par GET /downloads/<token>).
+@manager.route("/files/<file_id>/download-token", methods=["POST"])  # noqa: F821
+@login_required
+@require_permission(Permission.DOCUMENT_READ)
+@add_tenant_id_to_kwargs
+async def issue_file_download_token(tenant_id: str = None, file_id: str = None):
+    from api.utils.download_token import DOWNLOAD_TOKEN_TTL_S, issue_download_token
+    from common import settings as _settings
+
+    def _resolve():
+        success, result = file_api_service.get_file_content(tenant_id, file_id)
+        if not success:
+            return None, result
+        file = result
+        ext = re.search(r"\.([^.]+)$", file.name.lower())
+        ext = ext.group(1) if ext else None
+        fallback_prefix = "image" if file.type == FileType.VISUAL.value else "application"
+        content_type = CONTENT_TYPE_MAP.get(ext, f"{fallback_prefix}/{ext}") if ext else "application/octet-stream"
+        bucket, location = file.parent_id, file.location
+        if not _settings.STORAGE_IMPL.obj_exist(bucket, location):
+            bucket, location = File2DocumentService.get_storage_address(file_id=file_id)
+        return (bucket, location, file.name, content_type), None
+
+    resolved, err = await thread_pool_exec(_resolve)
+    if err:
+        return get_error_data_result(message=err)
+    token = issue_download_token(*resolved)
+    return get_json_result(data={"url": f"/api/v1/downloads/{token}", "expires_in": DOWNLOAD_TOKEN_TTL_S})
+
+
 @manager.route("/files/<file_id>", methods=["GET"])  # noqa: F821
 @login_required
 @require_permission(Permission.DOCUMENT_READ)

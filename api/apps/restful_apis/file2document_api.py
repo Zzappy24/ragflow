@@ -26,7 +26,7 @@ from api.apps import login_required, current_user
 from api.db.services.knowledgebase_service import KnowledgebaseService
 from api.utils.api_utils import get_data_error_result, get_json_result, get_request_json, server_error_response, validate_request
 from common.constants import RetCode
-from common.misc_utils import get_uuid
+from common.misc_utils import get_uuid, thread_pool_exec
 from api.db import FileType
 from api.db.services.document_service import DocumentService
 from api.apps.extensions.rbac import require_permission, Permission
@@ -205,7 +205,7 @@ async def rm():
                 tenant_id = DocumentService.get_tenant_id(doc_id)
                 if not tenant_id:
                     return get_data_error_result(message="Tenant not found!")
-                if not DocumentService.remove_document(doc, tenant_id):
+                if not await thread_pool_exec(DocumentService.remove_document, doc, tenant_id):
                     return get_data_error_result(
                         message="Database error (Document removal)!")
         return get_json_result(data=True)

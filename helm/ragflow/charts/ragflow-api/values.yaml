@@ -9,6 +9,9 @@
 replicas: 4
 hypercornWorkers: 1
 
+# Extra env vars appended to the container (list of {name, value}).
+extraEnv: []
+
 image:
   repository: harbor.cylndata.cyllene.pro/data/ragflow
   tag: v0.7

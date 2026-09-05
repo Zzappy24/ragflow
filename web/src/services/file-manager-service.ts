@@ -14,6 +14,8 @@ const {
   moveFile,
   getDatasetDocumentFileDownload,
   getAttachmentFileDownload,
+  getDocumentDownloadToken,
+  getFileDownloadToken,
 } = api;
 
 const methods = {
@@ -82,4 +84,31 @@ export const downloadDatasetDocument = (data: {
     },
   );
 };
+// CUSTOM B2B SaaS — téléchargement direct : jeton court émis par le backend
+// puis lien natif → barre de téléchargement du navigateur (progression,
+// annulation), zéro blob en RAM de l'onglet. Renvoie false si le backend ne
+// connaît pas encore la route, pour laisser l'appelant se replier.
+const openDirectDownload = async (
+  tokenUrl: string,
+  filename: string,
+): Promise<boolean> => {
+  const res = await request.post(tokenUrl);
+  const url: string | undefined = res?.data?.data?.url;
+  if (!url) return false;
+  const a = document.createElement('a');
+  a.href = url;
+  a.download = filename;
+  a.rel = 'noopener';
+  document.body.appendChild(a);
+  a.click();
+  a.remove();
+  return true;
+};
+
+export const downloadDocumentDirect = (docId: string, filename: string) =>
+  openDirectDownload(getDocumentDownloadToken(docId), filename);
+
+export const downloadFileDirect = (fileId: string, filename: string) =>
+  openDirectDownload(getFileDownloadToken(fileId), filename);
+
 export default fileManagerService;

@@ -35,7 +35,7 @@ from api.db.services.file_service import FileService
 from api.db.services.user_service import UserService
 from api.db.services.user_canvas_version import UserCanvasVersionService
 from common.constants import RetCode
-from common.misc_utils import get_uuid
+from common.misc_utils import get_uuid, thread_pool_exec
 from api.utils.api_utils import get_data_error_result, get_json_result, get_request_json
 from quart import request, Response
 from rag.utils.redis_conn import REDIS_CONN
@@ -379,7 +379,8 @@ async def webhook(agent_id: str):
                 if len(files) > 10:
                     raise Exception("Too many uploaded files")
                 for key, file in files.items():
-                    desc = FileService.upload_info(
+                    desc = await thread_pool_exec(
+                        FileService.upload_info,
                         cvs.user_id,           # user
                         file,              # FileStorage
                         None                   # url (None for webhook)

@@ -525,20 +525,36 @@ class FileService(CommonService):
                 while settings.STORAGE_IMPL.obj_exist(kb.id, location):
                     location += "_"
 
+                # CUSTOM B2B SaaS — phases chronométrées (diagnostic upload lent
+                # 2026-09-05) ; loguées si le fichier > 8 Mo ou le total > 1 s.
+                _t = time.monotonic()
                 blob = file.read()
+                _ph = {"read": time.monotonic() - _t}
+                _t = time.monotonic()
                 mime_error = validate_upload_mime(filename, blob)
+                _ph["mime"] = time.monotonic() - _t
                 if mime_error:
                     raise RuntimeError(mime_error)
+                _t = time.monotonic()
                 if filetype == FileType.PDF.value:
                     blob = read_potential_broken_pdf(blob)
+                _ph["pdf_repair"] = time.monotonic() - _t
+                _t = time.monotonic()
                 settings.STORAGE_IMPL.put(kb.id, location, blob)
+                _ph["put"] = time.monotonic() - _t
 
-
+                _t = time.monotonic()
                 img = thumbnail_img(filename, blob)
                 thumbnail_location = ""
                 if img is not None:
                     thumbnail_location = f"thumbnail_{doc_id}.png"
                     settings.STORAGE_IMPL.put(kb.id, thumbnail_location, img)
+                _ph["thumbnail"] = time.monotonic() - _t
+                if len(blob) >= 8 * 1024 * 1024 or sum(_ph.values()) >= 1.0:
+                    logging.info(
+                        "UPLOAD-FILE-PHASES name=%s bytes=%d %s",
+                        filename, len(blob), " ".join(f"{k}={v * 1000:.0f}ms" for k, v in _ph.items()),
+                    )
 
                 incoming_fp = getattr(file, "fingerprint", None)
                 doc = {

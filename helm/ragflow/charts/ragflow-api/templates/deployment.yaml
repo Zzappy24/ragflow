@@ -168,6 +168,11 @@ spec:
               value: "/ragflow"
             - name: MAX_CONTENT_LENGTH
               value: {{ .Values.global.maxContentLength | default "1073741824" | quote }}
+            # Free-form extra env (same contract as ragflow-task-executor).
+            {{- range .Values.extraEnv }}
+            - name: {{ .name | quote }}
+              value: {{ .value | quote }}
+            {{- end }}
 
           resources:
             {{- toYaml .Values.resources | nindent 12 }}

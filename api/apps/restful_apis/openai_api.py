@@ -19,6 +19,7 @@ import time
 
 from quart import Response, jsonify
 
+from common.misc_utils import thread_pool_exec
 from api.apps import login_required
 from api.apps.extensions.rbac import require_permission, Permission
 from api.apps.restful_apis._generation_params import extract_generation_config, merge_generation_config
@@ -295,7 +296,7 @@ async def openai_chat_completions(chat_id):
 
     doc_ids_str = None
     if metadata_condition:
-        metas = DocMetadataService.get_flatted_meta_by_kbs(dia.kb_ids or [])
+        metas = await thread_pool_exec(DocMetadataService.get_flatted_meta_by_kbs, dia.kb_ids or [])
         filtered_doc_ids = meta_filter(
             metas,
             convert_conditions(metadata_condition),

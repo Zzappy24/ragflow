@@ -18,6 +18,7 @@ import logging
 import json
 import os
 import re
+import time
 from pathlib import Path
 
 from quart import request, make_response,send_file
@@ -207,7 +208,7 @@ async def update_document(tenant_id, dataset_id, document_id):
     # All validations passed, now perform all updates
     # meta_fields provided, then update it
     if "meta_fields" in req:
-        if not DocMetadataService.update_document_metadata(document_id, update_doc_req.meta_fields):
+        if not await thread_pool_exec(DocMetadataService.update_document_metadata, document_id, update_doc_req.meta_fields):
             return get_error_data_result(message="Failed to update metadata")
     # doc name provided from request and diff with existing value, update
     if "name" in req and req["name"] != doc.name:
@@ -363,7 +364,7 @@ async def metadata_batch_update(dataset_id, tenant_id):
         target_doc_ids = set(document_ids)
 
     if metadata_condition:
-        metas = DocMetadataService.get_flatted_meta_by_kbs([dataset_id])
+        metas = await thread_pool_exec(DocMetadataService.get_flatted_meta_by_kbs, [dataset_id])
         filtered_ids = set(meta_filter(metas, convert_conditions(metadata_condition), metadata_condition.get("logic", "and")))
         target_doc_ids = target_doc_ids & filtered_ids
         if metadata_condition.get("conditions") and not target_doc_ids:
@@ -503,9 +504,9 @@ async def _upload_web_document(dataset_id, kb, tenant_id):
             raise RuntimeError("This type of file has not been supported yet!")
 
         location = filename
-        while settings.STORAGE_IMPL.obj_exist(dataset_id, location):
+        while await thread_pool_exec(settings.STORAGE_IMPL.obj_exist, dataset_id, location):
             location += "_"
-        settings.STORAGE_IMPL.put(dataset_id, location, blob)
+        await thread_pool_exec(settings.STORAGE_IMPL.put, dataset_id, location, blob)
 
         doc = {
             "id": get_uuid(),
@@ -581,8 +582,17 @@ async def _upload_empty_document(dataset_id, kb, tenant_id):
 
 
 async def _upload_local_documents(kb, tenant_id):
+    # CUSTOM B2B SaaS — phases d'upload chronométrées (diagnostic « 200 Mo en
+    # 2 min » 2026-09-05). body_recv_parse = depuis l'arrivée des en-têtes
+    # jusqu'au body complet parsé : c'est le temps de RÉCEPTION du body par
+    # le pod (réseau/bord/backpressure) + 0,2 s de parsing par 200 Mo mesurés.
+    # service = stockage MinIO & co (détail par fichier : UPLOAD-FILE-PHASES).
+    # Lecture : body_recv_parse long → amont du pod ; service long → MinIO ;
+    # les deux courts mais le navigateur attend → tampon au bord (Envoy).
+    t_phase = time.monotonic()
     form = await request.form
     files = await request.files
+    t_parse_ms = (time.monotonic() - t_phase) * 1000
     if "file" not in files:
         logging.error("No file part!")
         return get_error_data_result(message="No file part!", code=RetCode.ARGUMENT_ERROR)
@@ -631,11 +641,18 @@ async def _upload_local_documents(kb, tenant_id):
         except (json.JSONDecodeError, TypeError):
             parser_config_override = None
 
+    t_phase = time.monotonic()
     err, files = await thread_pool_exec(
         FileService.upload_document, kb, file_objs, tenant_id,
         parent_path=form.get("parent_path"),
         parser_config_override=parser_config_override,
     )
+    t_service_ms = (time.monotonic() - t_phase) * 1000
+    if t_parse_ms + t_service_ms >= 1000 or incoming_bytes >= 8 * 1024 * 1024:
+        logging.info(
+            "UPLOAD-PHASES kb=%s files=%d bytes=%d body_recv_parse=%.0fms service=%.0fms",
+            kb.id, len(file_objs), incoming_bytes, t_parse_ms, t_service_ms,
+        )
     if err:
         msg = "\n".join(err)
         logging.error(msg)
@@ -1437,7 +1454,7 @@ async def update_metadata(tenant_id, dataset_id):
 
     # Apply metadata_condition filtering if provided
     if metadata_condition:
-        metas = DocMetadataService.get_flatted_meta_by_kbs([dataset_id])
+        metas = await thread_pool_exec(DocMetadataService.get_flatted_meta_by_kbs, [dataset_id])
         filtered_ids = set(
             meta_filter(metas, convert_conditions(metadata_condition), metadata_condition.get("logic", "and"))
         )
@@ -2121,6 +2138,50 @@ async def download(dataset_id, document_id):
     if resp is None:
         return construct_json_result(message="This file is empty.", code=RetCode.DATA_ERROR)
     return resp
+
+# CUSTOM B2B SaaS — téléchargement direct par jeton signé (2026-09-05).
+# 1) POST /documents/<id>/download-token : authentifié, RBAC, scopé au
+#    workspace actif ; fait TOUS les contrôles et émet un jeton court qui
+#    porte l'adresse physique du blob.
+# 2) GET /downloads/<token> : public (le jeton EST l'auth), ne touche que le
+#    stockage, réponse streamée avec Content-Length → le navigateur affiche
+#    sa barre de téléchargement native. Cf. api/utils/download_token.py.
+@manager.route("/documents/<document_id>/download-token", methods=["POST"])  # noqa: F821
+@login_required
+@require_permission(Permission.DOCUMENT_READ)
+@add_tenant_id_to_kwargs
+async def issue_document_download_token(tenant_id, document_id):
+    from api.utils.download_token import DOWNLOAD_TOKEN_TTL_S, issue_download_token
+
+    def _resolve():
+        docs = DocumentService.query(id=document_id)
+        if not docs:
+            return None, "Document not found."
+        doc = docs[0]
+        if not KnowledgebaseService.query(tenant_id=tenant_id, id=doc.kb_id):
+            return None, f"You don't own the document {document_id}."
+        bucket, location = File2DocumentService.get_storage_address(doc_id=document_id)
+        return (bucket, location, doc.name, _mimetype_for_document(doc)), None
+
+    resolved, err = await thread_pool_exec(_resolve)
+    if err:
+        return get_error_data_result(message=err)
+    token = issue_download_token(*resolved)
+    return get_json_result(data={"url": f"/api/v1/downloads/{token}", "expires_in": DOWNLOAD_TOKEN_TTL_S})
+
+
+@manager.route("/downloads/<token>", methods=["GET"])  # noqa: F821
+async def download_by_token(token):
+    from api.utils.download_token import verify_download_token
+
+    payload = verify_download_token(token)
+    if payload is None:
+        return get_error_data_result(message="Download link invalid or expired.", code=RetCode.AUTHENTICATION_ERROR)
+    resp = await stream_blob_response(payload["bucket"], payload["name"], payload["filename"], payload["mimetype"])
+    if resp is None:
+        return construct_json_result(message="This file is empty.", code=RetCode.DATA_ERROR)
+    return resp
+
 
 @manager.route("/documents/<document_id>", methods=["GET"])  # noqa: F821
 @login_required

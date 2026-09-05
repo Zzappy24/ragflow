@@ -8,7 +8,10 @@ import {
 import { DocumentType } from '@/constants/knowledge';
 import { useRemoveDocument } from '@/hooks/use-document-request';
 import { IDocumentInfo } from '@/interfaces/database/document';
-import { downloadDatasetDocument } from '@/services/file-manager-service';
+import {
+  downloadDatasetDocument,
+  downloadDocumentDirect,
+} from '@/services/file-manager-service';
 import { formatFileSize } from '@/utils/common-util';
 import { formatDate } from '@/utils/date';
 import { downloadFileFromBlob } from '@/utils/file-util';
@@ -37,6 +40,13 @@ export function DatasetActionCell({
 
   const onDownloadDocument = useCallback(async () => {
     try {
+      // Lien direct par jeton (barre de progression native). Repli sur le
+      // téléchargement par blob si le backend n'expose pas encore la route.
+      try {
+        if (await downloadDocumentDirect(id, record.name)) return;
+      } catch (e) {
+        console.warn('direct download unavailable, falling back to blob:', e);
+      }
       const ext = record.name.split('.').pop()?.toLowerCase() || 'bin';
       const response = await downloadDatasetDocument({
         datasetId: record.dataset_id,

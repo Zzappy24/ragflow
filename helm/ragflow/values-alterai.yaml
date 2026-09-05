@@ -53,10 +53,33 @@ ragflow-api:
   # starvation I/O (CPU idle pendant le hang) et ne montera jamais seul :
   # le plancher minReplicas EST la capacité réelle. RAM ~1,3 Gi/pod, le
   # node GPU a 200+ Gi libres.
-  replicas: 4
+  # Plancher 4 -> 6 après l'incident starvation 2026-09-05 : le HPA restant
+  # aveugle à la starvation I/O (CPU idle pendant le hang), minReplicas EST
+  # la capacité réelle. 6 event loops tolèrent la rafale de listings/graph
+  # d'un utilisateur sur un gros dataset avant blocage total. Le vrai fix
+  # racine reste l'offload des appels bloquants (audit /graph + listings).
+  replicas: 6
   hpa:
-    minReplicas: 4
-    maxReplicas: 6
+    minReplicas: 6
+    maxReplicas: 8
+  # Incident starvation 2026-09-05 : log WARNING toute requête API > 2 s
+  # (hook dans api/apps/__init__.py, donc côté API uniquement — pas
+  # task-executor). Les listings/graph lents deviennent visibles dans les
+  # logs (grep "SLOW"). NB : ne capture QUE les requêtes qui aboutissent ;
+  # un hang total (client reset) ne se termine jamais et n'apparaît pas.
+  extraEnv:
+    - name: SLOW_REQUEST_LOG_MS
+      value: "2000"
+    # Pool Peewee par pod api : 16 (configmap) -> 32. Depuis l'offload des
+    # vues sync en threads (THREAD_POOL_MAX_WORKERS=128), jusqu'à 128 threads
+    # peuvent vouloir une connexion en même temps ; à 16, une rafale de
+    # listings attend DB_POOL_TIMEOUT (10 s) puis part en 500. Les
+    # connexions ne s'ouvrent qu'à la demande (stale_timeout 300 s les
+    # referme) : c'est un plafond, pas un régime. Budget sous
+    # mariadb.maxUserConnections=400 (ci-dessous) : 8 pods api × 32 = 256
+    # + 3 executors × 16 = 48 + mgmt ≈ 320. Si maxReplicas monte, recalculer.
+    - name: DB_POOL_SIZE
+      value: "32"
   # On garde l'API sur le node GPU (alteraiworkergpt1) — les CPU workers
   # (alteraiworker1/2/3) sont saturés (98%, 153% mem requests). Le node
   # GPU a 200+ Gi RAM libre (vLLM utilise les GPU, pas la CPU/RAM).
@@ -219,6 +242,11 @@ ragflow-task-executor:
     maxReplicas: 3
 
 mariadb:
+  # Plafond par utilisateur SQL 'ragflow' (User CR, ALTER USER reconcilié) :
+  # 300 -> 400 pour absorber DB_POOL_SIZE=32 côté api (budget ≈ 320, cf.
+  # ragflow-api.extraEnv). Reste < max_connections=500 du serveur pour que
+  # root et l'exporter gardent leurs slots.
+  maxUserConnections: 400
   enabled: true
   storage: "50Gi"
   replicas: 1

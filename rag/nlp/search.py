@@ -660,7 +660,11 @@ class Dealer:
         )
 
         if rerank_mdl and sres.total > 0:
-            sim, tsim, vsim = self.rerank_by_model(
+            # CUSTOM B2B SaaS — reranker (HTTP vLLM, sync) hors de l'event loop :
+            # appelé inline il figeait le pod api à chaque question de chat avec
+            # reranker (audit starvation 2026-09-05). Pin test_sync_views_offloaded.
+            sim, tsim, vsim = await thread_pool_exec(
+                self.rerank_by_model,
                 rerank_mdl,
                 sres,
                 question,

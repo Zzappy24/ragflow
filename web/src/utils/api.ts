@@ -192,6 +192,10 @@ export default {
     `${restAPIv1}/datasets/${datasetId}/documents/${documentId}`,
   documentThumbnails: `${restAPIv1}/thumbnails`,
   getDocumentFile: `${restAPIv1}/documents`,
+  getDocumentDownloadToken: (documentId: string) =>
+    `${restAPIv1}/documents/${documentId}/download-token`,
+  getFileDownloadToken: (fileId: string) =>
+    `${restAPIv1}/files/${fileId}/download-token`,
   documentUpload: (datasetId: string) =>
     `${restAPIv1}/datasets/${datasetId}/documents`,
   webCrawl: (datasetId: string) =>

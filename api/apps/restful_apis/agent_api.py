@@ -575,7 +575,7 @@ async def delete_agent_session(tenant_id, agent_id):
 async def download_agent_file():
     id = request.args.get("id")
     created_by = request.args.get("created_by")
-    blob = FileService.get_blob(created_by, id)
+    blob = await thread_pool_exec(FileService.get_blob, created_by, id)
     return Response(blob)
 
 
@@ -765,9 +765,9 @@ async def upload_agent_file(agent_id):
     try:
         if len(file_objs) == 1:
             return get_json_result(
-                data=FileService.upload_info(user_id, file_objs[0], request.args.get("url"))
+                data=await thread_pool_exec(FileService.upload_info, user_id, file_objs[0], request.args.get("url"))
             )
-        results = [FileService.upload_info(user_id, file_obj) for file_obj in file_objs]
+        results = [await thread_pool_exec(FileService.upload_info, user_id, file_obj) for file_obj in file_objs]
         return get_json_result(data=results)
     except Exception as exc:
         return server_error_response(exc)
@@ -1900,7 +1900,8 @@ async def webhook(agent_id: str):
                 if len(files) > 10:
                     raise Exception("Too many uploaded files")
                 for key, file in files.items():
-                    desc = FileService.upload_info(
+                    desc = await thread_pool_exec(
+                        FileService.upload_info,
                         cvs.user_id,           # user
                         file,              # FileStorage
                         None                   # url (None for webhook)

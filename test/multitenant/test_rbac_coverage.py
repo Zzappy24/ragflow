@@ -47,6 +47,11 @@ EXEMPT_GET: set[tuple[str, str]] = {
     ("api/apps/restful_apis/connector_api.py", "box_web_oauth_callback"),
     ("api/apps/restful_apis/user_api.py", "oauth_login"),
     ("api/apps/restful_apis/user_api.py", "oauth_callback"),
+    # Téléchargement direct par jeton signé court (60 s) émis par la route
+    # authentifiée POST /documents/<id>/download-token qui a fait tous les
+    # contrôles (existence, workspace, RBAC). Le jeton EST l'auth ; la route
+    # ne touche que le stockage. Cf. api/utils/download_token.py.
+    ("api/apps/restful_apis/document_api.py", "download_by_token"),
     # Liveness / config probes — must be reachable without auth (health checks, k8s).
     ("api/apps/restful_apis/system_api.py", "ping"),
     ("api/apps/restful_apis/system_api.py", "healthz"),
@@ -478,6 +483,11 @@ EXEMPT_GET_RBAC: set[tuple[str, str]] = {
     # EXEMPT for the matching write routes).
     ("api/apps/restful_apis/api_key_api.py", "list_my_api_keys"),
     ("api/apps/restful_apis/user_api.py", "user_info"),
+    # Branding de l'organisation du workspace actif (logo, couleur, nom) —
+    # rendu dans le header de CHAQUE page pour CHAQUE membre : lecture
+    # scopée active_tenant_id(), aucune donnée d'un autre tenant, aucun rôle
+    # à distinguer. Le fichier est custom (DA par organisation, 2026-09-03).
+    ("api/apps/restful_apis/branding_api.py", "get_branding"),
     ("api/apps/restful_apis/user_api.py", "user_setting"),
     ("api/apps/restful_apis/user_api.py", "list_tenants"),
     ("api/apps/restful_apis/user_api.py", "list_tenant_models"),

@@ -85,10 +85,31 @@ async def _readyz():
             return {"ok": False, "reason": "redis"}, 503
     except Exception as exc:  # noqa: BLE001 — best-effort probe
         return {"ok": False, "reason": f"redis:{exc}"}, 503
-    try:
+    # CUSTOM B2B SaaS — audit starvation 2026-09-05 : le SELECT 1 tournait
+    # SUR l'event loop et, pool Peewee saturé, attendait jusqu'à
+    # DB_POOL_TIMEOUT (10 s) > timeoutSeconds de la probe (5 s) → pod marqué
+    # NotReady alors qu'il sert, retrait du LB, report de charge sur les
+    # autres pods : cascade. Le check part en thread, borné à 3 s ; un pool
+    # occupé (MaxConnectionsExceeded / timeout) = pod vivant mais chargé →
+    # 200 dégradé + WARNING. Seule une vraie erreur MariaDB rend 503.
+    import asyncio
+    import logging
+
+    from common.misc_utils import thread_pool_exec
+
+    def _select1():
         with DB.connection_context():
             DB.execute_sql("SELECT 1")
+
+    try:
+        await asyncio.wait_for(thread_pool_exec(_select1), timeout=3)
+    except asyncio.TimeoutError:
+        logging.warning("readyz: mysql check > 3s (pool busy?) — reporting degraded, still ready")
+        return {"ok": True, "degraded": "mysql-slow"}, 200
     except Exception as exc:  # noqa: BLE001
+        if exc.__class__.__name__ == "MaxConnectionsExceeded":
+            logging.warning("readyz: mysql pool exhausted — reporting degraded, still ready")
+            return {"ok": True, "degraded": "mysql-pool-busy"}, 200
         return {"ok": False, "reason": f"mysql:{exc}"}, 503
     return {"ok": True}, 200
 
@@ -154,6 +175,14 @@ _start_flush_token_usage_thread()
 @app.after_serving
 async def _cleanup_infinity_pool():
     import logging
+
+    # CUSTOM B2B SaaS — ne toucher au pool Infinity QUE si Infinity est le
+    # moteur actif. Sinon l'import instancie le singleton module-level qui
+    # cherche INFINITY_CONFIG["uri"] absent -> KeyError bruyant au shutdown
+    # à chaque restart (constaté prod ES, 2026-09-05).
+    from common import settings
+    if not getattr(settings, "DOC_ENGINE_INFINITY", False):
+        return
     try:
         from common.doc_store.infinity_conn_pool import InfinityConnectionPool
         pool = InfinityConnectionPool()  # singleton

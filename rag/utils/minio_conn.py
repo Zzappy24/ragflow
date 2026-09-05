@@ -227,6 +227,16 @@ class RAGFlowMinio:
 
         return _iter()
 
+    # CUSTOM B2B SaaS — taille d'un objet (Content-Length des downloads
+    # streamés → barre de progression native du navigateur). None si absent.
+    @use_default_bucket
+    @use_prefix_path
+    def obj_size(self, bucket, filename, tenant_id=None):
+        try:
+            return int(self.conn.stat_object(bucket, filename).size)
+        except Exception:
+            return None
+
     @use_default_bucket
     @use_prefix_path
     def obj_exist(self, bucket, filename, tenant_id=None):

@@ -140,7 +140,7 @@ async def delete_datasets(tenant_id: str, ids: list = None, delete_all: bool = F
     success_count = 0
     for kb_id, kb in kb_id_instance_pairs:
         for doc in DocumentService.query(kb_id=kb_id):
-            if not DocumentService.remove_document(doc, tenant_id):
+            if not await thread_pool_exec(DocumentService.remove_document, doc, tenant_id):
                 errors.append(f"Remove document '{doc.id}' error for dataset '{kb_id}'")
                 continue
             f2d = File2DocumentService.get_by_document_id(doc.id)
@@ -1089,7 +1089,7 @@ async def search(dataset_id: str, tenant_id: str, req: dict):
                 ranks["chunks"].insert(0, ck)
         except Exception:
             logging.warning("search KG retrieval failed: dataset=%s tenant=%s", dataset_id, tenant_id, exc_info=True)
-    ranks["chunks"] = settings.retriever.retrieval_by_children(ranks["chunks"], tenant_ids)
+    ranks["chunks"] = await thread_pool_exec(settings.retriever.retrieval_by_children, ranks["chunks"], tenant_ids)
     ranks["total"] = len(ranks["chunks"])
 
     for c in ranks["chunks"]:
@@ -1460,7 +1460,7 @@ async def search_datasets(tenant_id: str, req: dict):
                 ranks["chunks"].insert(0, ck)
         except Exception:
             logging.warning("search_datasets KG retrieval failed: datasets=%s tenant=%s", kb_ids, tenant_id, exc_info=True)
-    ranks["chunks"] = settings.retriever.retrieval_by_children(ranks["chunks"], tenant_ids)
+    ranks["chunks"] = await thread_pool_exec(settings.retriever.retrieval_by_children, ranks["chunks"], tenant_ids)
     ranks["total"] = len(ranks["chunks"])
 
     for c in ranks["chunks"]:

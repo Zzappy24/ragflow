@@ -26,6 +26,7 @@ from functools import partial
 from timeit import default_timer as timer
 from langfuse import Langfuse, propagate_attributes
 from peewee import fn
+from common.misc_utils import thread_pool_exec
 from api.db.services.file_service import FileService
 from common.constants import LLMType, ParserType, StatusEnum
 from api.db.db_models import DB, Dialog
@@ -733,7 +734,7 @@ async def async_chat(dialog, messages, stream=True, **kwargs):
                     cks = await retriever.retrieval_by_toc(" ".join(questions), kbinfos["chunks"], tenant_ids, chat_mdl, dialog.top_n)
                     if cks:
                         kbinfos["chunks"] = cks
-                kbinfos["chunks"] = retriever.retrieval_by_children(kbinfos["chunks"], tenant_ids)
+                kbinfos["chunks"] = await thread_pool_exec(retriever.retrieval_by_children, kbinfos["chunks"], tenant_ids)
             if use_web_search:
                 tav = Tavily(prompt_config["tavily_api_key"])
                 tav_res = tav.retrieve_chunks(" ".join(questions))

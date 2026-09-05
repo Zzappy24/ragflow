@@ -19,6 +19,7 @@ from functools import wraps
 
 from quart import request
 
+from common.misc_utils import thread_pool_exec
 from api.apps import login_required, current_user
 from api.apps.extensions.rbac import Permission, require_permission
 from api.utils.api_utils import get_json_result, get_data_error_result, get_request_json, server_error_response, validate_request
@@ -111,7 +112,7 @@ def _register_commit_routes(prefix, param_name, resolver_type=None):
         folder_id = _resolve(entity_id)
         req = await get_request_json()
         try:
-            commit = FileCommitService.create_commit(
+            commit = await thread_pool_exec(FileCommitService.create_commit,
                 folder_id=folder_id,
                 author_id=current_user.id,
                 message=req["message"],
@@ -282,7 +283,7 @@ def _register_commit_routes(prefix, param_name, resolver_type=None):
                 return get_data_error_result("Commit not found")
             if commit.folder_id != folder_id:
                 return get_data_error_result("Commit not found in workspace")
-            content = FileCommitService.get_commit_file_content(folder_id, commit_id, file_id)
+            content = await thread_pool_exec(FileCommitService.get_commit_file_content, folder_id, commit_id, file_id)
             if content is None:
                 return get_data_error_result("File not found in this commit")
             return get_json_result(data={"content": content.decode("utf-8", errors="replace")})

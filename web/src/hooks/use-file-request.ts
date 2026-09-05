@@ -5,7 +5,9 @@ import {
   IFolder,
 } from '@/interfaces/database/file-manager';
 import { IConnectRequestBody } from '@/interfaces/request/file-manager';
-import fileManagerService from '@/services/file-manager-service';
+import fileManagerService, {
+  downloadFileDirect,
+} from '@/services/file-manager-service';
 import { downloadFileFromBlob } from '@/utils/file-util';
 import {
   keepPreviousData,
@@ -254,6 +256,13 @@ export const useDownloadFile = () => {
   } = useMutation({
     mutationKey: [FileApiAction.DownloadFile],
     mutationFn: async (params: { id: string; filename?: string }) => {
+      // Lien direct par jeton (barre de progression native) ; repli blob si
+      // le backend n'expose pas encore la route.
+      try {
+        if (await downloadFileDirect(params.id, params.filename ?? '')) return;
+      } catch (e) {
+        console.warn('direct download unavailable, falling back to blob:', e);
+      }
       const response = await fileManagerService.getFile({}, params.id);
       const blob = new Blob([response.data], { type: response.data.type });
       downloadFileFromBlob(blob, params.filename);

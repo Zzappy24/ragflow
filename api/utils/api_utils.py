@@ -16,7 +16,6 @@
 
 import asyncio
 import functools
-import inspect
 import json
 import logging
 import os
@@ -56,7 +55,7 @@ from api.db.services.tenant_llm_service import LLMFactoriesService
 from common.connection_utils import timeout
 from common.constants import RetCode
 from common import settings
-from common.misc_utils import thread_pool_exec
+from common.misc_utils import thread_pool_exec, call_view  # noqa: F401 — call_view : vues sync hors event loop, cf. misc_utils
 
 requests.models.complexjson.dumps = functools.partial(json.dumps, cls=CustomJSONEncoder)
 
@@ -201,13 +200,12 @@ def validate_request(*args, **kwargs):
             errs = process_args(input_arguments)
             if errs:
                 return get_json_result(code=RetCode.ARGUMENT_ERROR, message=errs)
-            if inspect.iscoroutinefunction(func):
-                return await func(*_args, **_kwargs)
-            return func(*_args, **_kwargs)
+            return await call_view(func, *_args, **_kwargs)
 
         return decorated_function
 
     return wrapper
+
 
 
 def not_allowed_parameters(*params):
@@ -217,9 +215,7 @@ def not_allowed_parameters(*params):
             for param in params:
                 if param in input_arguments:
                     return get_json_result(code=RetCode.ARGUMENT_ERROR, message=f"Parameter {param} isn't allowed")
-            if inspect.iscoroutinefunction(func):
-                return await func(*args, **kwargs)
-            return func(*args, **kwargs)
+            return await call_view(func, *args, **kwargs)
         return wrapper
 
     return decorator
@@ -236,9 +232,7 @@ def active_required(func):
         # check is_active
         if not usr or not usr.is_active == ActiveEnum.ACTIVE.value:
             return get_json_result(code=RetCode.FORBIDDEN, message="User isn't active, please activate first.")
-        if inspect.iscoroutinefunction(func):
-            return await func(*args, **kwargs)
-        return func(*args, **kwargs)
+        return await call_view(func, *args, **kwargs)
 
     return wrapper
 
@@ -257,9 +251,7 @@ def add_tenant_id_to_kwargs(func):
         from api.apps import current_user
         from api.utils.tenant_context import maybe_active_tenant_id
         kwargs["tenant_id"] = maybe_active_tenant_id() or current_user.id
-        if inspect.iscoroutinefunction(func):
-            return await func(**kwargs)
-        return func(**kwargs)
+        return await call_view(func, **kwargs)
     return wrapper
 
 
@@ -297,10 +289,7 @@ def apikey_required(func):
         except Exception:
             pass  # no scope entry = legacy token, allow through
 
-        if inspect.iscoroutinefunction(func):
-            return await func(*args, **kwargs)
-
-        return func(*args, **kwargs)
+        return await call_view(func, *args, **kwargs)
 
     return decorated_function
 
@@ -405,10 +394,7 @@ def token_required(func):
             except Exception:
                 pass  # no scope = legacy token, allow through
 
-            result = func(*args, **kwargs)
-            if inspect.iscoroutine(result):
-                return await result
-            return result
+            return await call_view(func, *args, **kwargs)
 
         # Fallback: try login token (for clients that use login token as API token)
         # Login tokens are JWT-encoded (URLSafeTimedSerializer), need to decode to get raw access_token
@@ -455,10 +441,7 @@ def token_required(func):
             # Auth succeeded — call the route OUTSIDE the try/except so any
             # exception from the route propagates normally and is not swallowed
             # and misreported as "API key is invalid!".
-            result = func(*args, **kwargs)
-            if inspect.iscoroutine(result):
-                return await result
-            return result
+            return await call_view(func, *args, **kwargs)
 
         err = WerkzeugUnauthorized(description="Authentication error: API key is invalid!")
         err.code = RetCode.AUTHENTICATION_ERROR

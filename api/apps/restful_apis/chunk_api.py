@@ -211,7 +211,7 @@ async def parse(tenant_id, dataset_id):
         doc = doc.to_dict()
         doc["tenant_id"] = tenant_id
         bucket, name = File2DocumentService.get_storage_address(doc_id=doc["id"])
-        queue_tasks(doc, bucket, name, 0)
+        await thread_pool_exec(queue_tasks, doc, bucket, name, 0)
         success_count += 1
     if not_found:
         return get_result(message=f"Documents not found: {not_found}", code=RetCode.DATA_ERROR)
@@ -318,7 +318,7 @@ async def retrieval_test(tenant_id):
     if not doc_ids:
         metadata_condition = req.get("metadata_condition")
         if metadata_condition:
-            metas = DocMetadataService.get_flatted_meta_by_kbs(kb_ids)
+            metas = await thread_pool_exec(DocMetadataService.get_flatted_meta_by_kbs, kb_ids)
             doc_ids = meta_filter(metas, convert_conditions(metadata_condition), metadata_condition.get("logic", "and"))
             if not doc_ids and metadata_condition.get("conditions"):
                 return get_result(data={"total": 0, "chunks": [], "doc_aggs": {}})
@@ -370,7 +370,7 @@ async def retrieval_test(tenant_id):
             cks = await settings.retriever.retrieval_by_toc(question, ranks["chunks"], tenant_ids, LLMBundle(kb.tenant_id, chat_model_config), size)
             if cks:
                 ranks["chunks"] = cks
-        ranks["chunks"] = settings.retriever.retrieval_by_children(ranks["chunks"], tenant_ids)
+        ranks["chunks"] = await thread_pool_exec(settings.retriever.retrieval_by_children, ranks["chunks"], tenant_ids)
         if use_kg:
             chat_model_config = get_tenant_default_model_by_type(kb.tenant_id, LLMType.CHAT)
             ck = await settings.kg_retriever.retrieval(question, [k.tenant_id for k in kbs], kb_ids, embd_mdl, LLMBundle(kb.tenant_id, chat_model_config))
@@ -578,7 +578,7 @@ async def add_chunk(tenant_id, dataset_id, document_id):
     embd_id = DocumentService.get_embd_id(document_id)
     model_config = get_model_config_from_provider_instance(dataset_tenant_id, LLMType.EMBEDDING.value, embd_id)
     embd_mdl = TenantLLMService.model_instance(model_config)
-    v, c = embd_mdl.encode([doc.name, req["content"] if not d["question_kwd"] else "\n".join(d["question_kwd"])])
+    v, c = await thread_pool_exec(embd_mdl.encode, [doc.name, req["content"] if not d["question_kwd"] else "\n".join(d["question_kwd"])])
     v = 0.1 * v[0] + 0.9 * v[1]
     d[f"q_{len(v)}_vec"] = v.tolist()
     await thread_pool_exec(settings.docStoreConn.insert, [d], search.index_name(dataset_tenant_id), dataset_id)
@@ -625,7 +625,7 @@ async def rm_chunk(tenant_id, dataset_id, document_id):
     if not chunk_ids:
         if req.get("delete_all") is True:
             doc = docs[0]
-            DocumentService.delete_chunk_images(doc, dataset_tenant_id)
+            await thread_pool_exec(DocumentService.delete_chunk_images, doc, dataset_tenant_id)
             chunk_number = await thread_pool_exec(settings.docStoreConn.delete, {"doc_id": document_id}, search.index_name(dataset_tenant_id), dataset_id)
             if chunk_number != 0:
                 DocumentService.decrement_chunk_num(document_id, dataset_id, 1, chunk_number, 0)
@@ -726,7 +726,8 @@ async def update_chunk(tenant_id, dataset_id, document_id, chunk_id):
         q, a = rmPrefix(arr[0]), rmPrefix(arr[1])
         d = beAdoc(d, arr[0], arr[1], not any([rag_tokenizer.is_chinese(t) for t in q + a]))
 
-    v, _ = embd_mdl.encode(
+    v, _ = await thread_pool_exec(
+        embd_mdl.encode,
         [
             doc.name,
             d["content_with_weight"] if not d.get("question_kwd") else "\n".join(d["question_kwd"]),

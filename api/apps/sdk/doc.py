@@ -153,7 +153,7 @@ async def update_doc(tenant_id, dataset_id, document_id):
     if "meta_fields" in req:
         if not isinstance(req["meta_fields"], dict):
             return get_error_data_result(message="meta_fields must be a dictionary")
-        if not DocMetadataService.update_document_metadata(document_id, req["meta_fields"]):
+        if not await thread_pool_exec(DocMetadataService.update_document_metadata, document_id, req["meta_fields"]):
             return get_error_data_result(message="Failed to update metadata")
 
     if "name" in req and req["name"] != doc.name:
@@ -456,7 +456,7 @@ async def parse(tenant_id, dataset_id):
         doc = doc.to_dict()
         doc["tenant_id"] = tenant_id
         bucket, name = File2DocumentService.get_storage_address(doc_id=doc["id"])
-        queue_tasks(doc, bucket, name, 0)
+        await thread_pool_exec(queue_tasks, doc, bucket, name, 0)
         success_count += 1
     if not_found:
         return get_result(message=f"Documents not found: {not_found}", code=RetCode.DATA_ERROR)
@@ -680,7 +680,7 @@ async def update_chunk(tenant_id, dataset_id, document_id, chunk_id):
         q, a = rmPrefix(arr[0]), rmPrefix(arr[1])
         d = beAdoc(d, arr[0], arr[1], not any([rag_tokenizer.is_chinese(t) for t in q + a]))
 
-    v, c = embd_mdl.encode([doc.name, d["content_with_weight"] if not d.get("question_kwd") else "\n".join(d["question_kwd"])])
+    v, c = await thread_pool_exec(embd_mdl.encode, [doc.name, d["content_with_weight"] if not d.get("question_kwd") else "\n".join(d["question_kwd"])])
     v = 0.1 * v[0] + 0.9 * v[1] if doc.parser_id != ParserType.QA else v[1]
     d["q_%d_vec" % len(v)] = v.tolist()
     await thread_pool_exec(settings.docStoreConn.update, {"id": chunk_id}, d, search.index_name(tenant_id), dataset_id)
@@ -895,7 +895,7 @@ async def retrieval_test(tenant_id):
     if not doc_ids:
         metadata_condition = req.get("metadata_condition")
         if metadata_condition:
-            metas = DocMetadataService.get_flatted_meta_by_kbs(kb_ids)
+            metas = await thread_pool_exec(DocMetadataService.get_flatted_meta_by_kbs, kb_ids)
             doc_ids = meta_filter(metas, convert_conditions(metadata_condition), metadata_condition.get("logic", "and"))
             # If metadata_condition has conditions but no docs match, return empty result
             if not doc_ids and metadata_condition.get("conditions"):
@@ -971,7 +971,7 @@ async def retrieval_test(tenant_id):
             cks = await settings.retriever.retrieval_by_toc(question, ranks["chunks"], tenant_ids, chat_mdl, size)
             if cks:
                 ranks["chunks"] = cks
-        ranks["chunks"] = settings.retriever.retrieval_by_children(ranks["chunks"], tenant_ids)
+        ranks["chunks"] = await thread_pool_exec(settings.retriever.retrieval_by_children, ranks["chunks"], tenant_ids)
         if use_kg:
             chat_model_config = get_tenant_default_model_by_type(kb.tenant_id, LLMType.CHAT)
             ck = await settings.kg_retriever.retrieval(question, [k.tenant_id for k in kbs], kb_ids, embd_mdl, LLMBundle(kb.tenant_id, chat_model_config))

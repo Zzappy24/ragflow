@@ -3,7 +3,6 @@ api/apps/extensions/audit.py
 Audit log decorator for route functions.
 """
 from functools import wraps
-import inspect
 
 
 def audit_log(action: str, resource_type: str = None):
@@ -14,12 +13,9 @@ def audit_log(action: str, resource_type: str = None):
     def decorator(func):
         @wraps(func)
         async def wrapper(*args, **kwargs):
-            if inspect.iscoroutinefunction(func):
-                result = await func(*args, **kwargs)
-            else:
-                result = func(*args, **kwargs)
-                if inspect.iscoroutine(result):
-                    result = await result
+            # CUSTOM B2B SaaS — vue sync offloadée hors de l'event loop (cf. call_view)
+            from api.utils.api_utils import call_view
+            result = await call_view(func, *args, **kwargs)
             try:
                 from api.db.services.audit_service import AuditService
                 from api.apps.extensions.rbac import resolve_workspace_from_tenant, _extract_user_id
