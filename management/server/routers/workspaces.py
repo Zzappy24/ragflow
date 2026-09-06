@@ -209,6 +209,7 @@ def restore_workspace_route(request: Request, org_id: str, ws_id: str, user_id: 
 
 @router.delete("/orgs/{org_id}/workspaces/{ws_id}/purge", status_code=status.HTTP_204_NO_CONTENT)
 def purge_workspace_route(
+    request: Request,
     org_id: str,
     ws_id: str,
     confirm: str = "",
@@ -232,6 +233,19 @@ def purge_workspace_route(
     if not ok or not ws or ws.org_id != org_id:
         raise HTTPException(status_code=404, detail="Workspace not found")
     purge_workspace(ws_id)
+
+    # CUSTOM B2B SaaS — une purge est l'acte le plus lourd du panel : tracé
+    # comme ORG_PURGE (avant, seule la purge d'organisation était auditée).
+    audit_svc.record(
+        request=request,
+        actor_user_id=user.id,
+        action=audit_svc.WS_PURGE,
+        org_id=org_id,
+        workspace_id=ws_id,
+        resource_type="workspace",
+        resource_id=ws_id,
+        details={"target_display_name": ws.name, "name": ws.name, "tenant_id": ws.tenant_id},
+    )
 
 
 @router.get("/workspaces/{ws_id}", response_model=WsResponse)

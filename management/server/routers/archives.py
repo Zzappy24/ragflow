@@ -403,7 +403,7 @@ def purge_archived_org(request: Request, org_id: str, confirm: str = "", user=De
 
 
 @router.delete("/archives/workspaces/{ws_id}/purge", status_code=status.HTTP_204_NO_CONTENT)
-def purge_archived_workspace(ws_id: str, confirm: str = "", user=Depends(require_superuser)):
+def purge_archived_workspace(request: Request, ws_id: str, confirm: str = "", user=Depends(require_superuser)):
     if confirm != "DELETE":
         raise HTTPException(status_code=400, detail="Purge requires ?confirm=DELETE")
 
@@ -415,6 +415,18 @@ def purge_archived_workspace(ws_id: str, confirm: str = "", user=Depends(require
         raise HTTPException(status_code=404, detail="Workspace not found")
 
     purge_workspace(ws_id)
+
+    # CUSTOM B2B SaaS — tracé comme ORG_PURGE ci-dessus (avant, non audité).
+    audit_svc.record(
+        request=request,
+        actor_user_id=user.id,
+        action=audit_svc.WS_PURGE,
+        org_id=ws.org_id,
+        workspace_id=ws_id,
+        resource_type="workspace",
+        resource_id=ws_id,
+        details={"target_display_name": _strip_deleted(ws.name), "name": _strip_deleted(ws.name), "tenant_id": ws.tenant_id},
+    )
 
 
 @router.delete("/archives/users/{user_id}/purge", status_code=status.HTTP_204_NO_CONTENT)

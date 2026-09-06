@@ -210,3 +210,22 @@ class TestInternalRoute:
         body = _func_source(INTERNAL_API, "internal_purge_workspace_data")
         assert body.index("_check_internal_secret()") < body.index("purge_tenant_content")
         assert "thread_pool_exec(purge_tenant_content" in body, "la purge est bloquante : hors event loop"
+
+    def test_internal_prefix_is_blocked_at_the_edge(self):
+        """Le nginx du front (seul chemin depuis internet) répond 404 sur
+        /api/v1/internal/ : le secret partagé n'est plus la seule barrière."""
+        conf = (ROOT / "helm/ragflow/charts/ragflow-frontend/templates/configmap-nginx.yaml").read_text()
+        block = conf.index("location ^~ /api/v1/internal/")
+        assert "return 404;" in conf[block:block + 200]
+        assert block < conf.index("location /api/ {"), "le blocage doit précéder le proxy générique"
+
+
+class TestPurgeIsAudited:
+    @pytest.mark.parametrize("path,func", [
+        (ROOT / "management/server/routers/workspaces.py", "purge_workspace_route"),
+        (ROOT / "management/server/routers/archives.py", "purge_archived_workspace"),
+    ])
+    def test_single_workspace_purge_records_ws_purge(self, path, func):
+        body = _func_source(path, func)
+        assert "audit_svc.WS_PURGE" in body, f"{func} doit tracer WS_PURGE (comme ORG_PURGE)"
+        assert body.index("purge_workspace(ws_id)") < body.index("audit_svc.record("), "auditer après une purge réussie"

@@ -36,6 +36,16 @@ data:
         try_files $uri =404;
       }
 
+      # CUSTOM B2B SaaS — routes service-à-service (/api/v1/internal/*,
+      # secret partagé : vérification de modèle, scan de stockage, purge d'un
+      # tenant) : jamais joignables depuis le bord. Tout le trafic externe
+      # passe par ce nginx ; le panel joint l'API en direct (Service K8s),
+      # pas par ici. Sans ce bloc, le secret était la seule barrière.
+      # `^~` : prioritaire sur les locations regex (assets) pour ce préfixe.
+      location ^~ /api/v1/internal/ {
+        return 404;
+      }
+
       # Forward backend calls to ragflow-api Service. Keep buffering off
       # for the streaming endpoints (chat completions SSE, agent run).
       location /api/ {
