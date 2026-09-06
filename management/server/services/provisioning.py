@@ -469,6 +469,14 @@ def deprovision_user(user_id: str) -> None:
             status="0",
             email=f"{user.email}___deleted___{ts}",
         ).where(User.id == user_id).execute()
+        # CUSTOM B2B SaaS — ses clés API meurent avec lui : elles restaient
+        # utilisables (et retombaient sur l'utilisateur technique du tenant)
+        # après le départ (audit 2026-09-06).
+        from api.db.db_models import APIToken, ApiKeyScope
+        tokens = [s.token for s in ApiKeyScope.select(ApiKeyScope.token).where(ApiKeyScope.created_by == user_id)]
+        if tokens:
+            ApiKeyScope.update(status="0").where(ApiKeyScope.created_by == user_id).execute()
+            APIToken.delete().where(APIToken.token.in_(tokens)).execute()
 
 
 def grant_workspace_access(ws, target_user_id: str, role: str, member_id: str):

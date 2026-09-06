@@ -112,10 +112,12 @@ async def login():
     users = UserService.query(email=email)
     if not users:
         logging.warning("Login failed: email not registered")
+        # CUSTOM B2B SaaS — même message que « mauvais mot de passe » : plus
+        # d'énumération des comptes par la page de login (audit 2026-09-06).
         return get_json_result(
             data=False,
             code=RetCode.AUTHENTICATION_ERROR,
-            message=f"Email: {email} is not registered!",
+            message="Email and password do not match!",
         )
 
     password = json_body.get("password")
@@ -573,6 +575,15 @@ async def setting_user():
             if pwd_error:
                 return get_json_result(data=False, message=pwd_error, code=RetCode.ARGUMENT_ERROR)
             update_dict["password"] = generate_password_hash(plain_new)
+            # CUSTOM B2B SaaS — un changement de mot de passe révoque les autres
+            # sessions (token signé volé → gardait l'accès, audit 2026-09-06).
+            # Le navigateur courant reste connecté par le cookie de session,
+            # dont le lien avec le nouveau token est mis à jour ici.
+            update_dict["access_token"] = get_uuid()
+            try:
+                session["_access_token"] = update_dict["access_token"]
+            except Exception:
+                pass
 
     for k in request_data.keys():
         if k in [
@@ -1250,6 +1261,11 @@ async def forget_reset_password():
     user = users[0]
     try:
         UserService.update_user_password(user.id, new_pwd_base64)
+        # CUSTOM B2B SaaS — la réinitialisation révoque TOUTES les sessions
+        # existantes (rotation du secret derrière le token signé ; audit
+        # 2026-09-06). Le construct_response ci-dessous signe le nouveau.
+        UserService.update_by_id(user.id, {"access_token": get_uuid()})
+        ok_u, user = UserService.get_by_id(user.id)
     except Exception as e:
         logging.exception(e)
         return get_json_result(data=False, code=RetCode.EXCEPTION_ERROR, message="failed to reset password")

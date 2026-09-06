@@ -65,7 +65,21 @@ class MCPToolCallSession(ToolCallSession):
         asyncio.run_coroutine_threadsafe(self._mcp_server_loop(), self._event_loop)
 
     async def _mcp_server_loop(self) -> None:
+        # CUSTOM B2B SaaS — l'URL n'était validée qu'à l'enregistrement : à
+        # chaque connexion, re-validation + épinglage DNS global (rebinding vers
+        # un service interne — audit 2026-09-06).
         url = self._mcp_server.url.strip()
+        from common.ssrf_guard import assert_url_is_safe, pin_dns_global
+        try:
+            _host, _ip = assert_url_is_safe(url)
+        except ValueError as e:
+            logging.warning("MCP server %s rejected by the SSRF guard: %s", getattr(self._mcp_server, "id", "?"), e)
+            await self._process_mcp_tasks(None, "MCP server URL rejected by the platform's network policy")
+            return
+        with pin_dns_global(_host, _ip):
+            await self._mcp_server_loop_unpinned(url)
+
+    async def _mcp_server_loop_unpinned(self, url: str) -> None:
         raw_headers: dict[str, str] = self._mcp_server.headers or {}
         custom_header: dict[str, str] = self._custom_header or {}
         headers: dict[str, str] = {}

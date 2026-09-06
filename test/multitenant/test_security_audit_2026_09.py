@@ -245,6 +245,55 @@ class TestLot2Idor:
         assert "raw=%r" not in src
 
 
+class TestLot3SsrfAndSessions:
+    def test_provider_url_guard_allows_platform_hosts_only(self, monkeypatch):
+        from common import provider_url_guard as g
+        monkeypatch.setenv("VLLM_CHAT_BASE_URL", "http://vllm-router-service.vllm.svc.cluster.local/v1")
+        g.assert_provider_base_url_allowed("http://vllm-router-service.vllm.svc.cluster.local/v1")  # plateforme
+        g.assert_provider_base_url_allowed("")  # vide = défaut du fournisseur
+        with pytest.raises(ValueError):
+            g.assert_provider_base_url_allowed("http://127.0.0.1:9200")
+        with pytest.raises(ValueError):
+            g.assert_provider_base_url_allowed("http://169.254.169.254/latest/meta-data")
+
+    @pytest.mark.parametrize("rel,needle", [
+        ("agent/tools/exesql.py", "assert_host_is_safe(str(self._param.host))"),
+        ("agent/tools/email.py", "assert_host_is_safe(str(self._param.smtp_server))"),
+        ("agent/component/browser.py", "assert_url_is_safe(url)"),
+        ("agent/component/browser.py", "build_opener(_NoRedirect())"),
+        ("api/apps/restful_apis/agent_api.py", 'assert_host_is_safe(str(req["host"]))'),
+        ("api/apps/services/provider_api_service.py", "assert_provider_base_url_allowed(base_url)"),
+        ("management/server/routers/models.py", "_assert_api_base_allowed(body.api_base, user)"),
+        ("common/mcp_tool_call_conn.py", "pin_dns_global(_host, _ip)"),
+        ("agent/component/agent_with_tools.py", 'get_or_none(id=mcp["mcp_id"], tenant_id=self._canvas.get_tenant_id())'),
+        ("common/data_source/rest_api_connector.py", "raise ConnectorValidationError(msg) from exc"),
+    ])
+    def test_ssrf_sinks_are_guarded(self, rel, needle):
+        assert needle in _src(rel), f"{rel} : garde SSRF absente ({needle})"
+
+    def test_every_sync_connector_validates_settings(self):
+        src = _src("rag/svr/sync_data_source.py")
+        for ctor in ("ConfluenceConnector(", "WebDAVConnector(", "MoodleConnector(", "ImapConnector("):
+            i = src.index("self.connector = " + ctor)
+            assert "self.connector.validate_connector_settings()" in src[i:i + 1200], f"{ctor} sans validate_connector_settings()"
+
+    def test_session_cookie_bound_to_access_token(self):
+        assert 'session["_access_token"] = str(getattr(user, "access_token", "") or "").strip()' in _func("api/apps/__init__.py", "login_user")
+        assert 'session.get("_access_token") != access_token' in _func("api/apps/__init__.py", "_load_user_from_session")
+        assert 'session.pop("_access_token", None)' in _func("api/apps/__init__.py", "logout_user")
+
+    def test_password_change_and_reset_rotate_access_token(self):
+        assert 'update_dict["access_token"] = get_uuid()' in _func("api/apps/restful_apis/user_api.py", "setting_user")
+        assert 'UserService.update_by_id(user.id, {"access_token": get_uuid()})' in _func("api/apps/restful_apis/user_api.py", "forget_reset_password")
+
+    def test_login_does_not_reveal_unknown_emails(self):
+        assert "is not registered" not in _func("api/apps/restful_apis/user_api.py", "login")
+
+    def test_deprovision_kills_user_api_keys(self):
+        body = _func("management/server/services/provisioning.py", "deprovision_user")
+        assert "ApiKeyScope.update(status=\"0\")" in body and "APIToken.delete()" in body
+
+
 class TestFrontXss:
     def test_preprocess_latex_decodes_entities_only_inside_math(self):
         src = _src("web/src/utils/chat.ts")

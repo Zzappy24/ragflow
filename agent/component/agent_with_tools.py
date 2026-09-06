@@ -100,7 +100,13 @@ class Agent(LLM, ToolBase):
 
         tool_idx = len(self.tools)
         for mcp in self._param.mcp:
-            _, mcp_server = MCPServerService.get_by_id(mcp["mcp_id"])
+            # CUSTOM B2B SaaS — serveur MCP du tenant du canvas uniquement : un
+            # mcp_id étranger dans le DSL pilotait le serveur (et son jeton)
+            # d'un autre workspace (audit 2026-09-06).
+            mcp_server = MCPServerService.get_or_none(id=mcp["mcp_id"], tenant_id=self._canvas.get_tenant_id())
+            if mcp_server is None:
+                logging.warning("MCP server %s is not in this workspace, skipped", mcp.get("mcp_id"))
+                continue
             custom_header = self._param.custom_header
             tool_call_session = MCPToolCallSession(mcp_server, mcp_server.variables, custom_header)
             for tnm, meta in mcp["tools"].items():

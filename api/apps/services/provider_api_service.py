@@ -43,6 +43,11 @@ def _factory_model_types(llm: dict) -> list[str]:
 
 
 def _normalize_provider_base_url(provider_name: str, base_url: str | None):
+    # CUSTOM B2B SaaS — garde SSRF : base_url fourni par un ws_admin (client),
+    # le pod api y instancie un client HTTP ; hôtes internes refusés sauf les
+    # fournisseurs de la plateforme (audit 2026-09-06). ValueError → 4xx.
+    from common.provider_url_guard import assert_provider_base_url_allowed
+    assert_provider_base_url_allowed(base_url)
     if provider_name != "VLLM" or not base_url:
         return base_url
     base_url = base_url.strip().rstrip("/")

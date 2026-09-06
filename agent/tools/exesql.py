@@ -123,6 +123,11 @@ class ExeSQL(ToolBase, ABC):
         if self.check_if_canceled("ExeSQL processing"):
             return
 
+        # CUSTOM B2B SaaS — hôte public obligatoire : host/port/identifiants
+        # viennent du DSL, les drivers sondaient MariaDB/Infinity/Redis du
+        # cluster et renvoyaient l'erreur à l'utilisateur (audit 2026-09-06).
+        from common.ssrf_guard import assert_host_is_safe
+        assert_host_is_safe(str(self._param.host))
         sqls = sql.split(";")
         if self._param.db_type in ["mysql", "mariadb"]:
             db = pymysql.connect(db=self._param.database, user=self._param.username, host=self._param.host,

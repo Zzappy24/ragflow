@@ -56,6 +56,24 @@ def _display_name(factory: str, llm_name: str) -> str:
     return llm_name
 
 
+def _assert_api_base_allowed(api_base, user) -> None:
+    """CUSTOM B2B SaaS — garde SSRF sur api_base (audit 2026-09-06).
+
+    Un ws_admin (client) déclarait un fournisseur avec api_base =
+    http://ragflow-es:9200, kubernetes.default.svc, 169.254.169.254… : le pod
+    api sondait la cible et renvoyait l'erreur. Hôtes non publics refusés,
+    sauf les fournisseurs de la plateforme (VLLM_*_BASE_URL) ; le superuser
+    reste libre (c'est lui qui câble l'infra interne).
+    """
+    if not api_base or getattr(user, "is_superuser", False):
+        return
+    from common.provider_url_guard import assert_provider_base_url_allowed
+    try:
+        assert_provider_base_url_allowed(api_base)
+    except ValueError as e:
+        raise HTTPException(status_code=400, detail=f"api_base rejected: {e}")
+
+
 def _get_ws_tenant(ws_id: str) -> str:
     """Return tenant_id for the workspace or raise 404."""
     from api.db.services.workspace_service import WorkspaceService
@@ -204,8 +222,9 @@ def add_workspace_provider(
     The llm_name is stored with the factory suffix automatically
     (e.g. "llama3___VLLM" for VLLM factory) — mirroring RAGFlow's add_llm.
     """
-    require_ws_admin(ws_id, user_id)
+    user = require_ws_admin(ws_id, user_id)
     tenant_id = _get_ws_tenant(ws_id)
+    _assert_api_base_allowed(body.api_base, user)
 
     from api.db.services.tenant_llm_service import TenantLLMService
     from api.db.db_models import TenantLLM
@@ -267,6 +286,7 @@ def update_workspace_provider(
     body: WsLlmProviderUpdate,
     user_id: str = Depends(get_current_user_id),
 ):
+    _assert_api_base_allowed(getattr(body, "api_base", None), require_ws_admin(ws_id, user_id))
     """Update an existing LLM model configuration (api_key, api_base, max_tokens, is_tools)."""
     require_ws_admin(ws_id, user_id)
     tenant_id = _get_ws_tenant(ws_id)
@@ -450,7 +470,8 @@ async def verify_workspace_model(
     factories — including the OpenAI-compatible one used for Ollama/vLLM.
     This handler is async so we can `await` the streaming generator.
     """
-    require_ws_admin(ws_id, user_id)
+    user = require_ws_admin(ws_id, user_id)
+    _assert_api_base_allowed(body.api_base, user)
 
     # CUSTOM B2B SaaS — the slim management image (Dockerfile.management)
     # does NOT ship rag.llm (would pull litellm + ~200 MB of LLM SDKs).

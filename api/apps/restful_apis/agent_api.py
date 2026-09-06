@@ -1122,6 +1122,10 @@ async def rerun_agent(tenant_id):
 async def test_db_connection():
     req = await get_request_json()
     try:
+        # CUSTOM B2B SaaS — hôte public obligatoire (sonde de MariaDB/Redis/
+        # Infinity du cluster avec identifiants au choix — audit 2026-09-06).
+        from common.ssrf_guard import assert_host_is_safe
+        assert_host_is_safe(str(req["host"]))
         if req["db_type"] in ["mysql", "mariadb"]:
             db = MySQLDatabase(
                 req["database"],

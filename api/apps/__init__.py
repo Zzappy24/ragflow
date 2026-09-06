@@ -201,6 +201,11 @@ def _load_user_from_session():
         return None
     user = users[0]
     access_token = str(user.access_token or "").strip()
+    # CUSTOM B2B SaaS — le cookie doit porter le token en vigueur : sans ce
+    # lien, un cookie capturé restait valide 31 jours, après logout, re-login
+    # et rotation (audit 2026-09-06). Cookie antérieur à cette règle = refus.
+    if session.get("_access_token") != access_token:
+        return None
     if not access_token or len(access_token) < 32 or access_token.startswith("INVALID_"):
         return None
     logging.debug("Authenticated request via session fallback for user_id=%s", user_id)
@@ -449,6 +454,8 @@ def login_user(user, remember=False, duration=None, force=False, fresh=True):
     session["_user_id"] = user.id
     session["_fresh"] = fresh
     session["_id"] = get_uuid()
+    # CUSTOM B2B SaaS — lien cookie ↔ access_token (cf. _load_user_from_session).
+    session["_access_token"] = str(getattr(user, "access_token", "") or "").strip()
     return True
 
 
@@ -465,6 +472,7 @@ def logout_user():
 
     if "_id" in session:
         session.pop("_id")
+    session.pop("_access_token", None)
 
     COOKIE_NAME = "remember_token"
     cookie_name = current_app.config.get("REMEMBER_COOKIE_NAME", COOKIE_NAME)

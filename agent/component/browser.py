@@ -224,8 +224,19 @@ class Browser(ComponentBase, ABC):
         local_name = ""
         total_size = 0
         try:
+            # CUSTOM B2B SaaS — garde SSRF + épinglage DNS + pas de redirection :
+            # l'URL vient du DSL, urlopen suivait les redirections vers le
+            # cluster (audit 2026-09-06).
+            from urllib.request import HTTPRedirectHandler, build_opener
+            from common.ssrf_guard import assert_url_is_safe, pin_dns
+
+            class _NoRedirect(HTTPRedirectHandler):
+                def redirect_request(self, *args, **kwargs):
+                    return None
+
+            _host, _ip = assert_url_is_safe(url)
             req = Request(url, headers={"User-Agent": "RAGFlow-Browser-Node/1.0"})
-            with urlopen(req, timeout=30) as response:
+            with pin_dns(_host, _ip), build_opener(_NoRedirect()).open(req, timeout=30) as response:
                 local_name = self._extract_url_filename(url, response.headers)
 
                 local_path = os.path.join(upload_dir, local_name)

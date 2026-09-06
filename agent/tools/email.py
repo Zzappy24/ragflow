@@ -146,6 +146,10 @@ class Email(ToolBase, ABC):
                 if self.check_if_canceled("Email processing"):
                     return
 
+                # CUSTOM B2B SaaS — serveur SMTP public obligatoire (scan de ports
+                # internes via smtplib depuis le pod api — audit 2026-09-06).
+                from common.ssrf_guard import assert_host_is_safe
+                assert_host_is_safe(str(self._param.smtp_server))
                 context = smtplib.ssl.create_default_context()
                 with smtplib.SMTP(self._param.smtp_server, self._param.smtp_port) as server:
                     server.ehlo()

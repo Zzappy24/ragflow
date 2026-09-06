@@ -568,6 +568,9 @@ class Confluence(SyncBase):
                                                          connector_name=DocumentSource.CONFLUENCE,
                                                          credential_json=self.conf["credentials"])
         self.connector.set_credentials_provider(credentials_provider)
+        # CUSTOM B2B SaaS — garde SSRF du connecteur (wiki_base vers un service
+        # interne, réponse indexée dans la base — audit 2026-09-06).
+        self.connector.validate_connector_settings()
 
         # Determine the time range for synchronization based on reindex or poll_range_start
         if task["reindex"] == "1" or not task["poll_range_start"]:
@@ -1436,6 +1439,7 @@ class WebDAV(SyncBase):
         )
         self.connector.set_allow_images(self.conf.get("allow_images", False))
         self.connector.load_credentials(self.conf["credentials"])
+        self.connector.validate_connector_settings()  # CUSTOM B2B SaaS — garde SSRF (audit 2026-09-06)
 
         if task["reindex"] == "1" or not task["poll_range_start"]:
             document_batch_generator = self.connector.load_from_state()
@@ -1467,6 +1471,7 @@ class Moodle(SyncBase):
         )
 
         self.connector.load_credentials(self.conf["credentials"])
+        self.connector.validate_connector_settings()  # CUSTOM B2B SaaS — garde SSRF (audit 2026-09-06)
 
         # Determine the time range for synchronization based on reindex or poll_range_start
         poll_start = task.get("poll_range_start")
@@ -1688,6 +1693,7 @@ class IMAP(SyncBase):
         )
         credentials_provider = StaticCredentialsProvider(tenant_id=task["tenant_id"], connector_name=DocumentSource.IMAP, credential_json=self.conf["credentials"])
         self.connector.set_credentials_provider(credentials_provider)
+        self.connector.validate_connector_settings()  # CUSTOM B2B SaaS — garde SSRF (audit 2026-09-06)
         end_time = datetime.now(timezone.utc).timestamp()
         try:
             poll_range_days = float(self.conf.get("poll_range", 30))

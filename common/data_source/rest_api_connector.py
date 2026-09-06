@@ -200,10 +200,12 @@ class RestAPIConnector(LoadConnector, PollConnector):
         try:
             addrinfo_list = socket.getaddrinfo(hostname, None)
         except OSError as exc:
-            # If resolution fails, log and let higher-level validation (if any) decide.
-            # We do not treat this as an SSRF condition by itself.
-            logger.info("DNS resolution failed for REST API connector URL %r: %s", url, exc)
-            return
+            # CUSTOM B2B SaaS — échec de résolution = REFUS (audit 2026-09-06) :
+            # « return » laissait passer un hôte irrésoluble à la validation,
+            # résolu plus tard vers une adresse interne (rebinding).
+            msg = f"REST API connector URL hostname could not be resolved: {exc}"
+            logger.warning(msg)
+            raise ConnectorValidationError(msg) from exc
 
         for family, _, _, _, sockaddr in addrinfo_list:
             ip_str = sockaddr[0]
