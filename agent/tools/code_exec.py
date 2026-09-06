@@ -343,6 +343,14 @@ module.exports = { main };
         self.lang = Language.PYTHON.value
         self.script = 'def main(arg1: str, arg2: str) -> dict: return {"result": arg1 + arg2}'
         self.arguments = {}
+        # CUSTOM B2B SaaS — source de données câblée (agent data, 2026-09-06).
+        # Quand source_file est configuré, code_exec résout l'URL présignée
+        # côté serveur et l'injecte dans les arguments (donc dans main(<source_arg>)),
+        # pour que le LLM n'ait JAMAIS à recopier une URL de 400 caractères.
+        # Le code libre reste entier : le modèle écrit ce qu'il veut, seul
+        # l'accès à la donnée est câblé. Vide = comportement d'origine.
+        self.source_file = ""   # id (32 hex) ou nom du fichier dans les Files
+        self.source_arg = "url"  # nom du paramètre de main() qui reçoit l'URL
         self.outputs = {
             "result": {"value": "", "type": "object"},
             "attachments": {"value": [], "type": "Array<String>"},
@@ -371,14 +379,61 @@ class CodeExec(ToolBase, ABC):
         lang = kwargs.get("lang", self._param.lang)
         script = kwargs.get("script", self._param.script)
         script = _repair_known_llm_artifacts(script, lang)
+        arguments = self._assemble_arguments(
+            self._param, kwargs,
+            get_var=self._canvas.get_variable_value,
+            resolve_source=self._resolve_source_url,
+        )
+        return self._execute_code(language=lang, code=script, arguments=arguments)
+
+    @staticmethod
+    def _assemble_arguments(param, kwargs, get_var, resolve_source):
+        """Construit les arguments passés à main().
+
+        Args câblés (param.arguments) d'abord, puis, si param.source_file est
+        défini, l'URL résolue côté serveur sous param.source_arg (défaut 'url').
+        resolve_source n'est appelé QUE si une source est configurée — couture
+        pure, testée sans canvas ni sandbox.
+        """
         arguments = {}
-        for k, v in self._param.arguments.items():
+        for k, v in param.arguments.items():
             if kwargs.get(k):
                 arguments[k] = kwargs[k]
                 continue
-            arguments[k] = self._canvas.get_variable_value(v) if v else None
+            arguments[k] = get_var(v) if v else None
+        source_file = getattr(param, "source_file", "") or ""
+        if source_file:
+            arg_name = getattr(param, "source_arg", "url") or "url"
+            arguments[arg_name] = resolve_source(source_file)
+        return arguments
 
-        return self._execute_code(language=lang, code=script, arguments=arguments)
+    def _resolve_source_url(self, source_file: str) -> str:
+        """Résout un fichier des Files en URL présignée atteignable depuis le
+        sandbox (même logique que le tool get_file). Exécuté côté serveur (pod
+        api), jamais par le LLM. Intégration stockage — à valider sur stack.
+        """
+        import os as _os
+
+        from api.db.services.file_service import FileService
+        from common import settings
+
+        tenant_id = self._canvas.get_tenant_id()
+        # lookup par id (32 hex) puis par nom, scopé tenant
+        f = None
+        e, cand = FileService.get_by_id(source_file)
+        if e and cand is not None and getattr(cand, "tenant_id", tenant_id) == tenant_id:
+            f = cand
+        if f is None:
+            rows = FileService.query(name=source_file, tenant_id=tenant_id)
+            f = rows[0] if rows else None
+        if f is None:
+            raise FileNotFoundError(f"code_exec source '{source_file}' introuvable dans les Files")
+
+        endpoint = _os.environ.get("SANDBOX_PRESIGN_ENDPOINT") or None
+        expires = int(_os.environ.get("CODE_EXEC_SOURCE_URL_EXPIRES_S", "900"))
+        return settings.STORAGE_IMPL.get_presigned_url(
+            f.parent_id, f.location, expires, endpoint_override=endpoint
+        )
 
     def _execute_code(self, language: str, code: str, arguments: dict):
         import requests
