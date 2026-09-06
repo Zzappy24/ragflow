@@ -254,7 +254,10 @@ async def bridge_login():
     if hasattr(user, "is_active") and user.is_active == "0":
         return get_json_result(data=False, code=RetCode.FORBIDDEN, message="Account disabled")
 
-    response_data = dict(user.to_json())
+    # CUSTOM B2B SaaS — jamais un User brut dans une réponse : to_dict()/to_json()
+    # exposaient le hash du mot de passe ET l'access_token (secret derrière le
+    # token signé). to_safe_dict(for_self=True) les retire, garde l'email.
+    response_data = dict(user.to_safe_dict(for_self=True))
     response_data["active_workspace_id"] = ws_id
     user.access_token = get_uuid()
     login_user(user)
@@ -314,7 +317,8 @@ async def set_initial_password():
     user.update_date = datetime_format(datetime.now())
     user.save()
 
-    response_data = dict(user.to_json())
+    # CUSTOM B2B SaaS — jamais un User brut dans une réponse (cf. bridge_login).
+    response_data = dict(user.to_safe_dict(for_self=True))
 
     # --- CYLLENE CUSTOM CODE ---
     # Resolve the user's default workspace so the frontend can set
@@ -604,7 +608,9 @@ async def user_profile():
     """
     # Enrich with RBAC context so the frontend can role-gate menu items and
     # render the workspace switcher without making N extra requests.
-    data = current_user.to_dict()
+    # CUSTOM B2B SaaS — to_safe_dict, pas to_dict : le profil renvoyait le hash
+    # du mot de passe et l'access_token brut au navigateur (constaté 2026-09-06).
+    data = current_user.to_safe_dict(for_self=True)
     try:
         from quart import request as _req
         from api.db.services.workspace_service import WorkspaceService, WsMemberService

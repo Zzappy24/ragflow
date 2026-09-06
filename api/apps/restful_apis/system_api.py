@@ -21,7 +21,7 @@ from timeit import default_timer as timer
 
 from quart import jsonify
 
-from api.apps import login_required
+from api.apps import current_user, login_required
 from api.utils.api_utils import get_json_result, get_data_error_result, server_error_response, generate_confirmation_token
 from api.apps.extensions.rbac import require_permission, Permission
 from api.utils.health_utils import run_health_checks, get_oceanbase_status
@@ -372,6 +372,10 @@ async def get_logger_levels():
         200:
             description: Return current log levels
     """
+    # CUSTOM B2B SaaS — configuration des pods : superuser uniquement (upstream
+    # laisse tout utilisateur connecté lire et CHANGER les niveaux de log).
+    if not current_user.is_superuser:
+        return get_json_result(data=False, message="Superuser only", code=403)
     return get_json_result(data=get_log_levels())
 
 
@@ -400,6 +404,9 @@ async def set_logger_level():
         200:
             description: Log level updated successfully
     """
+    # CUSTOM B2B SaaS — superuser uniquement (cf. get_logger_levels).
+    if not current_user.is_superuser:
+        return get_json_result(data=False, message="Superuser only", code=403)
     from quart import request
     data = await request.get_json()
     if not data or "pkg_name" not in data or "level" not in data:
