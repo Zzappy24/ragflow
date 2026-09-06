@@ -1,13 +1,12 @@
-import { Authorization, Token, UserInfo } from '@/constants/authorization';
+import { Authorization, UserInfo } from '@/constants/authorization';
 import { getSearchValue } from './common-util';
-const KeySet = [Authorization, Token, UserInfo];
+// 'token' : clé héritée (jeton brut), plus écrite depuis l'audit 2026-09-06 —
+// gardée ici pour être purgée au logout des anciennes sessions.
+const KeySet = [Authorization, UserInfo, 'token'];
 
 const storage = {
   getAuthorization: () => {
     return localStorage.getItem(Authorization);
-  },
-  getToken: () => {
-    return localStorage.getItem(Token);
   },
   getUserInfo: () => {
     return localStorage.getItem(UserInfo);
@@ -18,9 +17,6 @@ const storage = {
   },
   setAuthorization: (value: string) => {
     localStorage.setItem(Authorization, value);
-  },
-  setToken: (value: string) => {
-    localStorage.setItem(Token, value);
   },
   setUserInfo: (value: string | Record<string, unknown>) => {
     const valueStr = typeof value !== 'string' ? JSON.stringify(value) : value;

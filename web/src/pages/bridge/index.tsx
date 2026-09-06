@@ -5,7 +5,7 @@
  * Reads the token from the URL, exchanges it with RAGFlow's /api/v1/bridge
  * endpoint, stores auth in localStorage, and redirects to /.
  */
-import { Authorization, Token, UserInfo } from '@/constants/authorization';
+import { Authorization, UserInfo } from '@/constants/authorization';
 import { getAuthorization } from '@/utils/authorization-util';
 import { useEffect, useRef, useState } from 'react';
 import { useNavigate, useSearchParams } from 'react-router';
@@ -53,8 +53,6 @@ export default function BridgePage() {
         // Same pattern as set-password/index.tsx
         const auth = res.headers.get(Authorization);
         if (auth) localStorage.setItem(Authorization, auth);
-        if (body.data?.access_token)
-          localStorage.setItem(Token, body.data.access_token);
         if (body.data) {
           localStorage.setItem(
             UserInfo,

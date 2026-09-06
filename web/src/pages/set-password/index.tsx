@@ -14,7 +14,7 @@
  * On failure we surface the backend's error message (expired / reused /
  * malformed token) and block submission.
  */
-import { Authorization, Token, UserInfo } from '@/constants/authorization';
+import { Authorization, UserInfo } from '@/constants/authorization';
 import { rsaPsw } from '@/utils';
 import { useEffect, useMemo, useState } from 'react';
 import { useNavigate } from 'react-router';
@@ -68,8 +68,6 @@ export default function SetPasswordPage() {
 
       const auth = res.headers.get(Authorization);
       if (auth) localStorage.setItem(Authorization, auth);
-      if (body.data?.access_token)
-        localStorage.setItem(Token, body.data.access_token);
       if (body.data) {
         const userInfo = {
           avatar: body.data.avatar,

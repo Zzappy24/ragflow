@@ -585,7 +585,25 @@ def set_workspace_defaults(
 
     params = body.model_dump(exclude_none=True)
 
-    from api.utils.tenant_utils import ensure_tenant_model_id_for_params
+    from api.utils.tenant_utils import ensure_tenant_model_id_for_params, _KEY_TO_MODEL_TYPE
+    from api.db.joint_services.tenant_model_service import get_model_type_by_name
+    # CUSTOM B2B SaaS — valider comme à l'exécution : un id accepté ici mais
+    # introuvable par get_model_type_by_name (tables tenant_model_*) ne casse
+    # qu'au premier message de chat, chez le client (recette 2026-09-07 :
+    # "qwen-code___OpenAI-API@…" accepté, LookupError au premier chat).
+    for key, model_type in _KEY_TO_MODEL_TYPE.items():
+        ref = params.get(key)
+        if not ref:
+            continue
+        expected = getattr(model_type, "value", model_type)
+        try:
+            types = get_model_type_by_name(tenant_id, ref)
+        except LookupError as e:
+            raise HTTPException(status_code=400, detail=f"Model {ref} is not usable by this workspace: {e}")
+        except Exception:
+            raise HTTPException(status_code=400, detail=f"Model {ref} is not configured for this workspace (check the provider, instance and model name)")
+        if expected not in types:
+            raise HTTPException(status_code=400, detail=f"Model {ref} is not a {expected} model (types: {sorted(types)})")
     try:
         update_dict = ensure_tenant_model_id_for_params(tenant_id, params)
     except Exception as e:

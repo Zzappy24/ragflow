@@ -28,7 +28,6 @@ import os
 import socket
 import sys
 import uuid
-from datetime import datetime, timedelta, timezone
 from pathlib import Path
 from urllib.parse import urlparse
 
@@ -64,10 +63,6 @@ pytestmark = [
         not _reachable(MANAGEMENT_HOST),
         reason=f"Management server unreachable at {MANAGEMENT_HOST}",
     ),
-    pytest.mark.skipif(
-        not ADMIN_JWT_SECRET,
-        reason="ADMIN_JWT_SECRET not set — required to mint test JWTs",
-    ),
 ]
 
 
@@ -77,13 +72,12 @@ pytestmark = [
 # ---------------------------------------------------------------------------
 
 def _mint_admin_jwt(user_id: str) -> str:
-    import jwt  # noqa: F401  (ensure dependency present at fixture time)
-    expire = datetime.now(timezone.utc) + timedelta(minutes=60)
-    return jwt.encode(
-        {"sub": user_id, "exp": expire, "type": "access"},
-        ADMIN_JWT_SECRET,
-        algorithm=JWT_ALG,
-    )
+    """Le panel n'accepte plus de JWT : jeton OPAQUE lié à une ligne de la table
+    admin_session (management/server/auth/sessions.py). On ouvre la session
+    directement en base, comme le ferait /auth/login (recette 2026-09-07 :
+    les JWT frappés ici étaient tous refusés en 401)."""
+    from management.server.auth.sessions import open_session
+    return open_session(user_id)
 
 
 def _bearer(token: str) -> dict:
@@ -99,13 +93,20 @@ def _user_id_for(email: str) -> str | None:
 
 
 def _ws_admin_workspace_for(user_id: str) -> str | None:
-    """First workspace where the user holds the ws_admin role."""
-    from api.db.db_models import DB
+    """First ACTIVE workspace where the user holds the ws_admin role.
+
+    Archived workspaces (status "0") keep their ws_member rows but the panel
+    answers 404 for them — picking one made the whole module fail
+    (recette 2026-09-07)."""
+    from api.db.db_models import DB, Workspace
     from api.db.services.workspace_service import WsMemberService
     with DB.connection_context():
         memberships = WsMemberService.list_workspaces_for_user(user_id)
         for m in memberships:
-            if m.role == "ws_admin":
+            if m.role != "ws_admin":
+                continue
+            ws = Workspace.get_or_none(Workspace.id == m.workspace_id)
+            if ws is not None and ws.status == "1":
                 return m.workspace_id
     return None
 

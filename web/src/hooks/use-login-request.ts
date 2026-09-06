@@ -69,7 +69,6 @@ export const useLogin = () => {
         saveSetting({ language: storage.getLanguage() });
         const { data } = res;
         const authorization = response.headers.get(Authorization);
-        const token = data.access_token;
         const userInfo = {
           avatar: data.avatar,
           name: data.nickname,
@@ -78,7 +77,6 @@ export const useLogin = () => {
         authorizationUtil.setItems({
           Authorization: authorization,
           userInfo: JSON.stringify(userInfo),
-          Token: token,
         });
       }
       return res.code;
