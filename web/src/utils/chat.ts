@@ -56,11 +56,19 @@ const BLOCK_MATH_RE = /\\\[([\s\S]*?)(?<![a-zA-Z])\\\]/g;
 const INLINE_MATH_RE = /\\\(([\s\S]*?)(?<![a-zA-Z])\\\)/g;
 
 // CUSTOM B2B SaaS — les entités HTML ne sont décodées QUE dans les équations
-// (KaTeX en a besoin pour `<`), jamais dans le texte : décodées globalement
-// APRÈS DOMPurify, elles recréaient du HTML vivant que rehype-raw exécutait
+// (KaTeX en a besoin pour `<`) et dans le code (blocs ``` et `inline`, où
+// DOMPurify avait transformé `a < b` en `a &lt; b`) : ces deux contextes sont
+// rendus comme du texte, jamais parsés en HTML. Décodées globalement APRÈS
+// DOMPurify, elles recréaient du HTML vivant que rehype-raw exécutait
 // (`&lt;iframe srcdoc=…&gt;` → XSS stocké, audit 2026-09-06).
 const decodeMathEntities = (equation: string) =>
   equation.replace(/&lt;/g, '<').replace(/&gt;/g, '>').replace(/&amp;/g, '&');
+
+const FENCED_CODE_RE = /```[\s\S]*?```/g;
+const INLINE_CODE_RE = /`[^`\n]+`/g;
+// Équations déjà en délimiteurs $ (KaTeX) : même règle que \[ \] et \( \).
+const DOLLAR_BLOCK_MATH_RE = /\$\$[\s\S]*?\$\$/g;
+const DOLLAR_INLINE_MATH_RE = /\$[^$\n]+\$/g;
 
 export const preprocessLaTeX = (content: string) => {
   const normalizedContent = content
@@ -79,7 +87,11 @@ export const preprocessLaTeX = (content: string) => {
     (_, equation) => `$${decodeMathEntities(equation)}$`,
   );
 
-  return inlineProcessedContent;
+  return inlineProcessedContent
+    .replace(FENCED_CODE_RE, (code) => decodeMathEntities(code))
+    .replace(INLINE_CODE_RE, (code) => decodeMathEntities(code))
+    .replace(DOLLAR_BLOCK_MATH_RE, (math) => decodeMathEntities(math))
+    .replace(DOLLAR_INLINE_MATH_RE, (math) => decodeMathEntities(math));
 };
 
 export function replaceThinkToSection(text: string = '') {

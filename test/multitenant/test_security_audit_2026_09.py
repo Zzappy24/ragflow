@@ -119,7 +119,7 @@ class TestBetaRoutesAreScoped:
 
     def test_retrieval_caps_page_size_and_top_k(self):
         body = _func(self.BOT, "retrieval_test_embedded")
-        assert "size = min(size, 100)" in body and "top = min(top, 200)" in body
+        assert "size = min(size, 100)" in body and "top = min(top, 1024)" in body
 
     def test_beta_download_limited_to_bound_datasets(self):
         body = _func("api/apps/sdk/doc.py", "download_doc")
@@ -304,8 +304,21 @@ class TestFrontXss:
         assert ".replace(/&lt;/g" not in body, "décodage global des entités = contournement de DOMPurify"
         assert "decodeMathEntities(equation)" in body
 
-    def test_every_rehype_raw_renderer_sanitizes_first(self):
-        assert "DOMPurify.sanitize(children)" in _src("web/src/components/highlight-markdown/index.tsx")
+    def test_every_rehype_raw_renderer_sanitizes_the_tree(self):
+        """rehype-raw exécute le HTML brut : tout rendu qui l'utilise doit
+        enchaîner rehype-sanitize (arbre assaini APRÈS le parsing, seule
+        barrière qui tient face à un bloc HTML enveloppant du contenu décodé)."""
+        offenders = []
+        for path in (ROOT / "web/src").rglob("*.tsx"):
+            src = path.read_text()
+            if "rehypeRaw" not in src:
+                continue
+            if "[rehypeSanitize, markdownSanitizeSchema]" not in src:
+                offenders.append(str(path.relative_to(ROOT)))
+        assert not offenders, "rehype-raw sans rehype-sanitize : " + ", ".join(offenders)
+        schema = _src("web/src/utils/markdown-sanitize.ts")
+        assert "defaultSchema" in schema and "'iframe'" not in schema and "'script'" not in schema
+        assert '"rehype-sanitize"' in _src("web/package.json")
         widget = _src("web/src/components/floating-chat-widget-markdown.tsx")
         assert "DOMPurify.sanitize(content, {" in widget
 

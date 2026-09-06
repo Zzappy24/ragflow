@@ -514,8 +514,8 @@ async def retrieval_test_embedded(tenant_id=None):
             return get_json_result(data=False, message="Only owner of dataset authorized for this operation.",
                                    code=RetCode.OPERATING_ERROR)
         tenant_ids = [tenant_id]
-        size = min(size, 100)
-        top = min(top, 200)
+        size = min(size, 100)      # page servie au visiteur : c'est elle qui permettait l'export
+        top = min(top, 1024)       # candidats avant rerank : valeur par défaut, résultats inchangés
 
         e, kb = await thread_pool_exec(KnowledgebaseService.get_by_id, kb_ids[0])
         if not e:
