@@ -62,7 +62,15 @@ def require_org_admin(org_id: str, user_id: str = Depends(get_current_user_id)):
     if user.is_superuser:
         return user
 
-    from api.db.services.org_service import OrgMemberService
+    from api.db.services.org_service import OrgMemberService, OrgService
+    # CUSTOM B2B SaaS — une org archivée par le superuser (status '0') garde
+    # ses lignes OrgMember : sans ce contrôle, son admin pouvait continuer à
+    # créer ou restaurer des workspaces et à s'y connecter (audit 2026-09-06,
+    # F4). Le superuser reste exempt (gestion des archives).
+    ok, org = OrgService.get_by_id(org_id)
+    if not ok or not org or str(org.status) != "1":
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Organisation not found")
+
     membership = OrgMemberService.get_membership(org_id, user_id)
     if not membership or membership.role != "org_admin":
         raise HTTPException(

@@ -151,6 +151,19 @@ def update_workspace(org_id: str, ws_id: str, body: WsUpdate, user_id: str = Dep
             update_data["settings_json"] = {**merged, **update_data["settings_json"]}
         else:
             update_data["settings_json"] = merged
+    # CUSTOM B2B SaaS — `model_template` désigne LE workspace dont tous les
+    # nouveaux workspaces (toutes orgs) copient les modèles, clés API et
+    # api_base compris. Il ne se pose que par la route superuser
+    # /model-template : un org_admin pouvait le poser ici via settings_json et
+    # détourner les modèles de toute la plateforme vers son endpoint (audit
+    # 2026-09-06, F2). On retire la clé du payload et on préserve le drapeau
+    # existant, qu'un settings_json partiel aurait sinon écrasé.
+    if "settings_json" in update_data:
+        incoming = dict(update_data["settings_json"] or {})
+        incoming.pop("model_template", None)
+        if (ws.settings_json or {}).get("model_template") is True:
+            incoming["model_template"] = True
+        update_data["settings_json"] = incoming
     if update_data:
         WorkspaceService.update_by_id(ws_id, update_data)
 

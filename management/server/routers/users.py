@@ -189,7 +189,11 @@ async def resend_invite(request: Request, uid: str, user_id: str = Depends(get_c
         resource_id=uid,
         details={"target_display_name": target.email, "email": target.email, "resend": True},
     )
-    return {"user_id": uid, "email": target.email, "invite_url": invite_url,
+    # CUSTOM B2B SaaS — le lien n'est renvoyé à l'admin que si l'email n'est
+    # pas parti (SMTP absent) : un lien d'invitation pose le mot de passe du
+    # compte visé, il n'a pas à transiter par l'écran d'un tiers quand le
+    # destinataire l'a reçu (audit 2026-09-06, F1).
+    return {"user_id": uid, "email": target.email, "invite_url": None if email_sent else invite_url,
             "expires_in": settings.INVITE_TOKEN_EXPIRE_SECONDS, "email_sent": email_sent}
 
 

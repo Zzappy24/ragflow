@@ -130,6 +130,14 @@ def update_org(org_id: str, body: OrgUpdate, user_id: str = Depends(get_current_
         raise HTTPException(status_code=404, detail="Organisation not found")
 
     update_data = body.model_dump(exclude_none=True)
+    # CUSTOM B2B SaaS — les plafonds (max_*), llm_config et settings_json sont
+    # fixés par le superuser à la création : un org_admin pouvait relever ses
+    # propres quotas d'utilisateurs, de workspaces, de stockage (audit
+    # 2026-09-06, F3). Un org_admin ne modifie que le nom.
+    if not user.is_superuser:
+        forbidden = sorted(set(update_data) - {"name"})
+        if forbidden:
+            raise HTTPException(status_code=403, detail=f"Superuser only: {', '.join(forbidden)}")
     if not update_data:
         return _org_to_response(org)
 

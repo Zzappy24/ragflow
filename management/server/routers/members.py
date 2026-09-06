@@ -63,6 +63,13 @@ def add_org_member(request: Request, org_id: str, body: MemberAdd, user_id: str 
     if not users:
         raise HTTPException(status_code=404, detail=f"User with email '{body.email}' not found in RAGFlow")
     target_user = users[0]
+    # CUSTOM B2B SaaS — un compte non activé (is_active='0') appartient à
+    # l'onboarding de l'org qui l'a provisionné : l'attacher à une autre org
+    # permettait à l'admin de celle-ci de renvoyer l'invitation, poser le mot
+    # de passe et se connecter à sa place (audit 2026-09-06, F1). Même 404 que
+    # « inconnu » pour ne pas révéler l'existence du compte.
+    if str(getattr(target_user, "is_active", "0")) != "1" or str(target_user.status) != "1":
+        raise HTTPException(status_code=404, detail=f"User with email '{body.email}' not found in RAGFlow")
 
     from api.db.services.org_service import OrgMemberService
     existing = OrgMemberService.get_membership(org_id, target_user.id)

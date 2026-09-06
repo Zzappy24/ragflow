@@ -227,6 +227,11 @@ async def internal_invite_prepare():
     if not ok_user or not user:
         return get_json_result(data=False, code=RetCode.AUTHENTICATION_ERROR, message="User not found")
 
+    # CUSTOM B2B SaaS — pas de code d'invitation pour un compte déjà actif
+    # (cf. set_initial_password : ce serait un changement de mot de passe).
+    if str(getattr(user, "is_active", "0")) == "1":
+        return get_json_result(data=False, code=RetCode.FORBIDDEN, message="Account already active")
+
     code = secrets.token_urlsafe(32)
     try:
         REDIS_CONN.REDIS.set(f"invite_code:{code}", user_id, ex=ttl)
@@ -318,6 +323,12 @@ async def set_initial_password():
         return get_json_result(
             data=False, code=RetCode.AUTHENTICATION_ERROR, message="User not found"
         )
+    # CUSTOM B2B SaaS — un code d'invitation ne sert qu'à ACTIVER un compte.
+    # Sur un compte déjà actif il poserait un nouveau mot de passe : prise de
+    # contrôle si le lien fuit ou est renvoyé par un tiers (audit 2026-09-06,
+    # F1). Le mot de passe oublié a son propre flux (OTP par email).
+    if str(getattr(user, "is_active", "0")) == "1":
+        return get_json_result(data=False, code=RetCode.FORBIDDEN, message="Account already active")
 
     # Flip is_active → 1, store the real password hash, mint a fresh session
     # token, and log the user in. Copy to a new dict before mutating to avoid
