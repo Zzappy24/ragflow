@@ -222,26 +222,48 @@ class Invoke(ComponentBase, ABC):
     def _build_proxies(self) -> dict | None:
         if not re.sub(r"https?:?/?/?", "", self._param.proxy):
             return None
+        # CUSTOM B2B SaaS — un proxy interne au cluster est un SSRF vers ce
+        # proxy (audit 2026-09-06) : même garde que l'URL.
+        from common.ssrf_guard import assert_url_is_safe
+        proxy = self._param.proxy if "://" in self._param.proxy else "http://" + self._param.proxy
+        assert_url_is_safe(proxy)
         return {"http": self._param.proxy, "https": self._param.proxy}
 
+    _MAX_REDIRECTS = 5
+
     def _send_request(self, url: str, args: dict, headers: dict, proxies: dict | None):
+        # CUSTOM B2B SaaS — Invoke exécute une requête HTTP vers l'URL du DSL
+        # (utilisateur client) depuis le pod api, qui joint tout le cluster :
+        # vLLM, ES, LiteLLM, l'API Kubernetes, les métadonnées cloud… avec le
+        # corps de réponse renvoyé dans le chat (audit 2026-09-06). Hôte public
+        # obligatoire, DNS épinglé, chaque redirection re-validée.
+        from urllib.parse import urljoin
+        from common.ssrf_guard import assert_url_is_safe, pin_dns
+
         method = self._param.method.lower()
         request = getattr(requests, method)
-        request_kwargs = {
-            "url": url,
-            "headers": headers,
-            "proxies": proxies,
-            "timeout": self._param.timeout,
-        }
-
-        # GET sends query params; POST/PUT send either JSON or form data based on datatype.
-        if method == "get":
-            request_kwargs["params"] = args
-            return request(**request_kwargs)
-
-        body_key = "json" if self._is_json_mode() else "data"
-        request_kwargs[body_key] = args
-        return request(**request_kwargs)
+        current, hops = url, 0
+        while True:
+            host, ip = assert_url_is_safe(current)
+            request_kwargs = {
+                "url": current,
+                "headers": headers,
+                "proxies": proxies,
+                "timeout": self._param.timeout,
+                "allow_redirects": False,
+            }
+            # GET sends query params; POST/PUT send either JSON or form data based on datatype.
+            if method == "get":
+                request_kwargs["params"] = args
+            else:
+                request_kwargs["json" if self._is_json_mode() else "data"] = args
+            with pin_dns(host, ip):
+                response = request(**request_kwargs)
+            location = response.headers.get("Location") if response.is_redirect else None
+            if location and hops < self._MAX_REDIRECTS:
+                current, hops = urljoin(current, location), hops + 1
+                continue
+            return response
 
     def _format_response(self, response) -> str:
         if not self._param.clean_html:
