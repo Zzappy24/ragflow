@@ -78,11 +78,12 @@ def _generate_credentials(email: str = CI_EMAIL, workspace_name: str = CI_WORKSP
     """
     sys.path.insert(0, str(Path(__file__).resolve().parents[2]))
 
-    from common.settings import REDIS_CONN
     from itsdangerous.url_safe import URLSafeTimedSerializer as Serializer
+
     from api.db.db_models import DB
     from api.db.services.user_service import UserService
     from api.db.services.workspace_service import WorkspaceService, WsMemberService
+    from common.settings import REDIS_CONN
 
     secret_key = REDIS_CONN.get("ragflow:system:secret_key")
     if not secret_key:
@@ -241,16 +242,23 @@ def org_with_entitlement_and_users():
       - a superuser (is_superuser=1)
       - an org_admin (OrgMember role=org_admin)
       - a plain_member (OrgMember role=member)
-    Each user gets a minted access JWT via management.server.auth.jwt.create_access_token.
+    Each user gets an opaque panel session (management.server.auth.sessions.open_session).
     Yields (org_id, {"superuser": ..., "org_admin": ..., "plain_member": ...,
                      "plain_member_email": ...}).
     """
     from api.db.db_models import (
-        DB, Organisation, CodeEntitlement, CodeTeam, CodeTeamMember, CodeKey,
-        CodeSpendSnapshot, User, OrgMember,
+        DB,
+        CodeEntitlement,
+        CodeKey,
+        CodeSpendSnapshot,
+        CodeTeam,
+        CodeTeamMember,
+        Organisation,
+        OrgMember,
+        User,
     )
     from common.misc_utils import get_uuid
-    from management.server.auth.jwt import create_access_token
+    from management.server.auth.sessions import open_session as create_access_token  # sessions opaques (plus de JWT) — recette 2026-09-07
 
     org_id = get_uuid()
     user_ids = {}
@@ -300,9 +308,9 @@ def second_org_admin():
     by org_with_entitlement_and_users, so it can be used to prove that org A's
     resources (teams/keys) are inaccessible to org B's admin.
     """
-    from api.db.db_models import DB, Organisation, User, OrgMember
+    from api.db.db_models import DB, Organisation, OrgMember, User
     from common.misc_utils import get_uuid
-    from management.server.auth.jwt import create_access_token
+    from management.server.auth.sessions import open_session as create_access_token  # sessions opaques (plus de JWT) — recette 2026-09-07
 
     org_id = get_uuid()
     uid = get_uuid()

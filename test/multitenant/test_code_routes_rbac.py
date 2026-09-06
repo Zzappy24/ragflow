@@ -15,8 +15,8 @@ def panel_client(monkeypatch, org_with_entitlement_and_users):
     skew between the test process and the DB server).
     """
     from api.db.db_models import DB, CodeHousekeepingRun
-    from test.multitenant.test_code_provisioning import FakeLiteLLM
     from management.server.services import code_provisioning, code_reconcile
+    from test.multitenant.test_code_provisioning import FakeLiteLLM
     fake = FakeLiteLLM()
     monkeypatch.setattr(code_provisioning, "_client", lambda client=None: client or fake)
     # code_reconcile imports `_client` by name, so it must be patched separately —
@@ -244,7 +244,7 @@ def test_dashboard_forbidden_for_user_with_no_org_membership(panel_client):
     client, _ = panel_client
     from api.db.db_models import DB, User
     from common.misc_utils import get_uuid
-    from management.server.auth.jwt import create_access_token
+    from management.server.auth.sessions import open_session as create_access_token  # sessions opaques (plus de JWT) — recette 2026-09-07
 
     uid = get_uuid()
     email = f"code-rbac-no-org-{uid[:6]}@example.com"
@@ -478,6 +478,7 @@ def test_update_key_limits_rbac_and_validation(panel_client, org_with_entitlemen
 
 def test_export_csv_org_admin_only_with_snapshot_rows(panel_client, org_with_entitlement_and_users):
     import datetime
+
     from api.db.db_models import DB, CodeSpendSnapshot
     from common.misc_utils import get_uuid
     client, _ = panel_client

@@ -61,6 +61,17 @@ SCAN_ROOTS = [
     "rag/nlp/search.py",
 ]
 
+def _run(coro):
+    """Boucle neuve et fermée proprement : asyncio.run est patché par nest_asyncio
+    (importé par agent/component/message.py) dans la suite complète et réutilise
+    alors une boucle déjà fermée -> RuntimeError('Event loop is closed')."""
+    loop = asyncio.new_event_loop()
+    try:
+        return loop.run_until_complete(coro)
+    finally:
+        loop.close()
+
+
 
 # ---------------------------------------------------------------- verrou 1
 def test_call_view_runs_sync_off_the_event_loop():
@@ -78,7 +89,7 @@ def test_call_view_runs_sync_off_the_event_loop():
         cv.set("ctx-42")
         return await call_view(sync_view, 1, y=2)
 
-    assert asyncio.run(main()) == 3
+    assert _run(main()) == 3
     assert seen["thread"] is not threading.main_thread(), "vue sync exécutée SUR l'event loop"
     assert seen["ctx"] == "ctx-42", "contextvars (request/g) perdus dans le thread"
 
@@ -95,7 +106,7 @@ def test_call_view_awaits_coroutines_and_coroutine_returning_wrappers():
     async def main():
         return await call_view(async_view, 2), await call_view(sync_wrapper_returning_coro, 3)
 
-    assert asyncio.run(main()) == (4, 6)
+    assert _run(main()) == (4, 6)
 
 
 # ---------------------------------------------------------------- verrou 2

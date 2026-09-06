@@ -81,6 +81,11 @@ INTENTIONAL_KEPT: dict[str, str] = {
 # These are visible in `our_files - upstream_files` but are not divergences
 # we should worry about — they're our own additions.
 CUSTOM_FORK_FILES: dict[str, str] = {
+    "api/apps/restful_apis/branding_api.py": (
+        "Custom B2B SaaS — GET /api/v1/branding : identité visuelle par "
+        "organisation (logo + couleur d'accent) appliquée post-login. "
+        "Fichier entièrement custom (2026-09-03), aucun équivalent upstream."
+    ),
     "api/apps/restful_apis/internal_api.py": (
         "Custom B2B SaaS — service-to-service /verify endpoint called by "
         "the slim management backend image (which doesn't ship rag.llm). "

@@ -274,8 +274,11 @@ def test_resend_invite_pending_user(panel_client, org_with_entitlement_and_users
         body = r2.json()
         assert body["email_sent"] is True
         assert sent["to"] == email
-        assert body["invite_url"] in sent["body"]
-        assert "fresh-invite-code" in body["invite_url"]
+        # Audit 2026-09-06 : quand l'e-mail est parti, le lien n'est PAS renvoyé
+        # à l'appelant (un org admin ne doit pas pouvoir poser le mot de passe
+        # d'un compte à la place de l'invité) — il ne vit que dans l'e-mail.
+        assert body["invite_url"] is None
+        assert "fresh-invite-code" in sent["body"]
 
         # user devenu actif → 409
         from api.db.db_models import DB, User

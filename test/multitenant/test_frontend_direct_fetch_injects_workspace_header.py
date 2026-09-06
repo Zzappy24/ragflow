@@ -28,7 +28,6 @@ from pathlib import Path
 
 import pytest
 
-
 REPO_ROOT = Path(__file__).resolve().parents[2]
 WEB_SRC = REPO_ROOT / "web" / "src"
 
@@ -50,6 +49,7 @@ EXEMPT_FILES: set[str] = {
     "pages/bridge/index.tsx",         # bridge landing page
     "pages/set-password/index.tsx",   # initial password set from invite link
     "pages/login/oauth-callback.tsx", # OAuth callbacks
+    "pages/forgot-password/index.tsx", # pré-login : aucun workspace à injecter (recette 2026-09-07)
 }
 
 # Allowlist: path prefixes treated like EXEMPT_FILES. One entry per category.
@@ -62,6 +62,13 @@ EXEMPT_PATH_PREFIXES: tuple[str, ...] = (
 # Allowlist: specific (file, line_substring) pairs for one-off exceptions.
 # Use sparingly — the canonical fix is to add the header.
 EXEMPT_LINES: set[tuple[str, str]] = {
+    # Sonde de session (2026-09-06) : /users/me est une route SANS workspace ;
+    # la sonde doit justement répondre hors de tout contexte workspace pour
+    # distinguer "session morte" de "workspace non résolu".
+    ("utils/session-guard.ts", "fetch(api.userInfo"),
+    # Texte d'exemple du composant Code (snippet JavaScript affiché à
+    # l'utilisateur), pas un appel exécuté par le front.
+    ("constants/agent.tsx", "axios.get('https://www.groupe-cyllene.com')"),
     # External URLs — github metadata fetch on the empty-knowledge-base page.
     ("constants/agent.tsx", "https://github.com"),
     # Static asset served from the SPA shell, not a backend route.
