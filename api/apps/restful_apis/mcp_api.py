@@ -98,6 +98,7 @@ async def list_mcp() -> Response:
 
 @manager.route("/mcp/servers/<mcp_id>", methods=["GET"])  # noqa: F821
 @login_required
+@require_permission(Permission.MCP_CONFIGURE)  # CUSTOM B2B SaaS — audit 2026-09-06 : le détail renvoie headers + authorization_token
 def detail(mcp_id: str) -> Response:
     try:
         mcp_server = MCPServerService.get_or_none(id=mcp_id, tenant_id=active_tenant_id())

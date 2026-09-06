@@ -46,7 +46,7 @@ from api.db.services.task_service import TaskService, cancel_all_task_of
 from api.utils.api_utils import construct_json_result, get_data_error_result, get_error_data_result, get_result, get_json_result, \
     server_error_response, add_tenant_id_to_kwargs, get_request_json, get_error_argument_result, check_duplicate_ids
 from api.utils.pagination_utils import validate_rest_api_page_size
-from api.utils.tenant_context import maybe_active_tenant_id
+from api.utils.tenant_context import active_tenant_id, maybe_active_tenant_id
 from api.utils.validation_utils import (
     UpdateDocumentReq, format_validation_error_message, validate_and_parse_json_request, DeleteDocumentReq,
 )
@@ -1329,6 +1329,9 @@ def list_thumbnails():
 
     try:
         docs = DocumentService.get_thumbnails(doc_ids)
+        # CUSTOM B2B SaaS — bases du workspace actif uniquement (audit 2026-09-06).
+        _own_kbs = {kb.id for kb in KnowledgebaseService.query(tenant_id=active_tenant_id())}
+        docs = [d for d in docs if d.get("kb_id") in _own_kbs]
 
         for doc_item in docs:
             if doc_item["thumbnail"] and not doc_item["thumbnail"].startswith(IMG_BASE64_PREFIX):
@@ -1841,12 +1844,19 @@ async def get_document_image(image_id):
         if not parsed:
             return get_data_error_result(message="Image not found.")
         bkt, nm = parsed
+        # CUSTOM B2B SaaS — le bucket (= kb_id) doit être une base du workspace
+        # actif : sinon n'importe quel objet de n'importe quel tenant était
+        # servi (rendus de pages, voire le document brut). Et jamais de SVG
+        # inline depuis l'origine de l'app (XSS stocké). Audit 2026-09-06.
+        if not await thread_pool_exec(KnowledgebaseService.query, tenant_id=active_tenant_id(), id=bkt):
+            return get_data_error_result(message="Image not found.")
         data = await thread_pool_exec(settings.STORAGE_IMPL.get, bkt, nm)
         if not data:
             return get_data_error_result(message="Image not found.")
         content_type = _content_type_for_document_image(nm, data)
         response = await make_response(data)
         response.headers.set("Content-Type", content_type)
+        apply_safe_file_response_headers(response, content_type, os.path.splitext(nm)[1].lstrip(".") if "." in nm else None)
         return response
     except Exception as e:
         return server_error_response(e)

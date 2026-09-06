@@ -63,6 +63,7 @@ async def set_api_key():
 
 @manager.route("/langfuse/api-key", methods=["GET"])  # noqa: F821
 @login_required
+@require_permission(Permission.LLM_CONFIGURE)  # CUSTOM B2B SaaS — audit 2026-09-06 : secret_key Langfuse renvoyée à tout membre
 @validate_request()
 def get_api_key():
     current_user_id = active_tenant_id()

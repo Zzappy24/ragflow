@@ -65,7 +65,20 @@ const FloatingChatWidgetMarkdown = ({
   const isDarkTheme = useIsDarkTheme();
 
   const contentWithCursor = useMemo(() => {
-    const text = content === '' ? t('chat.searching') : content;
+    // CUSTOM B2B SaaS — même assainissement que les autres rendus de réponse
+    // (rehype-raw exécute le HTML de la réponse LLM ; audit 2026-09-06).
+    const sanitized = DOMPurify.sanitize(content, {
+      ADD_TAGS: [
+        'think',
+        'section',
+        'details',
+        'summary',
+        'retrieving',
+        'tool_call',
+      ],
+      ADD_ATTR: ['class'],
+    });
+    const text = sanitized === '' ? t('chat.searching') : sanitized;
     const nextText = replaceTextByOldReg(text);
     return pipe(
       replaceThinkToSection,

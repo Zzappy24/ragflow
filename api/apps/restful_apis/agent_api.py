@@ -575,6 +575,13 @@ async def delete_agent_session(tenant_id, agent_id):
 async def download_agent_file():
     id = request.args.get("id")
     created_by = request.args.get("created_by")
+    # CUSTOM B2B SaaS — created_by désigne le bucket « <id>-downloads » lu :
+    # fourni par le client, il ouvrait les pièces jointes de n'importe quel
+    # utilisateur/workspace (audit 2026-09-06). Seuls le workspace actif et
+    # le demandeur lui-même sont admis.
+    from api.utils.tenant_context import active_tenant_id
+    if created_by not in {active_tenant_id(), current_user.id}:
+        return get_data_error_result(message="File not found.")
     blob = await thread_pool_exec(FileService.get_blob, created_by, id)
     return Response(blob)
 
@@ -753,8 +760,15 @@ async def create_agent(tenant_id):
 
 
 @manager.route("/agents/<agent_id>/upload", methods=["POST"])  # noqa: F821
+@login_required
 @require_permission(Permission.AGENT_UPDATE)
 async def upload_agent_file(agent_id):
+    # CUSTOM B2B SaaS — agent du workspace actif uniquement : un éditeur
+    # écrivait des blobs dans le bucket du propriétaire de n'importe quel
+    # agent (audit 2026-09-06).
+    from api.utils.tenant_context import active_tenant_id
+    if not await thread_pool_exec(UserCanvasService.accessible, agent_id, active_tenant_id()):
+        return get_data_error_result(message="canvas not found.")
     exists, canvas = UserCanvasService.get_by_canvas_id(agent_id)
     if not exists:
         return get_data_error_result(message="canvas not found.")
@@ -1070,6 +1084,11 @@ async def rerun_agent(tenant_id):
     if not doc:
         return get_data_error_result(message="Document not found.")
     doc = doc[0]
+    # CUSTOM B2B SaaS — le journal de pipeline n'était pas scopé : un éditeur
+    # relançait un DSL de son choix sur le document d'un autre workspace
+    # (audit 2026-09-06). La base du document doit être au workspace actif.
+    if not await thread_pool_exec(KnowledgebaseService.query, tenant_id=tenant_id, id=doc["kb_id"]):
+        return get_data_error_result(message="Document not found.")
     if 0 < doc["progress"] < 1:
         return get_data_error_result(message=f"`{doc['name']}` is processing...")
 

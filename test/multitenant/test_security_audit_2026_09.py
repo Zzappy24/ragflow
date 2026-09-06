@@ -175,3 +175,92 @@ class TestMiscAuthorization:
         assert 'req.pop("tenant_id", None)' in body
         assert "TenantService.update_by_id(active_tenant_id(), update)" in body
         assert '"llm_id", "embd_id"' in body
+
+
+# ------------------------------------------------------------- lot 2 : IDOR
+class TestLot2Idor:
+    CONN = "api/apps/restful_apis/connector_api.py"
+
+    @pytest.mark.parametrize("name", ["get_connector", "update_connector", "list_logs", "resume", "test_connector"])
+    def test_connector_routes_are_workspace_scoped(self, name):
+        body = _func(self.CONN, name)
+        assert "_scoped_connector(connector_id)" in body, f"{name} doit charger le connecteur par (id, tenant actif)"
+        assert "ConnectorService.get_by_id(" not in body
+
+    def test_no_credentials_print(self):
+        assert "print(credentials)" not in _src(self.CONN)
+
+    def test_oauth_popup_escapes_script_context_and_targets_own_origin(self):
+        body = _func(self.CONN, "_render_web_oauth_popup")
+        assert r'\\u003c' in body and "fullmatch" in body
+        assert 'window.location.origin' in _src("common/data_source/google_util/constant.py")
+        assert 'postMessage({payload_json}, "*")' not in _src("common/data_source/google_util/constant.py")
+
+    def test_file_commits_bound_to_active_workspace(self):
+        src = _src("api/apps/restful_apis/file_commit_api.py")
+        assert "kb.tenant_id != _active_tenant()" in _func("api/apps/restful_apis/file_commit_api.py", "_resolve_dataset_folder")
+        assert src.count("_folder_in_workspace(") >= 3
+        assert "f.tenant_id != _active_tenant()" in _func("api/apps/restful_apis/file_commit_api.py", "get_file_version_history")
+
+    def test_listings_reject_foreign_owner_ids(self):
+        assert "_allowed_owner_ids = {active_tenant_id(), current_user.id}" in _func("api/apps/restful_apis/chat_api.py", "list_chats")
+        assert 'if t == tenant_id] or [tenant_id]' in _src("api/apps/services/dataset_api_service.py")
+
+    def test_secrets_routes_require_configure_permissions(self):
+        mcp = _src("api/apps/restful_apis/mcp_api.py")
+        i = mcp.index("def detail(")
+        assert "require_permission(Permission.MCP_CONFIGURE)" in mcp[i - 300:i]
+        lf = _src("api/apps/restful_apis/langfuse_api.py")
+        j = lf.index("def get_api_key(")
+        assert "require_permission(Permission.LLM_CONFIGURE)" in lf[j - 300:j]
+
+    def test_document_images_and_thumbnails_scoped_and_safe(self):
+        img = _func("api/apps/restful_apis/document_api.py", "get_document_image")
+        assert "KnowledgebaseService.query, tenant_id=active_tenant_id(), id=bkt" in img
+        assert "apply_safe_file_response_headers(response" in img
+        thumbs = _func("api/apps/restful_apis/document_api.py", "list_thumbnails")
+        assert 'd.get("kb_id") in _own_kbs' in thumbs
+
+    def test_agent_routes_scoped(self):
+        assert "created_by not in {active_tenant_id(), current_user.id}" in _func("api/apps/restful_apis/agent_api.py", "download_agent_file")
+        assert "UserCanvasService.accessible, agent_id, active_tenant_id()" in _func("api/apps/restful_apis/agent_api.py", "upload_agent_file")
+        assert 'KnowledgebaseService.query, tenant_id=tenant_id, id=doc["kb_id"]' in _func("api/apps/restful_apis/agent_api.py", "rerun_agent")
+
+    def test_system_status_superuser_only(self):
+        body = _func("api/apps/restful_apis/system_api.py", "status")
+        assert "current_user.is_superuser" in body and body.index("is_superuser") < body.index("res = {}")
+
+    def test_legacy_team_routes_disabled_and_file_rename_rbac(self):
+        for name in ("create", "rm"):
+            assert "managed by the admin panel" in _func("api/apps/restful_apis/tenant_api.py", name)
+        bc = _src("api/apps/backward_compat.py")
+        k = bc.index("def deprecated_file_rename(")
+        assert "require_permission(Permission.DOCUMENT_CREATE)" in bc[k - 300:k]
+
+    def test_pandoc_disables_raw_tex(self):
+        assert 'format="markdown-raw_tex"' in _src("agent/component/docs_generator.py")
+
+    def test_invoke_never_logs_raw_values(self):
+        src = _src("agent/component/invoke.py")
+        assert "raw=%r" not in src
+
+
+class TestFrontXss:
+    def test_preprocess_latex_decodes_entities_only_inside_math(self):
+        src = _src("web/src/utils/chat.ts")
+        body = src[src.index("export const preprocessLaTeX"):src.index("export function replaceThinkToSection")]
+        assert ".replace(/&lt;/g" not in body, "décodage global des entités = contournement de DOMPurify"
+        assert "decodeMathEntities(equation)" in body
+
+    def test_every_rehype_raw_renderer_sanitizes_first(self):
+        assert "DOMPurify.sanitize(children)" in _src("web/src/components/highlight-markdown/index.tsx")
+        widget = _src("web/src/components/floating-chat-widget-markdown.tsx")
+        assert "DOMPurify.sanitize(content, {" in widget
+
+    def test_front_nginx_sends_security_headers_and_keeps_share_pages_embeddable(self):
+        conf = _src("helm/ragflow/charts/ragflow-frontend/templates/configmap-nginx.yaml")
+        assert conf.count('add_header X-Frame-Options "DENY" always;') >= 2
+        assert 'add_header Referrer-Policy "no-referrer" always;' in conf
+        share = conf.index("location ~ ^/(chats/(share|widget)|agent/share|search/share)")
+        block = conf[share:conf.index("location / {")]
+        assert "X-Frame-Options" not in block, "les pages de partage doivent rester embarquables"

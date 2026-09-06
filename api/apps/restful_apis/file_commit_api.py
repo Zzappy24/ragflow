@@ -30,7 +30,7 @@ from api.utils.api_utils import get_json_result, get_data_error_result, get_requ
 from api.db.services.file_commit_service import FileCommitService
 from api.db.services.knowledgebase_service import KnowledgebaseService
 from api.db.services.file_service import FileService
-from common.constants import FileSource
+from common.constants import FileSource, RetCode
 
 logger = logging.getLogger(__name__)
 
@@ -64,10 +64,26 @@ def _resolve_folder_id(entity_type, entity_id):
     return resolver(entity_id)
 
 
+def _active_tenant():
+    from api.utils.tenant_context import active_tenant_id
+    return active_tenant_id()
+
+
+def _folder_in_workspace(folder_id):
+    """CUSTOM B2B SaaS — le dossier doit appartenir au workspace actif.
+
+    Les routes de commits prenaient folder_id/dataset_id/file_id tels quels :
+    un viewer lisait le contenu des fichiers et l'historique de n'importe quel
+    workspace, et y écrivait des commits (audit 2026-09-06).
+    """
+    ok, folder = FileService.get_by_id(folder_id)
+    return bool(ok and folder and folder.tenant_id == _active_tenant())
+
+
 @_register_resolver("datasets")
 def _resolve_dataset_folder(dataset_id):
     success, kb = KnowledgebaseService.get_by_id(dataset_id)
-    if not success:
+    if not success or kb.tenant_id != _active_tenant():
         return None
     # Find the folder with matching name, source_type, and tenant_id
     folders = FileService.query(
@@ -97,9 +113,12 @@ def _register_commit_routes(prefix, param_name, resolver_type=None):
 
     def _resolve(entity_id):
         if resolver_type is None:
-            return entity_id  # already a folder_id
+            # already a folder_id — but only a folder of the active workspace
+            if not _folder_in_workspace(entity_id):
+                raise ValueError(f"Could not resolve folder '{entity_id}'")
+            return entity_id
         folder_id = _resolve_folder_id(resolver_type, entity_id)
-        if folder_id is None:
+        if folder_id is None or not _folder_in_workspace(folder_id):
             raise ValueError(f"Could not resolve {resolver_type} '{entity_id}' to a folder")
         return folder_id
 
@@ -319,6 +338,9 @@ _register_commit_routes('/folders/<entity_id>', 'entity_id')  # direct — entit
 @require_permission(Permission.DOCUMENT_READ)
 async def get_file_version_history(file_id):
     try:
+        ok, f = FileService.get_by_id(file_id)
+        if not ok or not f or f.tenant_id != _active_tenant():
+            return get_json_result(data=False, message="File not found.", code=RetCode.DATA_ERROR)
         versions = FileCommitService.get_file_version_history(file_id)
         return get_json_result(data=versions)
     except Exception as e:

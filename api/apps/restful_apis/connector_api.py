@@ -55,6 +55,18 @@ def _connector_auth_error(connector_id: str, user_id: str):
     LOGGER.warning("connector access denied: connector_id=%s user_id=%s", connector_id, user_id)
     return get_json_result(data=False, message="No authorization.", code=RetCode.AUTHENTICATION_ERROR)
 
+
+def _scoped_connector(connector_id: str):
+    """CUSTOM B2B SaaS — connecteur du workspace actif uniquement.
+
+    GET/PATCH/logs/resume/test chargeaient le connecteur par id sans scope :
+    un ws_admin lisait (config.credentials : clés S3, jetons SharePoint/Google,
+    mots de passe IMAP/DB) et réécrivait les connecteurs de n'importe quel
+    workspace (audit 2026-09-06). Renvoie (connecteur | None).
+    """
+    rows = ConnectorService.query(id=connector_id, tenant_id=active_tenant_id())
+    return rows[0] if rows else None
+
 @manager.route("/connectors/<connector_id>", methods=["PATCH"])  # noqa: F821
 @login_required
 @require_permission(Permission.DATASOURCE_CONFIGURE)
@@ -63,9 +75,9 @@ async def update_connector(connector_id):
     if isinstance(req, dict) and isinstance(req.get("data"), dict):
         req = req["data"]
 
-    e, conn = ConnectorService.get_by_id(connector_id)
-    if not e:
-        return get_data_error_result(message="Can't find this Connector!")
+    conn = _scoped_connector(connector_id)
+    if conn is None:
+        return _connector_auth_error(connector_id, current_user.id)
 
     should_sleep = False
     if req:
@@ -85,8 +97,8 @@ async def update_connector(connector_id):
 
     if should_sleep:
         await asyncio.sleep(1)
-    e, conn = ConnectorService.get_by_id(connector_id)
-    if not e:
+    conn = _scoped_connector(connector_id)
+    if conn is None:
         return get_data_error_result(message="Can't find this Connector!")
 
     return get_json_result(data=conn.to_dict())
@@ -130,9 +142,9 @@ def list_connector():
 @login_required
 @require_permission(Permission.DATASOURCE_CONFIGURE)
 def get_connector(connector_id):
-    e, conn = ConnectorService.get_by_id(connector_id)
-    if not e:
-        return get_data_error_result(message="Can't find this Connector!")
+    conn = _scoped_connector(connector_id)
+    if conn is None:
+        return _connector_auth_error(connector_id, current_user.id)
     return get_json_result(data=conn.to_dict())
 
 
@@ -140,6 +152,8 @@ def get_connector(connector_id):
 @login_required
 @require_permission(Permission.DATASOURCE_CONFIGURE)
 def list_logs(connector_id):
+    if _scoped_connector(connector_id) is None:
+        return _connector_auth_error(connector_id, current_user.id)
     req = request.args.to_dict(flat=True)
     arr, total = SyncLogsService.list_sync_tasks(
         connector_id,
@@ -153,6 +167,8 @@ def list_logs(connector_id):
 @login_required
 @require_permission(Permission.DATASOURCE_CONFIGURE)  # --- CYLLENE CUSTOM CODE ---
 async def resume(connector_id):
+    if _scoped_connector(connector_id) is None:
+        return _connector_auth_error(connector_id, current_user.id)
     req = await get_request_json()
     if req.get("resume"):
         ConnectorService.resume(connector_id, TaskStatus.SCHEDULE)
@@ -198,9 +214,9 @@ async def test_connector(connector_id):
     from common.data_source.rest_api_connector import RestAPIConnector
     from common.data_source.exceptions import ConnectorMissingCredentialError, ConnectorValidationError
 
-    ok, conn = ConnectorService.get_by_id(connector_id)
-    if not ok:
-        return get_data_error_result(message="Can't find this Connector!")
+    conn = _scoped_connector(connector_id)
+    if conn is None:
+        return _connector_auth_error(connector_id, current_user.id)
 
     if conn.source != DocumentSource.REST_API:
         return get_json_result(
@@ -297,6 +313,13 @@ async def _render_web_oauth_popup(flow_id: str, success: bool, message: str, sou
     #   Drive: ragflow-google-drive-oauth
     #   Gmail: ragflow-gmail-oauth
     payload_type = f"ragflow-{source}-oauth"
+    # CUSTOM B2B SaaS — flow_id vient de l'URL (`state` du callback Box) et
+    # atterrit DANS un <script> : json.dumps n'échappe ni `</script>` ni `<`,
+    # d'où un XSS réfléchi non authentifié sur l'origine de l'API (audit
+    # 2026-09-06). Format strict + échappement pour contexte script.
+    import re as _re
+    if not _re.fullmatch(r"[A-Za-z0-9_\-]{1,128}", flow_id or ""):
+        flow_id = ""
     payload_json = json.dumps(
         {
             "type": payload_type,
@@ -304,7 +327,7 @@ async def _render_web_oauth_popup(flow_id: str, success: bool, message: str, sou
             "flowId": flow_id or "",
             "message": message,
         }
-    )
+    ).replace("<", "\\u003c").replace(">", "\\u003e").replace("&", "\\u0026")
     # TODO(google-oauth): title/heading/message may need to reflect drive/gmail based on cached type
     html = WEB_OAUTH_POPUP_TEMPLATE.format(
         title=f"Google {source.capitalize()} Authorization",
@@ -350,7 +373,7 @@ async def start_google_web_oauth():
 
     try:
         credentials = _load_credentials(raw_credentials)
-        print(credentials)
+        # (audit 2026-09-06 : un print() écrivait le client_secret Google dans les logs)
     except ValueError as exc:
         return get_json_result(code=RetCode.ARGUMENT_ERROR, message=str(exc))
 

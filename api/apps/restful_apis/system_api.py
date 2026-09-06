@@ -96,6 +96,11 @@ def status():
               type: string
               description: Error message.
     """
+    # CUSTOM B2B SaaS — diagnostic plateforme (heartbeats des executors avec
+    # tenant_id et noms de fichiers de TOUS les tenants, IPs, erreurs brutes
+    # DB/ES/MinIO) : superuser uniquement (audit 2026-09-06).
+    if not current_user.is_superuser:
+        return get_json_result(data=False, message="Superuser only", code=403)
     res = {}
     st = timer()
     try:

@@ -14,6 +14,7 @@ import 'katex/dist/katex.min.css'; // `rehype-katex` does not import the CSS for
 import { preprocessLaTeX } from '@/utils/chat';
 import { citationMarkerReg } from '@/utils/citation-utils';
 import { getDirAttribute } from '@/utils/text-direction';
+import DOMPurify from 'dompurify';
 import { omit } from 'lodash';
 import { useIsDarkTheme } from '../theme-provider';
 import styles from './index.module.less';
@@ -60,7 +61,10 @@ const HighLightMarkdown = ({
           } as any
         }
       >
-        {children ? preprocessLaTeX(children) : children}
+        {/* CUSTOM B2B SaaS — rehype-raw exécute le HTML du texte (chunks,
+            sorties d'agent, prompts) : DOMPurify obligatoire avant
+            (audit 2026-09-06, XSS stocké via <iframe srcdoc>). */}
+        {children ? preprocessLaTeX(DOMPurify.sanitize(children)) : children}
       </Markdown>
     </div>
   );

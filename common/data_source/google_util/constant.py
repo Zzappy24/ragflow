@@ -93,7 +93,9 @@ WEB_OAUTH_POPUP_TEMPLATE = """<!DOCTYPE html>
   <script>
     (function(){{
       if (window.opener) {{
-        window.opener.postMessage({payload_json}, "*");
+        // CUSTOM B2B SaaS — cible = notre origine (l'app ouvre ce popup depuis
+        // la même origine), plus de diffusion "*" (audit 2026-09-06).
+        window.opener.postMessage({payload_json}, window.location.origin);
       }}
       {auto_close}
     }})();

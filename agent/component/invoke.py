@@ -68,10 +68,12 @@ class Invoke(ComponentBase, ABC):
                     type(value).__name__,
                 )
             except json.JSONDecodeError as exc:
+                # CUSTOM B2B SaaS — jamais la valeur brute dans les logs (clés API
+                # en paramètres de requête, contenu utilisateur ; audit 2026-09-06).
                 logging.info(
-                    "Invoke JSON arg coercion skipped; value is not valid JSON. key=%s raw=%r error=%s",
+                    "Invoke JSON arg coercion skipped; value is not valid JSON. key=%s len=%d error=%s",
                     key,
-                    raw_value,
+                    len(raw_value) if isinstance(raw_value, str) else -1,
                     exc,
                 )
                 return raw_value
@@ -102,10 +104,12 @@ class Invoke(ComponentBase, ABC):
                     type(value).__name__,
                 )
             except json.JSONDecodeError as exc:
+                # CUSTOM B2B SaaS — jamais la valeur brute dans les logs (clés API
+                # en paramètres de requête, contenu utilisateur ; audit 2026-09-06).
                 logging.info(
-                    "Invoke JSON arg coercion skipped; value is not valid JSON. key=%s raw=%r error=%s",
+                    "Invoke JSON arg coercion skipped; value is not valid JSON. key=%s len=%d error=%s",
                     key,
-                    raw_value,
+                    len(raw_value) if isinstance(raw_value, str) else -1,
                     exc,
                 )
                 return raw_value
@@ -293,9 +297,10 @@ class Invoke(ComponentBase, ABC):
             try:
                 parsed_headers = json.loads(self._param.headers)
             except json.JSONDecodeError as e:
+                # CUSTOM B2B SaaS — les en-têtes contiennent des Authorization (audit 2026-09-06).
                 logging.warning(
-                    "Invoke headers are not valid JSON, ignoring headers. raw=%r error=%s",
-                    self._param.headers,
+                    "Invoke headers are not valid JSON, ignoring headers. len=%d error=%s",
+                    len(self._param.headers),
                     e,
                 )
                 parsed_headers = {}

@@ -61,6 +61,11 @@ def user_list(tenant_id):
 @login_required
 @validate_request("email")
 async def create(tenant_id):
+    # CUSTOM B2B SaaS — invitation « équipe » du tenant personnel (upstream) :
+    # tout utilisateur pouvait sonder l'existence de n'importe quel email de la
+    # plateforme, obtenir id/nickname/avatar et lui envoyer un email (audit
+    # 2026-09-06). Les équipes sont les workspaces, gérés par le panel.
+    return get_json_result(data=False, code=RetCode.FORBIDDEN, message="Team invitations are managed by the admin panel.")
     if current_user.id != tenant_id:
         return get_json_result(
             data=False,
@@ -138,6 +143,8 @@ async def create(tenant_id):
 @login_required
 @validate_request("user_id")
 async def rm(tenant_id):
+    # CUSTOM B2B SaaS — cf. create() : équipes = workspaces, gérées par le panel.
+    return get_json_result(data=False, code=RetCode.FORBIDDEN, message="Team membership is managed by the admin panel.")
     req = await get_request_json()
     user_id = req["user_id"]
     if current_user.id != tenant_id and current_user.id != user_id:

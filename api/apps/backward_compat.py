@@ -290,6 +290,7 @@ async def deprecated_file_mv(tenant_id=None):
 
 @manager.route("/file/rename", methods=["POST"])
 @login_required
+@require_permission(Permission.DOCUMENT_CREATE)  # CUSTOM B2B SaaS — audit 2026-09-06 : seul forwarder qui court-circuitait le RBAC de /files/move
 @add_tenant_id_to_kwargs
 async def deprecated_file_rename(tenant_id=None):
     """

@@ -23,10 +23,38 @@ data:
       root /ragflow/web/dist;
       index index.html;
 
+      # CUSTOM B2B SaaS — en-têtes de sécurité du FRONT (audit 2026-09-06) :
+      # ceux de l'API ne couvrent que ses réponses ; index.html et le bundle
+      # (où vit le token de session) n'en avaient aucun → clickjacking, et
+      # fuite du token porté par ?auth= dans le Referer. Pas de CSP script
+      # ici (le bundle en a besoin), mais frame-ancestors/object-src.
+      add_header X-Frame-Options "DENY" always;
+      add_header X-Content-Type-Options "nosniff" always;
+      add_header Referrer-Policy "no-referrer" always;
+      add_header Content-Security-Policy "frame-ancestors 'none'; object-src 'none'; base-uri 'self'" always;
+
+      # Pages conçues pour être embarquées par les sites clients (partage de
+      # chat/agent/recherche, widget) : frameables, le reste des en-têtes
+      # est redéclaré car nginx n'hérite pas d'add_header dans un bloc qui
+      # en définit.
+      location ~ ^/(chats/(share|widget)|agent/share|search/share) {
+        # `/index.html =404` (4 arguments) : index.html est servi DANS ce bloc,
+        # sans redirection interne vers `location /` (qui ré-appliquerait DENY).
+        try_files $uri $uri/ /index.html =404;
+        add_header Cache-Control "no-cache, no-store, must-revalidate";
+        add_header X-Content-Type-Options "nosniff" always;
+        add_header Referrer-Policy "no-referrer" always;
+        add_header Content-Security-Policy "object-src 'none'; base-uri 'self'" always;
+      }
+
       # SPA fallback — let React Router handle unknown paths.
       location / {
         try_files $uri $uri/ /index.html;
         add_header Cache-Control "no-cache, no-store, must-revalidate";
+        add_header X-Frame-Options "DENY" always;
+        add_header X-Content-Type-Options "nosniff" always;
+        add_header Referrer-Policy "no-referrer" always;
+        add_header Content-Security-Policy "frame-ancestors 'none'; object-src 'none'; base-uri 'self'" always;
       }
 
       # Hashed assets (vite emits content-hashed filenames) cached forever.

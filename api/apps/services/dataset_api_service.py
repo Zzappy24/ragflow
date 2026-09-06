@@ -391,7 +391,9 @@ def list_datasets(tenant_id: str, args: dict):
         if not kbs:
             return False, f"User '{tenant_id}' lacks permission for dataset '{name}'"
     if ext_fields.get("owner_ids", []):
-        tenant_ids = ext_fields["owner_ids"]
+        # CUSTOM B2B SaaS — owner_ids étrangers = listing des bases d'un autre
+        # workspace (audit 2026-09-06) : on ne garde que le tenant appelant.
+        tenant_ids = [t for t in ext_fields["owner_ids"] if t == tenant_id] or [tenant_id]
     else:
         # CUSTOM B2B SaaS: workspace-strict scoping. Upstream did
         # `get_joined_tenants_by_user_id(tenant_id)` which assumes `tenant_id`

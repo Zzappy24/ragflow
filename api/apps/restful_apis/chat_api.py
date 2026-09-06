@@ -472,6 +472,13 @@ async def list_chats():
     orderby = request.args.get("orderby", "create_time")
     desc = request.args.get("desc", "true").lower() != "false"
     owner_ids = request.args.getlist("owner_ids")
+    # CUSTOM B2B SaaS — owner_ids est passé tel quel au DAO (tenant_id IN …) :
+    # un membre listait les chats (kb_ids, prompt_config) de n'importe quel
+    # workspace (audit 2026-09-06). Seuls le workspace actif et le tenant
+    # personnel du demandeur sont admis.
+    if owner_ids:
+        _allowed_owner_ids = {active_tenant_id(), current_user.id}
+        owner_ids = [o for o in owner_ids if o in _allowed_owner_ids] or [active_tenant_id()]
     exact_filters = {"id": chat_id, "name": name}
     if chat_id or name:
         keywords = ""
@@ -1199,7 +1206,7 @@ async def mindmap():
     # LLM est le workspace actif, plus celui d'une search app étrangère.
     search_id = req.get("search_id", "")
     if search_id and not SearchService.query(id=search_id, tenant_id=tenant_id):
-        return get_error_data_result(message="You don't own the search app.")
+        return get_data_error_result(message="You don't own the search app.")
     search_app = SearchService.get_detail(search_id) if search_id else {}
     search_config = search_app.get("search_config", {}) if search_app else {}
     kb_ids = list(search_config.get("kb_ids", []))
@@ -1207,7 +1214,7 @@ async def mindmap():
     kb_ids = list(set(kb_ids))
     error = _validate_dataset_ids(kb_ids, tenant_id)
     if isinstance(error, str):
-        return get_error_data_result(message=error)
+        return get_data_error_result(message=error)
 
     mind_map = await gen_mindmap(req["question"], kb_ids, tenant_id, search_config)
     if "error" in mind_map:
@@ -1457,12 +1464,12 @@ async def ask():
     kb_ids = req["kb_ids"] if isinstance(req["kb_ids"], list) else [req["kb_ids"]]
     error = _validate_dataset_ids(kb_ids, uid)
     if isinstance(error, str):
-        return get_error_data_result(message=error)
+        return get_data_error_result(message=error)
     search_id = req.get("search_id", "")
     search_config = {}
     if search_id:
         if not SearchService.query(id=search_id, tenant_id=uid):
-            return get_error_data_result(message="You don't own the search app.")
+            return get_data_error_result(message="You don't own the search app.")
         if search_app := SearchService.get_detail(search_id):
             search_config = search_app.get("search_config", {})
 

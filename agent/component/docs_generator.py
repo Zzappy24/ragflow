@@ -245,7 +245,11 @@ class DocGenerator(Message, ABC):
         pypandoc.convert_text(
             markdown_content,
             to=target_format,
-            format="markdown",
+            # CUSTOM B2B SaaS — `-raw_tex` : sans quoi du TeX brut dans le contenu
+            # (sortie LLM, variable amont) traverse jusqu'à xelatex et
+            # `\input{/ragflow/conf/service_conf.yaml}` embarque un fichier du
+            # serveur dans le PDF rendu à l'utilisateur (audit 2026-09-06).
+            format="markdown-raw_tex",
             outputfile=file_path,
             extra_args=extra_args or [],
         )

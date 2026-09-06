@@ -55,24 +55,28 @@ export const buildMessageUuidWithRole = (
 const BLOCK_MATH_RE = /\\\[([\s\S]*?)(?<![a-zA-Z])\\\]/g;
 const INLINE_MATH_RE = /\\\(([\s\S]*?)(?<![a-zA-Z])\\\)/g;
 
+// CUSTOM B2B SaaS — les entités HTML ne sont décodées QUE dans les équations
+// (KaTeX en a besoin pour `<`), jamais dans le texte : décodées globalement
+// APRÈS DOMPurify, elles recréaient du HTML vivant que rehype-raw exécutait
+// (`&lt;iframe srcdoc=…&gt;` → XSS stocké, audit 2026-09-06).
+const decodeMathEntities = (equation: string) =>
+  equation.replace(/&lt;/g, '<').replace(/&gt;/g, '>').replace(/&amp;/g, '&');
+
 export const preprocessLaTeX = (content: string) => {
   const normalizedContent = content
     .replace(/\\\\\[/g, '\\[')
     .replace(/\\\\\(/g, '\\(')
     .replace(/\\\\\]/g, '\\]')
-    .replace(/\\\\\)/g, '\\)')
-    .replace(/&lt;/g, '<')
-    .replace(/&gt;/g, '>')
-    .replace(/&amp;/g, '&');
+    .replace(/\\\\\)/g, '\\)');
 
   const blockProcessedContent = normalizedContent.replace(
     BLOCK_MATH_RE,
-    (_, equation) => `$$${equation}$$`,
+    (_, equation) => `$$${decodeMathEntities(equation)}$$`,
   );
 
   const inlineProcessedContent = blockProcessedContent.replace(
     INLINE_MATH_RE,
-    (_, equation) => `$${equation}$`,
+    (_, equation) => `$${decodeMathEntities(equation)}$`,
   );
 
   return inlineProcessedContent;
