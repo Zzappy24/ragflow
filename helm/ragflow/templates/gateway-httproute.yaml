@@ -26,6 +26,24 @@ spec:
     - {{ .Values.global.hostname | quote }}
 
   rules:
+    # CUSTOM B2B SaaS — routes service-à-service (/api/v1/internal/*, secret
+    # partagé : bridge, invitation, vérification de modèle, scan de stockage,
+    # purge) : JAMAIS depuis internet. Gateway API choisit le préfixe le plus
+    # long, donc cette règle gagne sur /api/ ci-dessous ; elle envoie vers le
+    # nginx du front, dont le bloc `location ^~ /api/v1/internal/` répond 404
+    # (charts/ragflow-frontend/templates/configmap-nginx.yaml). Le trafic
+    # /api/ externe n'a JAMAIS traversé ce nginx (audit 2026-09-06) : sans
+    # cette règle, le 404 nginx ne protégeait rien. Le panel joint l'API par
+    # son Service, il n'est pas concerné.
+    - matches:
+        - path:
+            type: PathPrefix
+            value: /api/v1/internal/
+      backendRefs:
+        - name: {{ .Release.Name }}-frontend
+          port: 80
+          weight: 100
+
     # Backend API — both /api/v1/* (REST) and /v1/* (legacy SDK paths).
     # Match in order: more specific paths first.
     - matches:

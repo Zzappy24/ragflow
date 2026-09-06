@@ -236,6 +236,7 @@ def healthz():
 
 @manager.route("/system/tokens", methods=["GET"])  # noqa: F821
 @login_required
+@require_permission(Permission.API_KEY_MANAGE)  # CUSTOM B2B SaaS — audit 2026-09-06 : token/beta en clair à tout membre (viewer → clé d'admin)
 def token_list():
     """
     List all API tokens for the current user.

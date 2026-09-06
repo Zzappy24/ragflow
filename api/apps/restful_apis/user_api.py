@@ -1031,8 +1031,17 @@ async def set_tenant_info():
     """
     req = await get_request_json()
     try:
-        tid = req.pop("tenant_id")
-        TenantService.update_by_id(tid, req)
+        # CUSTOM B2B SaaS — le tenant visé est TOUJOURS le workspace actif :
+        # le tenant_id du corps permettait de réécrire les modèles (et toute
+        # colonne Tenant) de n'importe quel workspace de la plateforme
+        # (audit 2026-09-06). Champs autorisés : les identifiants de modèles.
+        from api.utils.tenant_context import active_tenant_id
+        req.pop("tenant_id", None)
+        allowed = {"llm_id", "embd_id", "asr_id", "img2txt_id", "rerank_id", "tts_id"}
+        update = {k: v for k, v in req.items() if k in allowed}
+        if not update:
+            return get_json_result(data=False, code=RetCode.ARGUMENT_ERROR, message="Nothing to update")
+        TenantService.update_by_id(active_tenant_id(), update)
         return get_json_result(data=True)
     except Exception as e:
         return server_error_response(e)

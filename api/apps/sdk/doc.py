@@ -362,6 +362,14 @@ async def download_doc(document_id):
             document_id,
         )
         return get_error_data_result(message="You do not have access to this document.")
+    # CUSTOM B2B SaaS — le jeton beta est PUBLIC (URL d'iframe) : un visiteur ne
+    # télécharge que les documents des bases du chatbot/search app pour lequel
+    # le jeton a été frappé, pas tout le workspace (audit 2026-09-06).
+    from api.utils.beta_scope import beta_allowed_kb_ids
+    allowed = beta_allowed_kb_ids(tenant_id, objs[0])
+    if allowed is not None and doc[0].kb_id not in allowed:
+        logging.warning("beta token bound to %s denied download of document %s", objs[0].dialog_id, document_id)
+        return get_error_data_result(message="You do not have access to this document.")
     # The process of downloading
     doc_id, doc_location = File2DocumentService.get_storage_address(doc_id=document_id)  # minio address
     # CUSTOM B2B SaaS — streamed download (api/utils/blob_stream.py) : la

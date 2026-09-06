@@ -389,6 +389,14 @@ def token_required(func):
                             g._rbac_user_id = scope.created_by
                         except Exception:
                             pass
+                    # CUSTOM B2B SaaS — les permissions frappées sur la clé
+                    # n'étaient jamais lues : une clé « dataset.read » portait le
+                    # rôle complet de son créateur (audit 2026-09-06). Lues par
+                    # require_permission.
+                    try:
+                        g.api_key_permissions = list(scope.permissions or [])
+                    except Exception:
+                        pass
             except WerkzeugUnauthorized:
                 raise
             except Exception:
@@ -405,7 +413,10 @@ def token_required(func):
         _jwt_auth_ok = False
         try:
             jwt = Serializer(secret_key=settings.get_secret_key())
-            raw_token = str(jwt.loads(token))
+            # CUSTOM B2B SaaS — même plafond de session que _load_user (7 j) :
+            # sans max_age, un token de login périmé restait valide ici.
+            from api.apps import SESSION_MAX_AGE_S as _max_age
+            raw_token = str(jwt.loads(token, max_age=_max_age))
             user = UserService.query(access_token=raw_token, status=StatusEnum.VALID.value)
             if user:
                 # Resolve tenant: prefer workspace tenant (X-Workspace-Id) over personal tenant

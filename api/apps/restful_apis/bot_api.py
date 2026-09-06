@@ -177,6 +177,12 @@ async def chatbot_completions(dialog_id, tenant_id=None):
             req.get("session_id"),
         )
         return get_error_data_result(message="Authentication error: no access to this chatbot!")
+    # CUSTOM B2B SaaS — un jeton beta frappé pour un chatbot précis ne sert
+    # que lui : embarquer la FAQ publique ne doit pas ouvrir le bot RH du même
+    # workspace (audit 2026-09-06, cf. api/utils/beta_scope.py).
+    from api.utils.beta_scope import beta_denies
+    if beta_denies(dialog_id):
+        return get_error_data_result(message="Authentication error: no access to this chatbot!")
 
     if "quote" not in req:
         req["quote"] = False
@@ -265,6 +271,13 @@ async def chatbots_inputs(dialog_id, tenant_id=None):
 @add_tenant_id_to_kwargs
 async def agent_bot_completions(agent_id, tenant_id=None):
     req = await get_request_json()
+    # CUSTOM B2B SaaS — l'agent doit appartenir au tenant du jeton (un jeton
+    # beta public lançait N'IMPORTE QUEL agent de la plateforme : outils SQL,
+    # SMTP, HTTP avec leurs credentials stockés — audit 2026-09-06), et un
+    # jeton frappé pour un agent précis ne sert que lui.
+    from api.utils.beta_scope import beta_denies
+    if beta_denies(agent_id) or not await thread_pool_exec(UserCanvasService.accessible, agent_id, tenant_id):
+        return get_error_data_result(message="Authentication error: no access to this agent!")
 
     if req.get("stream", True):
         async def stream():
@@ -346,6 +359,10 @@ async def agent_bot_completions(agent_id, tenant_id=None):
 @login_required(auth_types=AUTH_BETA)
 @add_tenant_id_to_kwargs
 async def begin_inputs(agent_id, tenant_id=None):
+    # CUSTOM B2B SaaS — même scope que agent_bot_completions (audit 2026-09-06).
+    from api.utils.beta_scope import beta_denies
+    if beta_denies(agent_id) or not await thread_pool_exec(UserCanvasService.accessible, agent_id, tenant_id):
+        return get_error_data_result(f"Can't find agent by ID: {agent_id}")
     e, cvs = await thread_pool_exec(UserCanvasService.get_by_id, agent_id)
     if not e:
         return get_error_data_result(f"Can't find agent by ID: {agent_id}")
@@ -364,11 +381,22 @@ async def ask_about_embedded(tenant_id=None):
     req = await get_request_json()
     uid = tenant_id
 
+    # CUSTOM B2B SaaS — kb_ids et search_id fournis par le client : chaque base
+    # doit appartenir au tenant du jeton et rester dans le périmètre de l'objet
+    # lié au jeton ; la search app aussi. Sans cela, un jeton beta public lisait
+    # les chunks de N'IMPORTE QUELLE base de la plateforme (audit 2026-09-06).
+    from api.utils.beta_scope import beta_allowed_kb_ids, beta_denies, kb_ids_owned_by
     search_id = req.get("search_id", "")
     search_config = {}
     if search_id:
+        if beta_denies(search_id) or not await thread_pool_exec(SearchService.query, id=search_id, tenant_id=uid):
+            return get_error_data_result(message="Authentication error: no access to this search app!")
         if search_app := await thread_pool_exec(SearchService.get_detail, search_id):
             search_config = search_app.get("search_config", {})
+    kb_ids = req["kb_ids"] if isinstance(req["kb_ids"], list) else [req["kb_ids"]]
+    allowed = await thread_pool_exec(beta_allowed_kb_ids, uid)
+    if not await thread_pool_exec(kb_ids_owned_by, uid, kb_ids) or (allowed is not None and not set(kb_ids) <= allowed):
+        return get_error_data_result(message="Authentication error: no access to these datasets!")
 
     chat_llm_name = ""
     if not search_config or not search_config.get("chat_id"):
@@ -378,7 +406,7 @@ async def ask_about_embedded(tenant_id=None):
     async def stream():
         nonlocal req, uid
         try:
-            async for ans in async_ask(req["question"], req["kb_ids"], uid, chat_llm_name=chat_llm_name, search_config=search_config):
+            async for ans in async_ask(req["question"], kb_ids, uid, chat_llm_name=chat_llm_name, search_config=search_config):
                 yield "data:" + json.dumps({"code": 0, "message": "", "data": ans}, ensure_ascii=False) + "\n\n"
         except Exception as e:
             yield "data:" + json.dumps(
@@ -421,6 +449,12 @@ async def retrieval_test_embedded(tenant_id=None):
     if not tenant_id:
         return get_error_data_result(message="permission denined.")
     search_config = {}
+    # CUSTOM B2B SaaS — la search app doit appartenir au tenant du jeton et
+    # rester celle pour laquelle le jeton a été frappé (audit 2026-09-06).
+    if req.get("search_id", ""):
+        from api.utils.beta_scope import beta_denies
+        if beta_denies(req["search_id"]) or not await thread_pool_exec(SearchService.query, id=req["search_id"], tenant_id=tenant_id):
+            return get_error_data_result(message="Authentication error: no access to this search app!")
 
     async def _retrieval():
         nonlocal similarity_threshold, vector_similarity_weight, top, rerank_id
@@ -469,15 +503,19 @@ async def retrieval_test_embedded(tenant_id=None):
                 metas_loader=lambda: DocMetadataService.get_flatted_meta_by_kbs(kb_ids),
             )
 
-        tenants = await thread_pool_exec(UserTenantService.query, user_id=tenant_id)
-        for kb_id in kb_ids:
-            for tenant in tenants:
-                if await thread_pool_exec(KnowledgebaseService.query, tenant_id=tenant.tenant_id, id=kb_id):
-                    tenant_ids.append(tenant.tenant_id)
-                    break
-            else:
-                return get_json_result(data=False, message="Only owner of dataset authorized for this operation.",
-                                       code=RetCode.OPERATING_ERROR)
+        # CUSTOM B2B SaaS — scope strict au tenant du jeton ET au périmètre de
+        # l'objet lié (dialog/search app) : l'ancien test passait par
+        # UserTenant de l'utilisateur technique, donc TOUT le workspace, et
+        # rien ne limitait size/top_k (export de bases entières par un
+        # visiteur anonyme — audit 2026-09-06).
+        from api.utils.beta_scope import beta_allowed_kb_ids, kb_ids_owned_by
+        allowed = await thread_pool_exec(beta_allowed_kb_ids, tenant_id)
+        if not await thread_pool_exec(kb_ids_owned_by, tenant_id, kb_ids) or (allowed is not None and not set(kb_ids) <= allowed):
+            return get_json_result(data=False, message="Only owner of dataset authorized for this operation.",
+                                   code=RetCode.OPERATING_ERROR)
+        tenant_ids = [tenant_id]
+        size = min(size, 100)
+        top = min(top, 200)
 
         e, kb = await thread_pool_exec(KnowledgebaseService.get_by_id, kb_ids[0])
         if not e:
@@ -603,10 +641,18 @@ async def detail_share_embedded(tenant_id=None):
 async def mindmap(tenant_id=None):
     req = await get_request_json()
 
+    # CUSTOM B2B SaaS — même scope que ask_about_embedded (audit 2026-09-06).
+    from api.utils.beta_scope import beta_allowed_kb_ids, beta_denies, kb_ids_owned_by
     search_id = req.get("search_id", "")
+    if search_id and (beta_denies(search_id) or not await thread_pool_exec(SearchService.query, id=search_id, tenant_id=tenant_id)):
+        return get_error_data_result(message="Authentication error: no access to this search app!")
+    kb_ids = req["kb_ids"] if isinstance(req["kb_ids"], list) else [req["kb_ids"]]
+    allowed = await thread_pool_exec(beta_allowed_kb_ids, tenant_id)
+    if not await thread_pool_exec(kb_ids_owned_by, tenant_id, kb_ids) or (allowed is not None and not set(kb_ids) <= allowed):
+        return get_error_data_result(message="Authentication error: no access to these datasets!")
     search_app = await thread_pool_exec(SearchService.get_detail, search_id) if search_id else {}
 
-    mind_map =await gen_mindmap(req["question"], req["kb_ids"], tenant_id, search_app.get("search_config", {}))
+    mind_map =await gen_mindmap(req["question"], kb_ids, tenant_id, search_app.get("search_config", {}))
     if "error" in mind_map:
         return server_error_response(Exception(mind_map["error"]))
     return get_json_result(data=mind_map)

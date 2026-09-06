@@ -138,9 +138,15 @@ def _format_filename(pattern: str, content: dict) -> str:
     template received, plus a `ts` field. Uses Jinja2 directly (already a
     transitive dep via docxtpl) so users can write things like
     `{{procedure_name|slugify}}-{{ts}}.docx` in the canvas."""
-    from jinja2 import Environment, BaseLoader, select_autoescape
+    # CUSTOM B2B SaaS — SandboxedEnvironment OBLIGATOIRE : `pattern` est un
+    # paramètre de canvas écrit par un utilisateur client. Avec un
+    # Environment nu, `{{cycler.__init__.__globals__.os.popen('id').read()}}`
+    # exécutait une commande dans le processus API (audit 2026-09-06, SSTI →
+    # RCE). Même règle que agent/component/message.py et string_transform.py.
+    from jinja2 import BaseLoader, select_autoescape
+    from jinja2.sandbox import SandboxedEnvironment
 
-    env = Environment(loader=BaseLoader(), autoescape=select_autoescape([]))
+    env = SandboxedEnvironment(loader=BaseLoader(), autoescape=select_autoescape([]))
     env.filters["slugify"] = _slugify
     ctx = dict(content) if isinstance(content, dict) else {}
     ctx["ts"] = datetime.utcnow().strftime("%Y%m%dT%H%M%SZ")
@@ -305,7 +311,11 @@ class RenderDocxTemplate(ToolBase, ABC):
         #    so authors learn one templating system.
         doc = DocxTemplate(io.BytesIO(tmpl_blob))
         try:
-            doc.render(content)
+            # CUSTOM B2B SaaS — le .docx est téléversé par l'utilisateur : ses
+            # {{ }} sont du Jinja attaquant. Sans jinja_env, docxtpl rend avec
+            # un Template nu (RCE, audit 2026-09-06). Bac à sable obligatoire.
+            from jinja2.sandbox import SandboxedEnvironment
+            doc.render(content, jinja_env=SandboxedEnvironment())
         except Exception as e:
             msg = (
                 f"render_docx_template: template render failed — "

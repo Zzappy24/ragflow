@@ -62,9 +62,12 @@ def _slugify(value: str) -> str:
 
 
 def _format_filename(pattern: str, content: dict) -> str:
-    from jinja2 import Environment, BaseLoader, select_autoescape
+    # CUSTOM B2B SaaS — SandboxedEnvironment obligatoire (SSTI → RCE, audit
+    # 2026-09-06) ; cf. agent/tools/render_docx_template.py.
+    from jinja2 import BaseLoader, select_autoescape
+    from jinja2.sandbox import SandboxedEnvironment
 
-    env = Environment(loader=BaseLoader(), autoescape=select_autoescape([]))
+    env = SandboxedEnvironment(loader=BaseLoader(), autoescape=select_autoescape([]))
     env.filters["slugify"] = _slugify
     ctx = dict(content) if isinstance(content, dict) else {}
     ctx["ts"] = datetime.utcnow().strftime("%Y%m%dT%H%M%SZ")
@@ -224,7 +227,9 @@ class RenderDocxTemplatePlugin(LLMToolPlugin):
 
         doc = DocxTemplate(io.BytesIO(tmpl_blob))
         try:
-            doc.render(content_dict)
+            # CUSTOM B2B SaaS — bac à sable Jinja obligatoire (RCE sinon).
+            from jinja2.sandbox import SandboxedEnvironment
+            doc.render(content_dict, jinja_env=SandboxedEnvironment())
         except Exception as e:
             msg = (
                 "render_docx_template: template render failed — check that placeholders "

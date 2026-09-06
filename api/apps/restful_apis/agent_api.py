@@ -2290,8 +2290,12 @@ async def webhook(agent_id: str):
 @manager.route("/agents/<agent_id>/webhook/logs", methods=["GET"])  # noqa: F821
 @login_required
 async def webhook_trace(agent_id: str):
+    # CUSTOM B2B SaaS — les canvas de workspace ont user_id = tenant du
+    # workspace, jamais l'utilisateur courant : l'ancien test rendait la route
+    # inutilisable. Scope = agent accessible dans le workspace actif.
+    from api.utils.tenant_context import active_tenant_id
     exists, cvs = UserCanvasService.get_by_id(agent_id)
-    if not exists or str(cvs.user_id) != str(current_user.id):
+    if not exists or not UserCanvasService.accessible(agent_id, active_tenant_id()):
         return get_data_error_result(
             message="Canvas not found.",
         )

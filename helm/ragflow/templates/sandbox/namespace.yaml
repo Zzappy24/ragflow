@@ -6,4 +6,15 @@ metadata:
   labels:
     app.kubernetes.io/part-of: ragflow
     ragflow.io/component: sandbox
+    # CUSTOM B2B SaaS — Pod Security Admission « restricted » (audit
+    # 2026-09-06) : le Role du lanceur autorise « create jobs », donc N'IMPORTE
+    # QUEL PodSpec. Sans cette admission, un pod api compromis (jeton de SA
+    # monté) pouvait créer un Job privileged/hostPath dans ce namespace et
+    # prendre le nœud. Le manifeste du provider (agent/sandbox/providers/
+    # k8s.py) est déjà conforme : runAsNonRoot, drop ALL, no privilege
+    # escalation, seccomp RuntimeDefault, volumes emptyDir uniquement.
+    pod-security.kubernetes.io/enforce: restricted
+    pod-security.kubernetes.io/enforce-version: latest
+    pod-security.kubernetes.io/warn: restricted
+    pod-security.kubernetes.io/audit: restricted
 {{- end }}

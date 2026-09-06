@@ -31,6 +31,7 @@ from api.apps.services.canvas_replica_service import CanvasReplicaService
 from api.db import CanvasCategory
 from api.db.services.audit_service import AuditService
 from api.db.services.canvas_service import UserCanvasService
+from api.apps import login_required  # CUSTOM B2B SaaS — webhook_trace (audit 2026-09-06)
 from api.db.services.file_service import FileService
 from api.db.services.user_service import UserService
 from api.db.services.user_canvas_version import UserCanvasVersionService
@@ -764,7 +765,16 @@ async def webhook(agent_id: str):
 
 
 @manager.route("/webhook_trace/<agent_id>", methods=["GET"])  # noqa: F821
+@login_required
 async def webhook_trace(agent_id: str):
+    # CUSTOM B2B SaaS — route sans AUCUNE authentification jusqu'au 2026-09-06 :
+    # la trace des tests de webhook (requêtes entrantes complètes, sorties de
+    # l'agent) était lisible par quiconque connaissait l'id de l'agent (qui
+    # EST l'URL du webhook). Login + agent du workspace actif.
+    from api.utils.tenant_context import active_tenant_id
+    if not UserCanvasService.accessible(agent_id, active_tenant_id()):
+        return get_data_error_result(message="Canvas not found.")
+
     def encode_webhook_id(start_ts: str) -> str:
         WEBHOOK_ID_SECRET = "webhook_id_secret"
         sig = hmac.new(

@@ -59,6 +59,7 @@ async def new_token():
 
 @manager.route('/token_list', methods=['GET'])  # noqa: F821
 @login_required
+@require_permission(Permission.API_KEY_MANAGE)  # CUSTOM B2B SaaS — audit 2026-09-06 : token/beta en clair à tout membre
 def token_list():
     try:
         id = request.args["dialog_id"] if "dialog_id" in request.args else request.args["canvas_id"]

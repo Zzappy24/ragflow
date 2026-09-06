@@ -254,6 +254,10 @@ def _load_user(auth_types=None):
                 if user:
                     g.auth_type = AUTH_BETA
                     g.user = user[0]
+                    # CUSTOM B2B SaaS — la ligne du jeton (dialog_id lié) sert aux
+                    # routes beta pour borner ce que ce jeton PUBLIC peut atteindre
+                    # (cf. api/utils/beta_scope.py, audit 2026-09-06).
+                    g.beta_token = objs[0]
                     return user[0]
             g.auth_error_message = 'Authentication error: API key is invalid! '
         except Exception as e_beta:
@@ -300,27 +304,45 @@ def _load_user(auth_types=None):
                 # check. We resolve to the human creator stored in ApiKeyScope first
                 # so the RBAC layer sees the real owner. Falls back to upstream
                 # behavior for legacy/unscoped tokens.
+                scope = None
                 try:
                     from api.db.services.workspace_service import ApiKeyScopeService
                     scope = ApiKeyScopeService.get_by_token(auth_token)
-                    if scope and scope.created_by:
-                        user = UserService.query(id=scope.created_by, status=StatusEnum.VALID.value)
-                        if user and user[0].access_token and user[0].access_token.strip():
-                            g.auth_type = AUTH_API
-                            g.user = user[0]
-                            # Inject the workspace context so add_tenant_id_to_kwargs
-                            # resolves to the workspace tenant (not the user's
-                            # personal tenant). Mirrors what the X-Workspace-Id
-                            # middleware does for browser/JWT requests.
-                            if scope.workspace_id:
-                                g._ws_header = scope.workspace_id
-                                # Pre-resolve the workspace tenant_id so that
-                                # `active_tenant_id()` returns the workspace tenant
-                                # rather than the user's personal one.
-                                g.active_tenant_id = objs[0].tenant_id
-                            return user[0]
                 except Exception as e_scope:
                     logging.warning(f"load_user: ApiKeyScope resolution failed: {e_scope}")
+                if scope is not None:
+                    # CUSTOM B2B SaaS — clé scopée (audit 2026-09-06) : expiration et
+                    # statut vérifiés ici aussi (avant, seul token_required les
+                    # voyait → une clé expirée marchait sur toute l'API /api/v1) ;
+                    # créateur invalide (désactivé, supprimé) = REFUS, jamais de
+                    # repli sur l'utilisateur technique du tenant (la clé d'un
+                    # ancien salarié devenait un jeton tenant-wide) ; permissions
+                    # de la clé propagées à require_permission.
+                    from datetime import datetime as _dt
+                    if str(getattr(scope, "status", "1")) != "1":
+                        logging.warning("load_user: API key disabled")
+                        return None
+                    if scope.expires_at and scope.expires_at < _dt.utcnow():
+                        logging.warning("load_user: API key expired")
+                        return None
+                    user = UserService.query(id=scope.created_by, status=StatusEnum.VALID.value) if scope.created_by else []
+                    if not user or not (user[0].access_token or "").strip() or str(getattr(user[0], "is_active", "1")) == "0":
+                        logging.warning("load_user: API key creator invalid or inactive, refusing")
+                        return None
+                    g.auth_type = AUTH_API
+                    g.user = user[0]
+                    g.api_key_permissions = list(scope.permissions or [])
+                    # Inject the workspace context so add_tenant_id_to_kwargs
+                    # resolves to the workspace tenant (not the user's
+                    # personal tenant). Mirrors what the X-Workspace-Id
+                    # middleware does for browser/JWT requests.
+                    if scope.workspace_id:
+                        g._ws_header = scope.workspace_id
+                        # Pre-resolve the workspace tenant_id so that
+                        # `active_tenant_id()` returns the workspace tenant
+                        # rather than the user's personal one.
+                        g.active_tenant_id = objs[0].tenant_id
+                    return user[0]
 
                 # Fallback: legacy unscoped token → resolve via tenant_id (upstream)
                 user = UserService.query(id=objs[0].tenant_id, status=StatusEnum.VALID.value)

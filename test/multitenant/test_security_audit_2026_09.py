@@ -1,0 +1,177 @@
+"""CUSTOM B2B SaaS — audit sécurité méthodique du 2026-09-06 : pins des correctifs.
+
+Chaque classe épingle une faille confirmée dans le code et son correctif. Les
+tests sont statiques (AST/grep) sauf ceux de ``api/utils/beta_scope.py``
+(logique pure, collaborateurs simulés). Un merge upstream qui retire une
+garde fait échouer le test correspondant.
+
+Références : rapport d'audit (mémoire projet), commits du 2026-09-06.
+"""
+import ast
+import pathlib
+import re
+from types import SimpleNamespace
+
+import pytest
+
+ROOT = pathlib.Path(__file__).resolve().parents[2]
+
+
+def _src(rel: str) -> str:
+    return (ROOT / rel).read_text()
+
+
+def _func(rel: str, name: str) -> str:
+    src = _src(rel)
+    for node in ast.walk(ast.parse(src)):
+        if isinstance(node, (ast.FunctionDef, ast.AsyncFunctionDef)) and node.name == name:
+            return ast.get_source_segment(src, node)
+    raise AssertionError(f"{name} introuvable dans {rel}")
+
+
+# ----------------------------------------------------------------- CRITIQUE
+class TestSSTIRenderDocx:
+    """RCE : docxtpl/Jinja2 rendaient un .docx et un motif de nom de fichier
+    fournis par l'utilisateur avec un Environment NU."""
+
+    @pytest.mark.parametrize("rel", [
+        "agent/tools/render_docx_template.py",
+        "agent/plugin/embedded_plugins/llm_tools/render_docx_template.py",
+    ])
+    def test_only_sandboxed_environments(self, rel):
+        src = _src(rel)
+        assert "SandboxedEnvironment(" in src
+        assert re.search(r"\bEnvironment\(loader=", src) is None, "Environment nu interdit"
+        assert re.search(r"doc\.render\([^)]*jinja_env=SandboxedEnvironment\(\)", src), "doc.render doit passer jinja_env=SandboxedEnvironment()"
+
+
+class TestEdgeBlocksInternalRoutes:
+    """La passerelle envoie /api/ directement à l'API : le 404 nginx seul ne
+    protégeait rien. Une règle HTTPRoute plus longue renvoie le préfixe
+    interne vers le nginx du front (qui répond 404)."""
+
+    def test_httproute_rule_precedes_api_and_targets_frontend(self):
+        src = _src("helm/ragflow/templates/gateway-httproute.yaml")
+        internal = src.index("value: /api/v1/internal/")
+        api_rule = src.index("value: /api/\n")
+        assert internal < api_rule
+        after = src[internal:internal + 400]
+        assert "-frontend" in after and "port: 80" in after
+
+    def test_sandbox_namespace_enforces_restricted_pod_security(self):
+        src = _src("helm/ragflow/templates/sandbox/namespace.yaml")
+        assert "pod-security.kubernetes.io/enforce: restricted" in src
+
+
+# ------------------------------------------------------------ jetons beta
+class TestBetaScopeHelpers:
+    def test_bound_token_denies_other_resources(self, monkeypatch):
+        from api.utils import beta_scope
+        tok = SimpleNamespace(dialog_id="dlg1", tenant_id="t")
+        assert beta_scope.beta_denies("dlg2", tok) is True
+        assert beta_scope.beta_denies("dlg1", tok) is False
+        assert beta_scope.beta_denies("x", SimpleNamespace(dialog_id=None)) is False
+
+    def test_allowed_kb_ids_from_dialog_then_search_app(self, monkeypatch):
+        from api.utils import beta_scope
+        import api.db.services.dialog_service as ds
+        import api.db.services.search_service as ss
+        dialog = SimpleNamespace(tenant_id="t", kb_ids=["kb1", "kb2"])
+        monkeypatch.setattr(ds.DialogService, "get_by_id", staticmethod(lambda i: (True, dialog)))
+        assert beta_scope.beta_allowed_kb_ids("t", SimpleNamespace(dialog_id="dlg")) == {"kb1", "kb2"}
+        # dialog d'un autre tenant → on retombe sur la search app
+        monkeypatch.setattr(ds.DialogService, "get_by_id", staticmethod(lambda i: (True, SimpleNamespace(tenant_id="other", kb_ids=["z"]))))
+        monkeypatch.setattr(ss.SearchService, "query", staticmethod(lambda **kw: [SimpleNamespace(search_config={"kb_ids": ["kb9"]})]))
+        assert beta_scope.beta_allowed_kb_ids("t", SimpleNamespace(dialog_id="srch")) == {"kb9"}
+        # ni dialog ni search app (agent) → pas de restriction supplémentaire
+        monkeypatch.setattr(ss.SearchService, "query", staticmethod(lambda **kw: []))
+        assert beta_scope.beta_allowed_kb_ids("t", SimpleNamespace(dialog_id="agent")) is None
+        assert beta_scope.beta_allowed_kb_ids("t", SimpleNamespace(dialog_id=None)) is None
+
+    def test_kb_ids_owned_by_requires_every_id(self, monkeypatch):
+        from api.utils import beta_scope
+        import api.db.services.knowledgebase_service as ks
+        monkeypatch.setattr(ks.KnowledgebaseService, "query", staticmethod(lambda **kw: [1] if kw.get("id") == "mine" else []))
+        assert beta_scope.kb_ids_owned_by("t", ["mine"]) is True
+        assert beta_scope.kb_ids_owned_by("t", "mine") is True
+        assert beta_scope.kb_ids_owned_by("t", ["mine", "theirs"]) is False
+        assert beta_scope.kb_ids_owned_by("t", [""]) is False
+
+
+class TestBetaRoutesAreScoped:
+    BOT = "api/apps/restful_apis/bot_api.py"
+
+    def test_load_user_stashes_the_beta_token(self):
+        body = _func("api/apps/__init__.py", "_load_user")
+        assert "g.beta_token = objs[0]" in body
+
+    @pytest.mark.parametrize("name,needle", [
+        ("chatbot_completions", "beta_denies(dialog_id)"),
+        ("agent_bot_completions", "UserCanvasService.accessible, agent_id, tenant_id"),
+        ("begin_inputs", "UserCanvasService.accessible, agent_id, tenant_id"),
+        ("ask_about_embedded", "kb_ids_owned_by, uid, kb_ids"),
+        ("mindmap", "kb_ids_owned_by, tenant_id, kb_ids"),
+        ("retrieval_test_embedded", "kb_ids_owned_by, tenant_id, kb_ids"),
+        ("retrieval_test_embedded", 'beta_denies(req["search_id"])'),
+    ])
+    def test_route_checks_scope(self, name, needle):
+        assert needle in _func(self.BOT, name), f"{name} doit borner la ressource au tenant/objet du jeton"
+
+    def test_retrieval_caps_page_size_and_top_k(self):
+        body = _func(self.BOT, "retrieval_test_embedded")
+        assert "size = min(size, 100)" in body and "top = min(top, 200)" in body
+
+    def test_beta_download_limited_to_bound_datasets(self):
+        body = _func("api/apps/sdk/doc.py", "download_doc")
+        assert "beta_allowed_kb_ids(tenant_id, objs[0])" in body
+
+    @pytest.mark.parametrize("name", ["ask", "mindmap"])
+    def test_chat_api_validates_kb_ids_against_active_tenant(self, name):
+        body = _func("api/apps/restful_apis/chat_api.py", name)
+        assert "_validate_dataset_ids(" in body
+        assert "SearchService.query(id=search_id, tenant_id=" in body
+
+
+# --------------------------------------------------------------- clés API
+class TestApiKeyScopeEnforced:
+    def test_token_lists_require_api_key_manage(self):
+        for rel in ("api/apps/restful_apis/system_api.py", "api/apps/restful_apis/stats_api.py"):
+            src = _src(rel)
+            i = src.index("def token_list(")
+            decorators = src[max(0, i - 400):i]
+            assert "require_permission(Permission.API_KEY_MANAGE)" in decorators, rel
+
+    def test_load_user_refuses_expired_disabled_or_orphan_scoped_keys(self):
+        body = _func("api/apps/__init__.py", "_load_user")
+        block = body[body.index("if scope is not None:"):body.index("# Fallback: legacy unscoped token")]
+        assert "expires_at" in block and "API key expired" in block
+        assert "creator invalid" in block
+        assert block.count("return None") >= 3, "clé scopée invalide = refus, jamais de repli"
+        assert "g.api_key_permissions = list(scope.permissions or [])" in block
+
+    def test_token_required_propagates_permissions_and_caps_jwt_age(self):
+        body = _func("api/utils/api_utils.py", "token_required")
+        assert "g.api_key_permissions = list(scope.permissions or [])" in body
+        assert "max_age=_max_age" in body
+
+    def test_require_permission_intersects_key_permissions(self):
+        body = _func("api/apps/extensions/rbac.py", "require_permission")
+        assert 'getattr(_g, "api_key_permissions", None)' in body
+        assert "permission.value not in scoped" in body
+        assert body.index("api_key_permissions") < body.index("has_permission(user_id, tenant_id, permission)")
+
+
+# ------------------------------------------------------------- IDOR divers
+class TestMiscAuthorization:
+    def test_webhook_traces_require_login_and_workspace_agent(self):
+        legacy = _src("api/apps/restful_apis/agents.py")
+        i = legacy.index("def webhook_trace(")
+        assert "@login_required" in legacy[i - 120:i]
+        assert "UserCanvasService.accessible(agent_id, active_tenant_id())" in _func("api/apps/restful_apis/agents.py", "webhook_trace")
+        assert "UserCanvasService.accessible(agent_id, active_tenant_id())" in _func("api/apps/restful_apis/agent_api.py", "webhook_trace")
+
+    def test_set_tenant_info_is_workspace_scoped_and_whitelisted(self):
+        body = _func("api/apps/restful_apis/user_api.py", "set_tenant_info")
+        assert 'req.pop("tenant_id", None)' in body
+        assert "TenantService.update_by_id(active_tenant_id(), update)" in body
+        assert '"llm_id", "embd_id"' in body

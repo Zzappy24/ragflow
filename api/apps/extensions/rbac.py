@@ -356,6 +356,19 @@ def require_permission(permission: Permission):
                 return get_json_result(
                     data=False, message=f"Permission denied: {permission.value}", code=403
                 )
+            # CUSTOM B2B SaaS — clé API scopée : la permission demandée doit
+            # figurer dans celles frappées sur la clé, AVANT le rôle du
+            # créateur (audit 2026-09-06 : les permissions de clé n'étaient
+            # jamais lues, une clé « dataset.read » supprimait des bases).
+            try:
+                from quart import g as _g
+                scoped = getattr(_g, "api_key_permissions", None)
+            except Exception:
+                scoped = None
+            if scoped is not None and permission.value not in scoped:
+                return get_json_result(
+                    data=False, message=f"Permission denied by API key scope: {permission.value}", code=403
+                )
             if not user_id:
                 # Pure API key caller: tenant_id is set but no individual user identity.
                 # API keys are workspace-level service tokens — role RBAC does not apply.
