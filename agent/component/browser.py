@@ -28,7 +28,7 @@ from pathlib import Path
 from typing import Any
 from urllib.error import HTTPError, URLError
 from urllib.parse import unquote, urlparse
-from urllib.request import Request, urlopen
+from urllib.request import HTTPRedirectHandler, Request, build_opener
 
 from agent.component.base import ComponentBase
 from agent.component.llm import LLMParam
@@ -41,6 +41,23 @@ from common import settings
 from common.connection_utils import timeout
 from common.misc_utils import get_uuid
 from rag.llm import FACTORY_DEFAULT_BASE_URL
+
+
+# CUSTOM B2B SaaS — audit 2026-09-06 : l'URL d'upload vient du DSL ; le
+# urlopen standard suivait les redirections (SSRF vers le cluster). Ce seam
+# module-level remplace l'import `urlopen` et n'en suit aucune ; les tests
+# unitaires patchent `browser.urlopen` (recette 2026-09-07).
+class _NoRedirect(HTTPRedirectHandler):
+    def redirect_request(self, *args, **kwargs):
+        return None
+
+
+_NO_REDIRECT_OPENER = build_opener(_NoRedirect())
+
+
+def urlopen(req, timeout=30):
+    return _NO_REDIRECT_OPENER.open(req, timeout=timeout)
+
 
 
 class BrowserParam(LLMParam):
@@ -226,17 +243,13 @@ class Browser(ComponentBase, ABC):
         try:
             # CUSTOM B2B SaaS — garde SSRF + épinglage DNS + pas de redirection :
             # l'URL vient du DSL, urlopen suivait les redirections vers le
-            # cluster (audit 2026-09-06).
-            from urllib.request import HTTPRedirectHandler, build_opener
+            # cluster (audit 2026-09-06). `urlopen` est le seam module-level
+            # sans redirection défini plus haut (les tests le patchent).
             from common.ssrf_guard import assert_url_is_safe, pin_dns
-
-            class _NoRedirect(HTTPRedirectHandler):
-                def redirect_request(self, *args, **kwargs):
-                    return None
 
             _host, _ip = assert_url_is_safe(url)
             req = Request(url, headers={"User-Agent": "RAGFlow-Browser-Node/1.0"})
-            with pin_dns(_host, _ip), build_opener(_NoRedirect()).open(req, timeout=30) as response:
+            with pin_dns(_host, _ip), urlopen(req, timeout=30) as response:
                 local_name = self._extract_url_filename(url, response.headers)
 
                 local_path = os.path.join(upload_dir, local_name)
@@ -458,7 +471,8 @@ class Browser(ComponentBase, ABC):
         available_file_paths: list[str] | None = None,
         profile_dir: str | None = None,
     ):
-        from browser_use import Agent as BrowserUseAgent, Browser as BrowserUseBrowser
+        from browser_use import Agent as BrowserUseAgent
+        from browser_use import Browser as BrowserUseBrowser
 
         llm = self._build_browser_llm()
         # NOTE:

@@ -174,6 +174,11 @@ def test_prepare_upload_files_supports_http_url(monkeypatch, tmp_path):
             return False
 
     monkeypatch.setattr(browser_use_module, "urlopen", lambda *_args, **_kwargs: _FakeResponse())
+    # Garde SSRF (audit 2026-09-06) : pas de DNS réel dans un test unitaire.
+    import contextlib
+    import common.ssrf_guard as ssrf_guard
+    monkeypatch.setattr(ssrf_guard, "assert_url_is_safe", lambda _url, **_kw: ("example.com", "93.184.216.34"))
+    monkeypatch.setattr(ssrf_guard, "pin_dns", lambda *_a, **_k: contextlib.nullcontext())
 
     prepared = component._prepare_upload_files(str(tmp_path))
 
