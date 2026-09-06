@@ -257,9 +257,18 @@ def purge_workspace(ws_id: str) -> None:
     - Workspace + WsMembers + WsGroups + group memberships + group datasets
     - RAGFlow Tenant + technical User + UserTenant rows
     - All datasets (Knowledgebase) attached to the tenant + their documents
-    - Document chunks in vector store (best-effort)
+    - CONTENU PHYSIQUE via ragflow-api : chunks/vecteurs, index de métadonnées,
+      index de mémoires, objets MinIO, puis lignes SQL de contenu (chats,
+      agents, recherches, mémoires, clés API, modèles) — cf.
+      api/db/joint_services/workspace_purge_service.py
 
     Irreversible. Caller must guarantee superuser auth + explicit confirmation.
+
+    CUSTOM B2B SaaS (2026-09-06) : la purge physique passe D'ABORD et lève
+    ``TenantPurgeError`` (→ 502 côté panel) si l'API ne la confirme pas : les
+    lignes de structure ci-dessous ne sont alors PAS effacées et l'admin peut
+    relancer. Avant, seul le SQL partait : chunks, vecteurs et fichiers
+    restaient en place derrière une suppression apparemment réussie.
     """
     from api.db.db_models import (
         DB, User, Tenant, UserTenant, Workspace,
@@ -267,11 +276,15 @@ def purge_workspace(ws_id: str) -> None:
         Knowledgebase, Document,
     )
     from api.db.services.workspace_service import WorkspaceService
+    from management.server.services.tenant_purge_client import purge_tenant_content_via_api
 
     ok, ws = WorkspaceService.get_by_id(ws_id)
     if not ok or not ws:
         return
     tenant_id = ws.tenant_id
+
+    # Données physiques d'abord ; toute erreur remonte et rien n'est effacé ici.
+    purge_tenant_content_via_api(tenant_id)
 
     with DB.connection_context():
         # Group-scoped rows must go before groups

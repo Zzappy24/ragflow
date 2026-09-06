@@ -110,6 +110,18 @@ app.add_middleware(
     ],
 )
 
+# CUSTOM B2B SaaS — purge physique non confirmée par ragflow-api (chunks,
+# vecteurs, fichiers) : 502 explicite, rien n'a été effacé côté structure et
+# l'admin peut relancer. Sans ce handler, un 500 opaque.
+from management.server.services.tenant_purge_client import TenantPurgeError
+
+
+@app.exception_handler(TenantPurgeError)
+async def _tenant_purge_error_handler(_request, exc: TenantPurgeError):
+    from fastapi.responses import JSONResponse
+    return JSONResponse(status_code=502, content={"detail": str(exc)})
+
+
 # Register routers
 from management.server.routers import (
     auth,

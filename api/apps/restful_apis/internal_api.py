@@ -33,6 +33,7 @@ import os
 from quart import request
 
 from api.utils.api_utils import get_error_data_result, get_result
+from common.constants import RetCode
 
 
 def _check_internal_secret() -> tuple[bool, str]:
@@ -200,3 +201,30 @@ async def internal_infinity_storage():
         logging.exception("infinity storage scan failed")
         return get_error_data_result(message=f"scan failed: {e}")
     return get_result(data=data)
+
+
+@manager.route("/internal/workspaces/<tenant_id>/purge-data", methods=["POST"])  # noqa: F821
+async def internal_purge_workspace_data(tenant_id: str):
+    """CUSTOM B2B SaaS — purge physique du contenu d'un tenant de workspace.
+
+    Appelée par le panel (image slim, sans client ES ni MinIO) AVANT qu'il
+    n'efface les lignes de structure. Refuse un workspace encore actif (409)
+    ou inconnu (404) ; toute erreur physique remonte en 500 pour que le
+    panel n'efface rien et que l'admin relance. Cf.
+    api/db/joint_services/workspace_purge_service.py.
+    """
+    ok, err = _check_internal_secret()
+    if not ok:
+        return get_error_data_result(message=err, code=RetCode.AUTHENTICATION_ERROR)
+    from api.db.joint_services.workspace_purge_service import PurgeRefused, purge_tenant_content
+    from common.misc_utils import thread_pool_exec
+
+    try:
+        summary = await thread_pool_exec(purge_tenant_content, tenant_id)
+    except PurgeRefused as e:
+        code = RetCode.NOT_FOUND if "no workspace" in str(e) else RetCode.CONFLICT
+        return get_error_data_result(message=str(e), code=code)
+    except Exception as e:
+        logging.exception("internal purge of tenant %s failed", tenant_id)
+        return get_error_data_result(message=f"purge failed: {e}", code=RetCode.SERVER_ERROR)
+    return get_result(data=summary)

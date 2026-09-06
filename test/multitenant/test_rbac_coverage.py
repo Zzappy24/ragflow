@@ -107,6 +107,11 @@ EXEMPT: set[tuple[str, str]] = {
     # --- restful_apis/ ---
     # Log-level configuration is an infra / superuser concern, not workspace content.
     ("api/apps/restful_apis/system_api.py", "set_logger_level"),
+    # X-Internal-Secret pattern (comme internal_llm_verify) — purge physique
+    # d'un tenant appelée par le mgmt panel (image slim) sans session
+    # utilisateur ; secret vérifié dans le handler, workspace actif refusé.
+    # Pin : test_workspace_purge.py::TestInternalRoute.
+    ("api/apps/restful_apis/internal_api.py", "internal_purge_workspace_data"),
 
     # --- api/apps/ ---
     # Authentication routes — no workspace context.
