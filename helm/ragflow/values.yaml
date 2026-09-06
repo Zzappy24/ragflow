@@ -222,6 +222,15 @@ elasticsearch:
     requests: { cpu: "1000m", memory: "6Gi" }
     limits:   { cpu: "4000m", memory: "12Gi" }
   nodeSelector: {}
+  # CUSTOM B2B SaaS — shards PRIMAIRES par index (un index par workspace, chunks
+  # + doc_meta). Figés à la création, ne se changent plus sans reindex/shrink ;
+  # upstream en crée 2 (pensé mono-tenant) alors qu'un workspace tient dans un
+  # seul. Ne concerne que les index créés après déploiement. Vide = mapping (2).
+  indexShards: ""
+  # Réplicas par index. Laisser vide tant qu'il n'y a qu'UN nœud ES (un réplica
+  # sans second nœud = cluster jaune). Passer à 1 avec >= 2 nœuds ; les index
+  # existants se règlent à chaud (PUT ragflow_*/_settings). Vide = mapping (0).
+  indexReplicas: ""
 
 # --- vLLM endpoint (NOT deployed by this chart, just configured) -------------
 # vLLM lives in its own ns (`vllm-rag` or shared `gpt`/`glm`) and is shared

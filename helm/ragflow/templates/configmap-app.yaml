@@ -109,6 +109,15 @@ data:
 {{- if .Values.elasticsearch.enabled }}
   # Résolu par envsubst dans la section es: du template ci-dessous.
   ELASTIC_PASSWORD: {{ .Values.elasticsearch.password | quote }}
+  # CUSTOM B2B SaaS — shards/réplicas des index créés par l'application (un
+  # index par workspace). Lus par common/doc_store/index_settings.py à chaque
+  # création d'index ; vide = valeur upstream de conf/mapping.json.
+  {{- with .Values.elasticsearch.indexShards }}
+  ES_NUMBER_OF_SHARDS: {{ . | quote }}
+  {{- end }}
+  {{- with .Values.elasticsearch.indexReplicas }}
+  ES_NUMBER_OF_REPLICAS: {{ . | quote }}
+  {{- end }}
 {{- end }}
 
   # --- service_conf.yaml template ------------------------------------------

@@ -303,6 +303,11 @@ elasticsearch:
   resources:
     requests: { cpu: "1000m", memory: "12Gi" }
     limits:   { cpu: "4000m", memory: "24Gi" }   # miroir des limits Infinity
+  # 1 shard primaire par index (2026-09-06) : un index par workspace, 2 shards
+  # upstream = 4 shards par client sur un nœud plafonné à 1000 → 250 clients,
+  # sans aucun gain. Les index déjà créés gardent leurs 2 shards (shrink
+  # possible plus tard). Réplicas : rien tant que le cluster est mono-nœud.
+  indexShards: 1
   nodeSelector:
     node-role.kubernetes.io/gpt: "true"
   tolerations:

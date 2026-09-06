@@ -28,6 +28,7 @@ from elasticsearch.client import IndicesClient
 from common.file_utils import get_project_base_directory
 from common.misc_utils import convert_bytes
 from common.doc_store.doc_store_base import DocStoreConnection, OrderByExpr, MatchExpr
+from common.doc_store.index_settings import apply_env_index_settings  # CUSTOM B2B SaaS — shards/réplicas par env
 from rag.nlp import is_english, rag_tokenizer
 from common import settings
 
@@ -136,7 +137,10 @@ class ESConnectionBase(DocStoreConnection):
         # empiriquement contre ES 9.5.2 le 2026-08-28). On force le setting à
         # false ; les versions qui ne le connaissent pas (≤ 8.x) rejettent le
         # create → retry sans le setting.
-        settings_with_vectors = dict(self.mapping["settings"])
+        # CUSTOM B2B SaaS — shards/réplicas par env (ES_NUMBER_OF_SHARDS /
+        # ES_NUMBER_OF_REPLICAS) : un index par workspace, primaires figés à la
+        # création, upstream en met 2 pour rien. Cf. common/doc_store/index_settings.py.
+        settings_with_vectors = apply_env_index_settings(self.mapping["settings"])
         settings_with_vectors["index.mapping.exclude_source_vectors"] = False
         try:
             return IndicesClient(self.es).create(index=index_name,
@@ -149,7 +153,7 @@ class ESConnectionBase(DocStoreConnection):
             self.logger.info(f"create_idx({index_name}): exclude_source_vectors inconnu du serveur (ES <9), retry sans le setting")
         try:
             return IndicesClient(self.es).create(index=index_name,
-                                                 settings=self.mapping["settings"],
+                                                 settings=apply_env_index_settings(self.mapping["settings"]),
                                                  mappings=self.mapping["mappings"])
         except Exception:
             self.logger.exception("ESConnection.createIndex error %s" % index_name)
@@ -172,7 +176,7 @@ class ESConnectionBase(DocStoreConnection):
             with open(fp_mapping, "r") as f:
                 doc_meta_mapping = json.load(f)
             return IndicesClient(self.es).create(index=index_name,
-                                                 settings=doc_meta_mapping["settings"],
+                                                 settings=apply_env_index_settings(doc_meta_mapping["settings"]),  # CUSTOM B2B SaaS
                                                  mappings=doc_meta_mapping["mappings"])
         except Exception as e:
             self.logger.exception(f"Error creating document metadata index {index_name}: {e}")
