@@ -133,6 +133,16 @@ class TestBetaRoutesAreScoped:
 
 
 # --------------------------------------------------------------- clés API
+class TestBetaRetrievalCapsAreReachable:
+    def test_size_cap_is_declared_nonlocal(self):
+        """Le plafond ``size = min(size, 100)`` vit dans la coroutine imbriquée
+        ``_retrieval`` : sans ``size`` dans son ``nonlocal``, Python en fait une
+        locale et la route plante en UnboundLocalError (recette 2026-09-07)."""
+        route = _func("api/apps/restful_apis/bot_api.py", "retrieval_test_embedded")
+        assert "size = min(size, 100)" in route
+        assert re.search(r"nonlocal [^\n]*\bsize\b", route), "size manquant dans le nonlocal de _retrieval"
+
+
 class TestApiKeyScopeEnforced:
     def test_token_lists_require_api_key_manage(self):
         for rel in ("api/apps/restful_apis/system_api.py", "api/apps/restful_apis/stats_api.py"):

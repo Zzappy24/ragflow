@@ -176,6 +176,7 @@ def list_workspace_providers(ws_id: str, user_id: str = Depends(get_current_user
     # We don't need LLMFactories.logo/tags here — the admin panel
     # doesn't render them.
     from api.db.db_models import TenantLLM, DB
+    from api.db.services.tenant_llm_service import TenantLLMService  # is_tools (NameError 500 sans cet import, recette 2026-09-07)
     with DB.connection_context():
         rows = list(
             TenantLLM.select(

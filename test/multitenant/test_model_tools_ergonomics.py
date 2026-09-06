@@ -134,3 +134,18 @@ class TestMaxRoundsAlwaysVisible:
         assert src.count("_max_rounds_fallback(history)") >= 2, (
             "un des deux chemins max-rounds peut à nouveau finir en bulle vide"
         )
+
+
+class TestPanelModelRoutesHaveNoUndefinedNames:
+    def test_ruff_f821_clean_on_models_router(self):
+        """La liste des modèles d'un workspace renvoyait 500 (NameError
+        TenantLLMService) : le badge FC référençait un nom jamais importé.
+        F821 (nom indéfini) doit rester vide sur ce routeur (recette 2026-09-07)."""
+        import shutil, subprocess, pathlib
+        root = pathlib.Path(__file__).resolve().parents[2]
+        ruff = shutil.which("ruff") or shutil.which("uvx")
+        if not ruff:
+            pytest.skip("ruff indisponible")
+        cmd = [ruff] + (["ruff"] if ruff.endswith("uvx") else []) + ["check", "--select", "F821", "--config", str(root / "pyproject.toml"), "management/server/routers/models.py"]
+        res = subprocess.run(cmd, cwd=root, capture_output=True, text=True)
+        assert res.returncode == 0, res.stdout + res.stderr

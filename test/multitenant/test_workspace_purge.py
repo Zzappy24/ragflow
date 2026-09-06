@@ -17,6 +17,7 @@ import ast
 import pathlib
 from types import SimpleNamespace
 
+import inspect
 import pytest
 
 import management.server.services.tenant_purge_client as purge_client
@@ -141,7 +142,8 @@ def wired(monkeypatch):
     """Câble tous les collaborateurs du service sur des doubles en mémoire."""
     storage, store = _Storage(), _DocStore()
     ws = SimpleNamespace(id="ws1", status="0")
-    monkeypatch.setattr(svc.WorkspaceService, "get_by_tenant_id", staticmethod(lambda t: (True, ws)))
+    # query() et non get_by_tenant_id() : ce dernier ne voit que les workspaces ACTIFS
+    monkeypatch.setattr(svc.WorkspaceService, "query", staticmethod(lambda **kw: [ws]))
     monkeypatch.setattr(svc.settings, "STORAGE_IMPL", storage, raising=False)
     monkeypatch.setattr(svc.settings, "docStoreConn", store, raising=False)
     monkeypatch.setattr(svc.KnowledgebaseService, "get_kb_ids", staticmethod(lambda t: ["kb1", "kb2"]))
@@ -171,6 +173,12 @@ def wired(monkeypatch):
 
 
 class TestPurgeTenantContent:
+    def test_guard_reads_workspace_regardless_of_status(self):
+        """get_by_tenant_id filtre status == "1" : un workspace archivé (le seul
+        purgeable) y est invisible — la purge échouait en prod-like (2026-09-07)."""
+        src = inspect.getsource(svc._guard)
+        assert "WorkspaceService.get_by_tenant_id(" not in src and "WorkspaceService.query(tenant_id=tenant_id)" in src
+
     def test_refuses_active_workspace_without_touching_anything(self, wired):
         wired.ws.status = "1"
         with pytest.raises(svc.PurgeRefused):
@@ -178,7 +186,7 @@ class TestPurgeTenantContent:
         assert wired.storage.removed_buckets == [] and wired.store.dropped == []
 
     def test_refuses_unknown_tenant(self, wired, monkeypatch):
-        monkeypatch.setattr(svc.WorkspaceService, "get_by_tenant_id", staticmethod(lambda t: (False, None)))
+        monkeypatch.setattr(svc.WorkspaceService, "query", staticmethod(lambda **kw: []))
         with pytest.raises(svc.PurgeRefused):
             svc.purge_tenant_content("t1")
 

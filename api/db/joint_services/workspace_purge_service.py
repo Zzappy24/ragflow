@@ -50,8 +50,12 @@ class PurgeRefused(Exception):
 
 
 def _guard(tenant_id: str):
-    ok, ws = WorkspaceService.get_by_tenant_id(tenant_id)
-    if not ok or not ws:
+    # get_by_tenant_id ne renvoie QUE les workspaces actifs (status == "1") :
+    # un workspace archivé, le seul purgeable, y est invisible. On lit la
+    # ligne quel que soit son statut (recette locale 2026-09-07).
+    rows = WorkspaceService.query(tenant_id=tenant_id)
+    ws = rows[0] if rows else None
+    if ws is None:
         raise PurgeRefused(f"no workspace for tenant {tenant_id}")
     if ws.status == "1":
         raise PurgeRefused(f"workspace {ws.id} is still active; soft-delete it first")

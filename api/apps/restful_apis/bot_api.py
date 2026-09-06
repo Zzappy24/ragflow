@@ -457,7 +457,7 @@ async def retrieval_test_embedded(tenant_id=None):
             return get_error_data_result(message="Authentication error: no access to this search app!")
 
     async def _retrieval():
-        nonlocal similarity_threshold, vector_similarity_weight, top, rerank_id
+        nonlocal similarity_threshold, vector_similarity_weight, top, rerank_id, size
         local_doc_ids = list(doc_ids) if doc_ids else []
         tenant_ids = []
         _question = question
