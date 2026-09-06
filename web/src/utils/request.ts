@@ -6,11 +6,9 @@ import message from '@/components/ui/message';
 import { Authorization } from '@/constants/authorization';
 import { ResponseType } from '@/interfaces/database/base';
 import i18n from '@/locales/config';
-import authorizationUtil, {
-  getAuthorization,
-  redirectToLogin,
-} from '@/utils/authorization-util';
+import { getAuthorization } from '@/utils/authorization-util';
 import notification from '@/utils/notification';
+import { handleUnauthorized } from '@/utils/session-guard';
 import { RequestMethod, extend } from 'umi-request';
 import { convertTheKeysOfTheObjectToSnake, isFormData } from './common-util';
 import { setCachedLlmList } from './llm-cache';
@@ -85,9 +83,6 @@ const request: RequestMethod = extend({
   getResponse: true,
 });
 
-// avoid duplicate 401 redirects
-let isRedirecting = false;
-
 request.interceptors.request.use((url: string, options: any) => {
   const data = convertTheKeysOfTheObjectToSnake(options.data);
   const params = convertTheKeysOfTheObjectToSnake(options.params);
@@ -120,46 +115,21 @@ request.interceptors.request.use((url: string, options: any) => {
   };
 });
 
-// CUSTOM B2B SaaS — un 401 « workspace manquant » N'EST PAS une perte de
-// session : il survient quand une requête part avant que le front ait épinglé
-// un workspace (login /login, navigation privée, premier chargement). Le
-// traiter comme une déconnexion créait une boucle de login (incident
-// 2026-09-05). On le distingue par son message backend et on laisse passer
-// sans purger le token ni rediriger — le sélecteur de workspace épingle un
-// défaut, les appels suivants portent l'en-tête X-Workspace-Id.
-const isWorkspaceContext401 = (msg?: string): boolean =>
-  typeof msg === 'string' && /workspace/i.test(msg);
-
 request.interceptors.response.use(async (response: Response, options) => {
   if (response?.status === 413 || response?.status === 504) {
     message.error(RetcodeMessage[response?.status as ResultCode]);
   }
 
-  // Handle HTTP 401
+  // Handle HTTP 401 — CUSTOM B2B SaaS : un 401 n'est pas forcément une perte
+  // de session (workspace non épinglé → « Unauthorized » générique). La
+  // déconnexion est décidée par session-guard (sonde /users/me), jamais sur
+  // le seul statut ni sur le message.
   if (response?.status === 401) {
-    if (!isRedirecting) {
-      isRedirecting = true;
-
-      const data = await response
-        .clone()
-        .json()
-        .catch(() => ({}));
-
-      const messageText = data?.message || RetcodeMessage[401];
-      if (isWorkspaceContext401(data?.message)) {
-        // Pas de déconnexion : contexte workspace non encore résolu.
-        isRedirecting = false;
-        return response;
-      }
-      notification.error({
-        message: messageText,
-        description: messageText,
-        duration: 3,
-      });
-      authorizationUtil.removeAll();
-      redirectToLogin();
-    }
-
+    const data = await response
+      .clone()
+      .json()
+      .catch(() => ({}));
+    await handleUnauthorized(data?.message || RetcodeMessage[401]);
     return response;
   }
 
@@ -180,22 +150,7 @@ request.interceptors.response.use(async (response: Response, options) => {
   if (data?.code === 100) {
     message.error(data?.message);
   } else if (data?.code === 401) {
-    if (isWorkspaceContext401(data?.message)) {
-      // Workspace non résolu : ne pas déconnecter (cf. isWorkspaceContext401).
-      return response;
-    }
-    if (!isRedirecting) {
-      isRedirecting = true;
-      notification.error({
-        message: data?.message,
-        description: data?.message,
-        duration: 3,
-      });
-      authorizationUtil.removeAll();
-      redirectToLogin();
-    }
-    authorizationUtil.removeAll();
-    redirectToLogin();
+    await handleUnauthorized(data?.message || RetcodeMessage[401]);
   } else if (data?.code !== 0) {
     notification.error({
       message: `${i18n.t('message.hint')} : ${data?.code}`,

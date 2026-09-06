@@ -1,11 +1,9 @@
 import message from '@/components/ui/message';
 import { Authorization } from '@/constants/authorization';
 import i18n from '@/locales/config';
-import authorizationUtil, {
-  getAuthorization,
-  redirectToLogin,
-} from '@/utils/authorization-util';
+import { getAuthorization } from '@/utils/authorization-util';
 import notification from '@/utils/notification';
+import { handleUnauthorized } from '@/utils/session-guard';
 import axios from 'axios';
 import { convertTheKeysOfTheObjectToSnake, isFormData } from './common-util';
 import { setCachedLlmList } from './llm-cache';
@@ -73,9 +71,6 @@ const errorHandler = (error: {
   return response ?? { data: { code: 1999 } };
 };
 
-// avoid duplicate 401 redirects
-let isRedirecting = false;
-
 const request = axios.create({
   //   errorHandler,
   timeout: 300000,
@@ -134,16 +129,7 @@ request.interceptors.response.use(
     if (data?.code === 100) {
       message.error(data?.message);
     } else if (data?.code === 401) {
-      if (!isRedirecting) {
-        isRedirecting = true;
-        notification.error({
-          message: data?.message,
-          description: data?.message,
-          duration: 3,
-        });
-        authorizationUtil.removeAll();
-        redirectToLogin();
-      }
+      await handleUnauthorized(data?.message || RetcodeMessage[401]);
     } else if (data?.code !== 0) {
       notification.error({
         message: `${i18n.t('message.hint')} : ${data?.code}`,
@@ -153,23 +139,15 @@ request.interceptors.response.use(
     }
     return response;
   },
-  function (error) {
-    // Handle HTTP 401 (token expired / invalid)
+  async function (error) {
+    // Handle HTTP 401 — CUSTOM B2B SaaS : un 401 n'est pas forcément une
+    // perte de session (workspace non épinglé → « Unauthorized » générique).
+    // session-guard sonde /users/me et ne déconnecte que si le token est mort.
     const status = error?.response?.status;
     if (status === 401) {
-      if (!isRedirecting) {
-        isRedirecting = true;
-        const messageText =
-          error?.response?.data?.message || RetcodeMessage[401];
-        notification.error({
-          message: messageText,
-          description: messageText,
-          duration: 3,
-        });
-        authorizationUtil.removeAll();
-        redirectToLogin();
-      }
-
+      await handleUnauthorized(
+        error?.response?.data?.message || RetcodeMessage[401],
+      );
       return Promise.reject(error);
     }
 
