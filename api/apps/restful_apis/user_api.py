@@ -42,6 +42,7 @@ from api.utils.api_utils import (
 )
 from api.utils.nickname_validation import validate_nickname
 from api.utils.crypt import decrypt
+from api.utils.internal_secret import check_internal_secret as _check_internal_secret  # CUSTOM B2B SaaS
 from rag.utils.redis_conn import REDIS_CONN
 from api.apps import login_required, current_user, login_user, logout_user
 from api.apps.extensions.rbac import require_permission, Permission
@@ -161,6 +162,13 @@ async def login():
 
 @manager.route("/internal/bridge/prepare", methods=["POST"])  # noqa: F821
 async def internal_bridge_prepare():
+    # CUSTOM B2B SaaS — route service-à-service (panel → api) : fabrique un code
+    # de connexion pour N'IMPORTE QUEL user_id. Sans le secret partagé, c'était
+    # une usurpation de compte ouverte à quiconque connaît un user_id
+    # (constaté 2026-09-06). Cf. api/utils/internal_secret.py.
+    ok_secret, err = _check_internal_secret()
+    if not ok_secret:
+        return get_json_result(data=False, code=RetCode.AUTHENTICATION_ERROR, message=err)
     json_body = await get_request_json() or {}
     user_id = (json_body.get("user_id") or "").strip()
     ws_id = (json_body.get("ws_id") or "").strip()
@@ -204,6 +212,11 @@ async def internal_bridge_prepare():
 
 @manager.route("/internal/invite/prepare", methods=["POST"])  # noqa: F821
 async def internal_invite_prepare():
+    # CUSTOM B2B SaaS — même garde que internal_bridge_prepare : un code
+    # d'invitation permet de POSER le mot de passe du compte visé.
+    ok_secret, err = _check_internal_secret()
+    if not ok_secret:
+        return get_json_result(data=False, code=RetCode.AUTHENTICATION_ERROR, message=err)
     json_body = await get_request_json() or {}
     user_id = (json_body.get("user_id") or "").strip()
     ttl = int(json_body.get("ttl", 60 * 60 * 48))

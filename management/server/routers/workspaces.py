@@ -2,6 +2,8 @@
 Workspace CRUD routes.
 Org admins can create/delete workspaces within their org.
 """
+import os
+
 from fastapi import APIRouter, Depends, HTTPException, Request, status
 
 from management.server.auth.dependencies import get_current_user_id, require_org_admin, require_superuser
@@ -275,6 +277,9 @@ async def launch_workspace(ws_id: str, user_id: str = Depends(get_current_user_i
                 # → new /api/v1/internal/bridge/prepare (registered in api/apps/restful_apis/user_api.py).
                 f"{settings.RAGFLOW_API_URL}/api/v1/internal/bridge/prepare",
                 json={"user_id": user_id, "ws_id": ws_id},
+                # CUSTOM B2B SaaS — la route vérifie le secret partagé depuis le
+                # 2026-09-06 (avant : usurpation ouverte à qui connaît un user_id).
+                headers={"X-Internal-Secret": os.environ.get("INTERNAL_API_SECRET", "")},
                 timeout=10,
             )
         resp.raise_for_status()

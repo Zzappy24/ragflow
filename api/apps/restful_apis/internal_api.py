@@ -33,23 +33,10 @@ import os
 from quart import request
 
 from api.utils.api_utils import get_error_data_result, get_result
+# CUSTOM B2B SaaS — helper partagé avec user_api.py (bridge/invite prepare),
+# qui ne vérifiait rien jusqu'au 2026-09-06. Une seule implémentation.
+from api.utils.internal_secret import check_internal_secret as _check_internal_secret
 from common.constants import RetCode
-
-
-def _check_internal_secret() -> tuple[bool, str]:
-    """Return (ok, error_message). Compare header against env var in
-    constant time to avoid timing leaks."""
-    expected = os.environ.get("INTERNAL_API_SECRET", "")
-    if not expected:
-        return False, "INTERNAL_API_SECRET not configured on this server"
-    provided = request.headers.get("X-Internal-Secret", "")
-    if not provided:
-        return False, "Missing X-Internal-Secret header"
-    # hmac.compare_digest is constant-time; secrets.compare_digest is an alias
-    import hmac
-    if not hmac.compare_digest(expected, provided):
-        return False, "Invalid X-Internal-Secret"
-    return True, ""
 
 
 @manager.route("/internal/llm/verify", methods=["POST"])  # noqa: F821

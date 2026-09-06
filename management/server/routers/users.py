@@ -17,6 +17,8 @@ Flow:
      outbound email.
   4. The user lands on RAGFlow, sets a password, and is auto-logged in.
 """
+import os
+
 from fastapi import APIRouter, Depends, HTTPException, Request, status
 
 from management.server.auth.dependencies import (
@@ -46,6 +48,9 @@ async def _mint_invite_url(target_user_id: str) -> str:
                 # → new /api/v1/internal/invite/prepare (registered in api/apps/restful_apis/user_api.py).
                 f"{settings.RAGFLOW_API_URL}/api/v1/internal/invite/prepare",
                 json={"user_id": target_user_id, "ttl": settings.INVITE_TOKEN_EXPIRE_SECONDS},
+                # CUSTOM B2B SaaS — la route vérifie le secret partagé depuis le
+                # 2026-09-06 (un code d'invitation pose le mot de passe du compte).
+                headers={"X-Internal-Secret": os.environ.get("INTERNAL_API_SECRET", "")},
                 timeout=10,
             )
         resp.raise_for_status()
