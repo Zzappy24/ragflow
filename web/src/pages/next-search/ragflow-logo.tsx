@@ -10,9 +10,10 @@ import EmbedAppModal from './embed-app-modal';
 
 function EmbedIcon() {
   const [openEmbed, setOpenEmbed] = useState(false);
-  const { beta, handleOperate } = useFetchTokenListBeforeOtherStep();
-
   const { data: SearchData } = useFetchSearchDetail();
+  const { beta, handleOperate } = useFetchTokenListBeforeOtherStep(
+    SearchData?.id,
+  );
 
   return (
     <>

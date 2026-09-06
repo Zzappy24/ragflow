@@ -1,5 +1,5 @@
 import { useSetModalState, useTranslate } from '@/hooks/common-hooks';
-import { useFetchManualSystemTokenList } from '@/hooks/use-user-setting-request';
+import { useFetchEmbedBeta } from '@/hooks/use-user-setting-request';
 import { useCallback } from 'react';
 import message from '../ui/message';
 
@@ -21,54 +21,34 @@ export const useShowBetaEmptyError = () => {
   return { showBetaEmptyError };
 };
 
-export const useFetchTokenListBeforeOtherStep = () => {
-  const { showTokenEmptyError } = useShowTokenEmptyError();
-  const { showBetaEmptyError } = useShowBetaEmptyError();
-
-  const { data: tokenList, fetchSystemTokenList } =
-    useFetchManualSystemTokenList();
-
-  let token = '',
-    beta = '';
-
-  if (Array.isArray(tokenList) && tokenList.length > 0) {
-    token = tokenList[0].token;
-    beta = tokenList[0].beta;
-  }
-
-  token =
-    Array.isArray(tokenList) && tokenList.length > 0 ? tokenList[0].token : '';
+// CUSTOM B2B SaaS — Intégrer / Partager : le bouton demande le seul jeton
+// beta du bot (route ouverte aux éditeurs) au lieu de lister les clés API,
+// réservées aux admins depuis l'audit 2026-09-06. Sans clé utilisable, le
+// backend répond par un message explicite que l'intercepteur affiche.
+export const useFetchTokenListBeforeOtherStep = (sharedId?: string) => {
+  const { beta, fetchEmbedBeta } = useFetchEmbedBeta();
 
   const handleOperate = useCallback(async () => {
-    const ret = await fetchSystemTokenList();
-    const list = ret;
-    if (Array.isArray(list) && list.length > 0) {
-      if (!list[0].beta) {
-        showBetaEmptyError();
-        return false;
-      }
-      return list[0]?.token;
-    } else {
-      showTokenEmptyError();
-      return false;
-    }
-  }, [fetchSystemTokenList, showBetaEmptyError, showTokenEmptyError]);
+    const nextBeta = await fetchEmbedBeta(sharedId);
+    return Boolean(nextBeta);
+  }, [fetchEmbedBeta, sharedId]);
 
   return {
-    token,
+    token: '',
     beta,
     handleOperate,
   };
 };
 
-export const useShowEmbedModal = () => {
+export const useShowEmbedModal = (sharedId?: string) => {
   const {
     visible: embedVisible,
     hideModal: hideEmbedModal,
     showModal: showEmbedModal,
   } = useSetModalState();
 
-  const { handleOperate, token, beta } = useFetchTokenListBeforeOtherStep();
+  const { handleOperate, token, beta } =
+    useFetchTokenListBeforeOtherStep(sharedId);
 
   const handleShowEmbedModal = useCallback(async () => {
     const succeed = await handleOperate();

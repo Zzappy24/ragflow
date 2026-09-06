@@ -144,7 +144,7 @@ export function Sessions({ handleConversationCardClick }: SessionProps) {
 
   const { id } = useParams();
   const { showEmbedModal, hideEmbedModal, embedVisible, beta } =
-    useShowEmbedModal();
+    useShowEmbedModal(id);
 
   if (!visible) {
     return (

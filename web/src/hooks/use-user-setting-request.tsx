@@ -28,6 +28,7 @@ export const enum UserSettingApiAction {
   TenantInfo = 'tenantInfo',
   SaveSetting = 'saveSetting',
   FetchManualSystemTokenList = 'fetchManualSystemTokenList',
+  FetchEmbedBeta = 'fetchEmbedBeta',
   FetchSystemTokenList = 'fetchSystemTokenList',
   RemoveSystemToken = 'removeSystemToken',
   CreateSystemToken = 'createSystemToken',
@@ -215,6 +216,29 @@ export const useFetchManualSystemTokenList = () => {
   });
 
   return { data, loading, fetchSystemTokenList: mutateAsync };
+};
+
+// CUSTOM B2B SaaS — jeton beta seul pour Intégrer / Partager (éditeurs).
+// La liste des clés (listToken) renvoie les clés API en clair et est réservée
+// aux admins depuis l'audit 2026-09-06 : le bouton ne doit plus la lire.
+// `sharedId` = bot/agent/search embarqué, pour obtenir une clé qui lui est
+// liée ou une clé non liée (jamais la clé d'un autre bot).
+export const useFetchEmbedBeta = () => {
+  const {
+    data,
+    isPending: loading,
+    mutateAsync,
+  } = useMutation({
+    mutationKey: [UserSettingApiAction.FetchEmbedBeta],
+    mutationFn: async (sharedId?: string): Promise<string> => {
+      const { data } = await userService.getEmbedBeta(
+        sharedId ? { dialog_id: sharedId } : undefined,
+      );
+      return data?.code === 0 ? (data?.data?.beta ?? '') : '';
+    },
+  });
+
+  return { beta: data ?? '', loading, fetchEmbedBeta: mutateAsync };
 };
 
 export const useFetchSystemTokenList = () => {

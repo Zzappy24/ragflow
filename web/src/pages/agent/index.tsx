@@ -129,7 +129,7 @@ export default function Agent() {
   } = useSetModalState();
 
   const { showEmbedModal, hideEmbedModal, embedVisible, beta } =
-    useShowEmbedModal();
+    useShowEmbedModal(id);
   const { navigateToAgentLogs, navigateToAgentExplore } = useNavigatePage();
   const time = useWatchAgentChange(chatDrawerVisible);
   const isWebhookMode = useIsWebhookMode();

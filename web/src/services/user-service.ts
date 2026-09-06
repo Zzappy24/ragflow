@@ -11,6 +11,7 @@ const {
   tenantInfo,
   getSystemVersion,
   getSystemTokenList,
+  getEmbedBeta,
   removeSystemToken,
   createSystemToken,
   getSystemConfig,
@@ -48,6 +49,10 @@ const methods = {
   },
   listToken: {
     url: getSystemTokenList,
+    method: 'get',
+  },
+  getEmbedBeta: {
+    url: getEmbedBeta,
     method: 'get',
   },
   createToken: {

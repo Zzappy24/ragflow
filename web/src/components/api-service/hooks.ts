@@ -1,11 +1,6 @@
-import {
-  useSetModalState,
-  useShowDeleteConfirm,
-  useTranslate,
-} from '@/hooks/common-hooks';
+import { useShowDeleteConfirm, useTranslate } from '@/hooks/common-hooks';
 import {
   useCreateSystemToken,
-  useFetchManualSystemTokenList,
   useFetchSystemTokenList,
   useRemoveSystemToken,
 } from '@/hooks/use-user-setting-request';
@@ -79,67 +74,6 @@ export const useShowBetaEmptyError = () => {
   return { showBetaEmptyError };
 };
 
-const useFetchTokenListBeforeOtherStep = () => {
-  const { showTokenEmptyError } = useShowTokenEmptyError();
-  const { showBetaEmptyError } = useShowBetaEmptyError();
-
-  const { data: tokenList, fetchSystemTokenList } =
-    useFetchManualSystemTokenList();
-
-  let token = '',
-    beta = '';
-
-  if (Array.isArray(tokenList) && tokenList.length > 0) {
-    token = tokenList[0].token;
-    beta = tokenList[0].beta;
-  }
-
-  token =
-    Array.isArray(tokenList) && tokenList.length > 0 ? tokenList[0].token : '';
-
-  const handleOperate = useCallback(async () => {
-    const ret = await fetchSystemTokenList();
-    const list = ret;
-    if (Array.isArray(list) && list.length > 0) {
-      if (!list[0].beta) {
-        showBetaEmptyError();
-        return false;
-      }
-      return list[0]?.token;
-    } else {
-      showTokenEmptyError();
-      return false;
-    }
-  }, [fetchSystemTokenList, showBetaEmptyError, showTokenEmptyError]);
-
-  return {
-    token,
-    beta,
-    handleOperate,
-  };
-};
-
-export const useShowEmbedModal = () => {
-  const {
-    visible: embedVisible,
-    hideModal: hideEmbedModal,
-    showModal: showEmbedModal,
-  } = useSetModalState();
-
-  const { handleOperate, token, beta } = useFetchTokenListBeforeOtherStep();
-
-  const handleShowEmbedModal = useCallback(async () => {
-    const succeed = await handleOperate();
-    if (succeed) {
-      showEmbedModal();
-    }
-  }, [handleOperate, showEmbedModal]);
-
-  return {
-    showEmbedModal: handleShowEmbedModal,
-    hideEmbedModal,
-    embedVisible,
-    embedToken: token,
-    beta,
-  };
-};
+// L'implémentation réelle du bouton Intégrer vit dans embed-dialog ; ce
+// doublon ne lisait plus qu'une liste de clés réservée aux admins.
+export { useShowEmbedModal } from '@/components/embed-dialog/use-show-embed-dialog';

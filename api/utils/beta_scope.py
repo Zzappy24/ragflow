@@ -56,6 +56,24 @@ def beta_allowed_kb_ids(tenant_id: str, tok=None) -> set[str] | None:
     return None
 
 
+def pick_embed_token(rows, shared_id: str | None):
+    """Clé dont le beta peut embarquer ``shared_id`` (bot, agent ou search app).
+
+    Priorité : clé frappée pour cet objet, puis clé non liée (héritage). Une
+    clé liée à un AUTRE objet n'est jamais retenue : ``beta_denies`` la
+    refuserait au premier appel du widget. None = rien d'utilisable.
+    """
+    rows = list(rows or [])
+    if shared_id:
+        for row in rows:
+            if (getattr(row, "dialog_id", None) or None) == shared_id:
+                return row
+    for row in rows:
+        if not (getattr(row, "dialog_id", None) or None):
+            return row
+    return None
+
+
 def kb_ids_owned_by(tenant_id: str, kb_ids) -> bool:
     """Toutes les bases demandées appartiennent au tenant (aucune n'est vide)."""
     from api.db.services.knowledgebase_service import KnowledgebaseService

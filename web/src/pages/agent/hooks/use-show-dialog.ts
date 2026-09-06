@@ -1,5 +1,3 @@
-import { useFetchTokenListBeforeOtherStep } from '@/components/embed-dialog/use-show-embed-dialog';
-import { SharedFrom } from '@/constants/chat';
 import { useShowDeleteConfirm } from '@/hooks/common-hooks';
 import {
   useCreateSystemToken,
@@ -55,37 +53,4 @@ export const useSelectChartStatsList = (): ChartStatsType => {
     }
     return pre;
   }, {} as ChartStatsType);
-};
-
-const getUrlWithToken = (token: string, from: string = 'chat') => {
-  const { protocol, host } = window.location;
-  return `${protocol}//${host}/chat/share?shared_id=${token}&from=${from}`;
-};
-
-export const usePreviewChat = (idKey: string) => {
-  const { handleOperate } = useFetchTokenListBeforeOtherStep();
-
-  const open = useCallback(
-    (t: string) => {
-      window.open(
-        getUrlWithToken(
-          t,
-          idKey === 'canvasId' ? SharedFrom.Agent : SharedFrom.Chat,
-        ),
-        '_blank',
-      );
-    },
-    [idKey],
-  );
-
-  const handlePreview = useCallback(async () => {
-    const token = await handleOperate();
-    if (token) {
-      open(token);
-    }
-  }, [handleOperate, open]);
-
-  return {
-    handlePreview,
-  };
 };

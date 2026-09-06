@@ -248,6 +248,8 @@ export default {
   // system
   getSystemVersion: `${restAPIv1}/system/version`,
   getSystemTokenList: `${restAPIv1}/system/tokens`,
+  // CUSTOM B2B SaaS — jeton beta seul (Intégrer / Partager), ouvert aux éditeurs
+  getEmbedBeta: `${restAPIv1}/system/tokens/beta`,
   createSystemToken: `${restAPIv1}/system/tokens`,
   removeSystemToken: `${restAPIv1}/system/tokens`,
   getSystemConfig: `${restAPIv1}/system/config`,

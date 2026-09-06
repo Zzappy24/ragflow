@@ -19,13 +19,14 @@ import logging
 from datetime import datetime
 from timeit import default_timer as timer
 
-from quart import jsonify
+from quart import jsonify, request
 
 from api.apps import current_user, login_required
 from api.utils.api_utils import get_json_result, get_data_error_result, server_error_response, generate_confirmation_token
 from api.apps.extensions.rbac import require_permission, Permission
 from api.utils.health_utils import run_health_checks, get_oceanbase_status
 from api.utils.tenant_context import active_tenant_id
+from api.utils.beta_scope import pick_embed_token
 from common.versions import get_ragflow_version
 from common.time_utils import current_timestamp, datetime_format
 from api.db.db_models import APIToken
@@ -280,6 +281,36 @@ def token_list():
                 o["beta"] = generate_confirmation_token().replace("ragflow-", "")[:32]
                 APITokenService.filter_update([APIToken.tenant_id == tenant_id, APIToken.token == o["token"]], o)
         return get_json_result(data=objs)
+    except Exception as e:
+        return server_error_response(e)
+
+
+@manager.route("/system/tokens/beta", methods=["GET"])  # noqa: F821
+@login_required
+@require_permission(Permission.CHAT_UPDATE)
+def embed_beta():
+    """CUSTOM B2B SaaS — jeton beta seul, pour le bouton Intégrer / Partager.
+
+    La liste des jetons (GET /system/tokens) renvoie les clés API en clair et
+    est réservée à API_KEY_MANAGE depuis l'audit 2026-09-06. Les éditeurs
+    (CHAT_UPDATE) doivent pourtant pouvoir publier les bots qu'ils
+    construisent : cette route ne renvoie QUE le beta, jamais une clé API.
+    ``?dialog_id=<bot>`` choisit une clé frappée pour ce bot, sinon une clé
+    non liée — jamais la clé d'un autre bot (``beta_denies`` la refuserait au
+    premier appel du widget). Sans clé utilisable, message explicite : c'est
+    à un admin d'en créer une.
+    """
+    try:
+        tenant_id = active_tenant_id()
+        shared_id = (request.args.get("dialog_id") or "").strip() or None
+        row = pick_embed_token(APITokenService.query(tenant_id=tenant_id), shared_id)
+        if row is None:
+            return get_data_error_result(message="No usable API key for this bot: ask a workspace admin to create one (Settings > API keys).")
+        beta = row.beta
+        if not beta:
+            beta = generate_confirmation_token().replace("ragflow-", "")[:32]
+            APITokenService.filter_update([APIToken.tenant_id == tenant_id, APIToken.token == row.token], {"beta": beta})
+        return get_json_result(data={"beta": beta})
     except Exception as e:
         return server_error_response(e)
 

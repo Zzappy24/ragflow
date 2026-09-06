@@ -329,3 +329,50 @@ class TestFrontXss:
         share = conf.index("location ~ ^/(chats/(share|widget)|agent/share|search/share)")
         block = conf[share:conf.index("location / {")]
         assert "X-Frame-Options" not in block, "les pages de partage doivent rester embarquables"
+
+
+# ------------------------------------------- Intégrer / Partager (éditeurs)
+class TestEmbedBetaForEditors:
+    """Le bouton Intégrer / Partager lisait GET /system/tokens (clés API en
+    clair), réservé à API_KEY_MANAGE depuis l'audit : les éditeurs ne
+    pouvaient plus publier leurs bots. Route dédiée qui ne renvoie que le
+    beta, et qui choisit une clé utilisable pour LE bot embarqué."""
+
+    def test_pick_embed_token_prefers_bound_then_unbound_never_other_bot(self):
+        from api.utils.beta_scope import pick_embed_token
+        other = SimpleNamespace(token="t1", dialog_id="botA", beta="a")
+        free = SimpleNamespace(token="t2", dialog_id=None, beta="b")
+        mine = SimpleNamespace(token="t3", dialog_id="botB", beta="c")
+        assert pick_embed_token([other, free, mine], "botB") is mine
+        assert pick_embed_token([other, free], "botB") is free
+        assert pick_embed_token([other], "botB") is None, "la clé d'un autre bot serait refusée par beta_denies"
+        assert pick_embed_token([other, free], None) is free
+        assert pick_embed_token([], "botB") is None
+        blank = SimpleNamespace(token="t4", dialog_id="", beta="d")
+        assert pick_embed_token([blank], "botB") is blank
+
+    def test_route_is_editor_reachable_and_never_returns_a_key(self):
+        rel = "api/apps/restful_apis/system_api.py"
+        src = _src(rel)
+        route = _func(rel, "embed_beta")
+        decos = src[src.index('manager.route("/system/tokens/beta"'):src.index("def embed_beta")]
+        assert "login_required" in decos
+        assert "require_permission(Permission.CHAT_UPDATE)" in decos
+        assert "pick_embed_token(" in route
+        assert 'get_json_result(data={"beta": beta})' in route
+        assert "data=objs" not in route and '"token"' not in route
+        listing = src[src.index('manager.route("/system/tokens", methods=["GET"]'):src.index("def token_list")]
+        assert "require_permission(Permission.API_KEY_MANAGE)" in listing, "la liste des clés reste admin"
+
+    def test_front_embed_button_no_longer_lists_api_keys(self):
+        for rel in ("web/src/components/embed-dialog/use-show-embed-dialog.ts", "web/src/components/api-service/hooks.ts"):
+            src = _src(rel)
+            assert "useFetchManualSystemTokenList" not in src and "listToken" not in src, rel
+        assert "userService.getEmbedBeta(" in _src("web/src/hooks/use-user-setting-request.tsx")
+        assert "/system/tokens/beta" in _src("web/src/utils/api.ts")
+        embed = _src("web/src/components/embed-dialog/use-show-embed-dialog.ts")
+        assert "useFetchEmbedBeta()" in embed and "fetchEmbedBeta(sharedId)" in embed
+        # les appelants passent l'identifiant du bot embarqué
+        assert "useShowEmbedModal(id)" in _src("web/src/pages/agent/index.tsx")
+        assert "useShowEmbedModal(id)" in _src("web/src/pages/next-chats/chat/sessions.tsx")
+        assert re.search(r"useFetchTokenListBeforeOtherStep\(\s*SearchData\?\.id,?\s*\)", _src("web/src/pages/next-search/ragflow-logo.tsx"))
