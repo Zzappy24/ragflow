@@ -14,10 +14,8 @@
 #  limitations under the License.
 #
 import logging
-import os
 import re
 from abc import ABC
-from datetime import timedelta
 
 from agent.tools.base import ToolParamBase, ToolBase, ToolMeta
 from api.db import FileType
@@ -253,35 +251,34 @@ class GetFile(ToolBase, ABC):
             return None
 
     def _presigned_url(self, f) -> str:
-        # Files-manager files are stored under bucket=parent_id, key=location
-        # (api/apps/services/file_api_service.py::upload_file, ~line 88:
-        # `settings.STORAGE_IMPL.put(last_folder.id, location, blob)`). This is
-        # the primary address the download route itself tries first
-        # (api/apps/restful_apis/file_api.py, ~line 317:
-        # `stream_blob_response(file.parent_id, file.location, ...)`).
-        #
-        # If no object actually lives at that address, fall back the same way
-        # the download route does: File2DocumentService.get_storage_address(file_id=...)
-        # returns (file.parent_id, file.location) for LOCAL-sourced files, or
-        # (doc.kb_id, doc.location) for KB-sourced files
-        # (api/db/services/file2document_service.py::get_storage_address, lines 83-96).
-        bucket, key = f.parent_id, f.location
-
-        try:
-            exists = settings.STORAGE_IMPL.obj_exist(bucket, key)
-        except Exception:
-            logging.exception(f"get_file: obj_exist check failed for {bucket}/{key}")
-            exists = False
-
-        if not exists:
-            try:
-                bucket, key = File2DocumentService.get_storage_address(file_id=f.id)
-            except Exception:
-                logging.exception(f"get_file: fallback storage address lookup failed for file id={f.id}")
-
-        expires = timedelta(seconds=self._param.url_expires_s)
-        sandbox_endpoint = os.environ.get("SANDBOX_PRESIGN_ENDPOINT") or None
-        return settings.STORAGE_IMPL.get_presigned_url(bucket, key, expires, endpoint_override=sandbox_endpoint)
+        return presign_file_for_sandbox(f, self._param.url_expires_s)
 
     def thoughts(self) -> str:
         return "Looking up the file and generating a short-lived URL..."
+
+
+# CUSTOM B2B SaaS — présignature d'un fichier des Files, atteignable depuis le
+# sandbox. Logique UNIQUE partagée par get_file ET code_exec (source câblée),
+# pour ne jamais diverger : timedelta OBLIGATOIRE côté MinIO (un int fait
+# échouer la présignature endpoint_override -> get_presigned_url renvoie None
+# -> URL injectée = None -> NameError 'null' dans le wrapper sandbox,
+# incident 2026-09-07) + repli d'adresse via File2Document.
+def presign_file_for_sandbox(f, expires_s: int) -> str:
+    import os as _os
+    from datetime import timedelta as _timedelta
+
+    bucket, key = f.parent_id, f.location
+    try:
+        exists = settings.STORAGE_IMPL.obj_exist(bucket, key)
+    except Exception:
+        logging.exception(f"presign: obj_exist failed for {bucket}/{key}")
+        exists = False
+    if not exists:
+        try:
+            bucket, key = File2DocumentService.get_storage_address(file_id=f.id)
+        except Exception:
+            logging.exception(f"presign: fallback storage address failed for id={f.id}")
+    endpoint = _os.environ.get("SANDBOX_PRESIGN_ENDPOINT") or None
+    return settings.STORAGE_IMPL.get_presigned_url(
+        bucket, key, _timedelta(seconds=int(expires_s)), endpoint_override=endpoint
+    )

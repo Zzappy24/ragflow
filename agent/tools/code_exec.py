@@ -409,16 +409,16 @@ class CodeExec(ToolBase, ABC):
 
     def _resolve_source_url(self, source_file: str) -> str:
         """Résout un fichier des Files en URL présignée atteignable depuis le
-        sandbox (même logique que le tool get_file). Exécuté côté serveur (pod
-        api), jamais par le LLM. Intégration stockage — à valider sur stack.
+        sandbox. Réutilise la MÊME présignature que get_file
+        (presign_file_for_sandbox) : timedelta, repli d'adresse, endpoint sandbox.
+        Exécuté côté serveur, jamais par le LLM.
         """
         import os as _os
 
+        from agent.tools.get_file import presign_file_for_sandbox
         from api.db.services.file_service import FileService
-        from common import settings
 
         tenant_id = self._canvas.get_tenant_id()
-        # lookup par id (32 hex) puis par nom, scopé tenant
         f = None
         e, cand = FileService.get_by_id(source_file)
         if e and cand is not None and getattr(cand, "tenant_id", tenant_id) == tenant_id:
@@ -428,12 +428,8 @@ class CodeExec(ToolBase, ABC):
             f = rows[0] if rows else None
         if f is None:
             raise FileNotFoundError(f"code_exec source '{source_file}' introuvable dans les Files")
-
-        endpoint = _os.environ.get("SANDBOX_PRESIGN_ENDPOINT") or None
         expires = int(_os.environ.get("CODE_EXEC_SOURCE_URL_EXPIRES_S", "900"))
-        return settings.STORAGE_IMPL.get_presigned_url(
-            f.parent_id, f.location, expires, endpoint_override=endpoint
-        )
+        return presign_file_for_sandbox(f, expires)
 
     def _execute_code(self, language: str, code: str, arguments: dict):
         import requests
