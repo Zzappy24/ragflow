@@ -76,7 +76,10 @@ os.environ.setdefault("ZHIPU_AI_API_KEY", "stub-not-actually-called")
 # contract drift but is actually upstream's own "skip on Infinity"
 # annotation that we mis-evaluated. Set it BEFORE upstream test modules
 # are imported by `_bridge.py` (parametrize decorators run at import time).
-os.environ.setdefault("DOC_ENGINE", "infinity")
+# Défaut : elasticsearch — la prod est sur ES depuis 2026-08-29 ; exporter
+# DOC_ENGINE=infinity pour rejouer l'ancien jeu de skips (2026-09-07).
+os.environ.setdefault("DOC_ENGINE", "elasticsearch")
+_ENGINE = os.environ["DOC_ENGINE"]
 
 
 # ---------------------------------------------------------------------------
@@ -490,30 +493,20 @@ _ENV_SKIPS: list[tuple[str, str]] = [
     ("test_update_dataset.py::TestDatasetUpdate::test_parser_config_none",
      "fork uses workspace-tenant chat model, not glm-4-flash@ZHIPU-AI default"),
 
-    # pagerank requires Elasticsearch with score scripting; we run on Infinity.
-    ("test_update_dataset.py::TestDatasetUpdate::test_pagerank[mid]",
-     "pagerank requires Elasticsearch (DOC_ENGINE=es); we run on Infinity"),
-    ("test_update_dataset.py::TestDatasetUpdate::test_pagerank[max]",
-     "pagerank requires Elasticsearch (DOC_ENGINE=es); we run on Infinity"),
-    ("test_update_dataset.py::TestDatasetUpdate::test_pagerank_set_to_0",
-     "pagerank requires Elasticsearch (DOC_ENGINE=es); we run on Infinity"),
+    # pagerank requires Elasticsearch with score scripting — skips
+    # conditionnels au moteur, voir _ENGINE_SKIPS ci-dessous.
 
     # Setup fixture attempts to add chunks via embedding — needs a fully
     # configured embedding pipeline that doesn't run in pure-bridge mode.
-    ("test_update_dataset.py::TestDatasetUpdate::test_embedding_model_with_existing_chunks",
-     "requires running embedding pipeline for fixture setup"),
 
     # /retrieval search tests — fixture chain creates a dataset, uploads a
     # document, calls parse_documents, polls until DONE, then adds chunks.
     # Each step depends on the local LLM + embedding + indexing pipeline being
     # fully online; failures here are pipeline flakiness, not contract drift.
     # Re-enable once we have a stable e2e environment in CI.
-    ("test_search.py::TestDatasetSearch::test_search_basic",
-     "requires full upload→parse→chunk pipeline in fixture setup"),
-    ("test_search.py::TestDatasetSearch::test_search_with_doc_ids",
-     "requires full upload→parse→chunk pipeline in fixture setup"),
-    ("test_search.py::TestDatasetSearch::test_search_params",
-     "requires full upload→parse→chunk pipeline in fixture setup"),
+    # (test_search.* et test_embedding_model_with_existing_chunks : voir
+    #  _PIPELINE_SKIPS — levés avec HTTPAPI_FULL_PIPELINE=1 sur une stack
+    #  locale complète, 2026-09-07.)
 
     # ------------------------------------------------------------------
     # Auth-failure body shape: upstream asserts `res["code"] == 401` but
@@ -578,6 +571,36 @@ _ENV_SKIPS: list[tuple[str, str]] = [
     ("test_update_chunk.py::TestUpdatedChunk::test_invalid_dataset_id[00000000000000000000000000000000-102-Can't find this chunk]",
      "fork: workspace check first → 'You don't own the dataset', not 'Can't find this chunk'"),
 ]
+
+
+# Skips dépendants du moteur : les tests pagerank ne valent que sur ES, le
+# test "pagerank refusé" ne vaut que sur Infinity.
+if _ENGINE == "elasticsearch":
+    _ENGINE_SKIPS = [
+        ("test_update_dataset.py::TestDatasetUpdate::test_pagerank_infinity",
+         "attend le refus du pagerank propre à Infinity ; moteur = elasticsearch"),
+    ]
+else:
+    _ENGINE_SKIPS = [
+        (f"test_update_dataset.py::TestDatasetUpdate::test_pagerank[{k}]",
+         f"pagerank requires Elasticsearch (DOC_ENGINE=es); we run on {_ENGINE}") for k in ("mid", "max")
+    ] + [("test_update_dataset.py::TestDatasetUpdate::test_pagerank_set_to_0",
+          f"pagerank requires Elasticsearch (DOC_ENGINE=es); we run on {_ENGINE}")]
+_ENV_SKIPS.extend(_ENGINE_SKIPS)
+
+# Skips levés seulement avec une stack complète (upload → parse → chunk) :
+# HTTPAPI_FULL_PIPELINE=1 sur la stack locale (executor + embedding).
+if os.getenv("HTTPAPI_FULL_PIPELINE") != "1":
+    _ENV_SKIPS.extend([
+        ("test_update_dataset.py::TestDatasetUpdate::test_embedding_model_with_existing_chunks",
+         "requires running embedding pipeline for fixture setup (HTTPAPI_FULL_PIPELINE=1)"),
+        ("test_search.py::TestDatasetSearch::test_search_basic",
+         "requires full upload→parse→chunk pipeline (HTTPAPI_FULL_PIPELINE=1)"),
+        ("test_search.py::TestDatasetSearch::test_search_with_doc_ids",
+         "requires full upload→parse→chunk pipeline (HTTPAPI_FULL_PIPELINE=1)"),
+        ("test_search.py::TestDatasetSearch::test_search_params",
+         "requires full upload→parse→chunk pipeline (HTTPAPI_FULL_PIPELINE=1)"),
+    ])
 
 
 def pytest_collection_modifyitems(config, items):
