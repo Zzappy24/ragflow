@@ -73,9 +73,9 @@ class TestBetaScopeHelpers:
         assert beta_scope.beta_denies("x", SimpleNamespace(dialog_id=None)) is False
 
     def test_allowed_kb_ids_from_dialog_then_search_app(self, monkeypatch):
-        from api.utils import beta_scope
         import api.db.services.dialog_service as ds
         import api.db.services.search_service as ss
+        from api.utils import beta_scope
         dialog = SimpleNamespace(tenant_id="t", kb_ids=["kb1", "kb2"])
         monkeypatch.setattr(ds.DialogService, "get_by_id", staticmethod(lambda i: (True, dialog)))
         assert beta_scope.beta_allowed_kb_ids("t", SimpleNamespace(dialog_id="dlg")) == {"kb1", "kb2"}
@@ -89,8 +89,8 @@ class TestBetaScopeHelpers:
         assert beta_scope.beta_allowed_kb_ids("t", SimpleNamespace(dialog_id=None)) is None
 
     def test_kb_ids_owned_by_requires_every_id(self, monkeypatch):
-        from api.utils import beta_scope
         import api.db.services.knowledgebase_service as ks
+        from api.utils import beta_scope
         monkeypatch.setattr(ks.KnowledgebaseService, "query", staticmethod(lambda **kw: [1] if kw.get("id") == "mine" else []))
         assert beta_scope.kb_ids_owned_by("t", ["mine"]) is True
         assert beta_scope.kb_ids_owned_by("t", "mine") is True
@@ -303,8 +303,14 @@ class TestLot3SsrfAndSessions:
         assert "is not registered" not in _func("api/apps/restful_apis/user_api.py", "login")
 
     def test_deprovision_kills_user_api_keys(self):
-        body = _func("management/server/services/provisioning.py", "deprovision_user")
-        assert "ApiKeyScope.update(status=\"0\")" in body and "APIToken.delete()" in body
+        helper = _func("management/server/services/provisioning.py", "revoke_user_api_keys")
+        assert "ApiKeyScope.update(status=\"0\")" in helper and "APIToken.delete()" in helper
+        # dé-provision d'org, suppression individuelle, purge, purge d'archivé :
+        # les quatre chemins révoquent les clés (recette 2026-09-07 — avant,
+        # seule la dé-provision le faisait).
+        assert "revoke_user_api_keys(user_id)" in _func("management/server/services/provisioning.py", "deprovision_user")
+        for rel, name in (("management/server/routers/users.py", "delete_user"), ("management/server/routers/users.py", "purge_user"), ("management/server/routers/archives.py", "purge_archived_user")):
+            assert "revoke_user_api_keys(" in _func(rel, name), f"{name} ne révoque pas les clés API"
 
 
 class TestFrontXss:

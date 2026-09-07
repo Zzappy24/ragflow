@@ -236,6 +236,8 @@ def delete_user(request: Request, uid: str, user=Depends(require_superuser)):
         # Revoke all access
         WsGroupMember.delete().where(WsGroupMember.user_id == uid).execute()
         WsMember.delete().where(WsMember.user_id == uid).execute()
+        from management.server.services.provisioning import revoke_user_api_keys
+        revoke_user_api_keys(uid)  # clés API mortes avec le compte (recette 2026-09-07)
         OrgMember.delete().where(OrgMember.user_id == uid).execute()
         UserTenant.delete().where(UserTenant.user_id == uid).execute()
 
@@ -296,6 +298,8 @@ def purge_user(request: Request, uid: str, confirm: str = "", user=Depends(requi
     with DB.connection_context():
         WsGroupMember.delete().where(WsGroupMember.user_id == uid).execute()
         WsMember.delete().where(WsMember.user_id == uid).execute()
+        from management.server.services.provisioning import revoke_user_api_keys
+        revoke_user_api_keys(uid)  # clés API mortes avec le compte (recette 2026-09-07)
         OrgMember.delete().where(OrgMember.user_id == uid).execute()
         UserTenant.delete().where(UserTenant.user_id == uid).execute()
         Tenant.delete().where(Tenant.id == uid).execute()

@@ -368,3 +368,57 @@ def code_tests_db_guard():
         logging.getLogger(__name__).warning(
             "code tests running against the SHARED dev DB — set CODE_TESTS_DB to isolate")
     yield
+
+
+# ---------------------------------------------------------------------------
+# Fixtures LIVE partagées (test_live_*.py) — serveur + panel + moteurs vivants.
+# Outils dans _live.py. Workspaces jetables archivés puis purgés en fin de module.
+# ---------------------------------------------------------------------------
+sys.path.insert(0, str(Path(__file__).resolve().parent))
+
+
+@pytest.fixture(scope="module")
+def live_panel():
+    import _live
+    return _live.Panel()
+
+
+@pytest.fixture(scope="module")
+def live_primary(ws_auth, workspace_id):
+    import _live
+    ws = _live.tenant_of_workspace(workspace_id)
+    return {"auth": ws_auth, "ws_id": workspace_id, "tenant_id": ws.tenant_id, "org_id": ws.org_id}
+
+
+@pytest.fixture(scope="module")
+def live_second(live_panel, live_primary):
+    import time as _time
+
+    import _live
+    ws = _live.make_disposable_workspace(live_panel, live_primary, f"recette-live IDOR {int(_time.time()) % 100000}")
+    yield ws
+    _live.purge_workspace(live_panel, ws["org_id"], ws["ws_id"])
+
+
+@pytest.fixture(scope="module")
+def live_content1(live_primary):
+    import _live
+    c = _live.setup_content(live_primary["auth"], "T1", "PERROQUET-UN")
+    yield c
+    if c["chat"]:
+        _live.api(live_primary["auth"], "DELETE", "/chats", json={"ids": [c["chat"]]})
+    _live.api(live_primary["auth"], "DELETE", "/datasets", json={"ids": [c["kb"]]})
+
+
+@pytest.fixture(scope="module")
+def live_content2(live_second):
+    import _live
+    return _live.setup_content(live_second["auth"], "T2", "PERROQUET-DEUX")
+
+
+@pytest.fixture(scope="module")
+def live_beta1(live_primary):
+    import _live
+    r = _live.api(live_primary["auth"], "POST", "/system/tokens", json={})
+    assert _live.code(r) == 0, r.text
+    return r.json()["data"]["beta"]

@@ -17,8 +17,9 @@ no documents ever live there.
 """
 import secrets
 
-from common.misc_utils import get_uuid
 from werkzeug.security import generate_password_hash
+
+from common.misc_utils import get_uuid
 
 # Hardcoded default parser IDs — mirrors ``common/settings.py::init_settings``.
 # The admin-server process does not call ``init_settings()`` (it would attempt
@@ -73,10 +74,11 @@ def provision_workspace(org_id: str, name: str, description: str, created_by: st
     Returns the Workspace object.
     """
     import re
+
     from api.db.db_models import DB
-    from api.db.services.user_service import UserService, TenantService, UserTenantService
-    from api.db.services.workspace_service import WorkspaceService, WsMemberService
     from api.db.services.tenant_llm_service import TenantLLMService
+    from api.db.services.user_service import TenantService, UserService, UserTenantService
+    from api.db.services.workspace_service import WorkspaceService, WsMemberService
 
     # Generate a slug-safe identifier
     slug = re.sub(r"[^a-z0-9]", "-", name.lower()).strip("-")[:50]
@@ -213,7 +215,8 @@ def deprovision_workspace(ws_id: str, ts: int | None = None) -> None:
     Use ``restore_workspace`` to undo, or ``purge_workspace`` to hard-delete.
     """
     import time
-    from api.db.db_models import DB, User, Tenant
+
+    from api.db.db_models import DB, Tenant, User
     from api.db.services.workspace_service import WorkspaceService
 
     ok, ws = WorkspaceService.get_by_id(ws_id)
@@ -235,7 +238,7 @@ def deprovision_workspace(ws_id: str, ts: int | None = None) -> None:
 
 def restore_workspace(ws_id: str) -> None:
     """Reverse of ``deprovision_workspace`` — flip status back to '1'."""
-    from api.db.db_models import DB, User, Tenant
+    from api.db.db_models import DB, Tenant, User
     from api.db.services.workspace_service import WorkspaceService
 
     ok, ws = WorkspaceService.get_by_id(ws_id)
@@ -271,9 +274,17 @@ def purge_workspace(ws_id: str) -> None:
     restaient en place derrière une suppression apparemment réussie.
     """
     from api.db.db_models import (
-        DB, User, Tenant, UserTenant, Workspace,
-        WsMember, WsGroup, WsGroupMember, WsGroupDataset,
-        Knowledgebase, Document,
+        DB,
+        Document,
+        Knowledgebase,
+        Tenant,
+        User,
+        UserTenant,
+        Workspace,
+        WsGroup,
+        WsGroupDataset,
+        WsGroupMember,
+        WsMember,
     )
     from api.db.services.workspace_service import WorkspaceService
     from management.server.services.tenant_purge_client import purge_tenant_content_via_api
@@ -346,14 +357,15 @@ def provision_user(
     Returns the new ``user_id``.
     """
     from api.db import FileType, UserTenantRole
+
     # CUSTOM B2B SaaS — import Peewee direct pour File au lieu de FileService.
     # Le module file_service.py cascade vers rag.llm.cv_model + api.utils.file_utils
     # (openai, pdfplumber, etc.) qui ne sont pas dans l'image mgmt slim. Le mgmt
     # ne fait ici qu'un simple File.create() → identique à UserService/TenantService
     # qui utilisent aussi save() directement.
     from api.db.db_models import DB, File
-    from api.db.services.user_service import UserService, TenantService, UserTenantService
     from api.db.services.org_service import OrgMemberService
+    from api.db.services.user_service import TenantService, UserService, UserTenantService
     from api.db.services.workspace_service import WorkspaceService
 
     if org_role not in ("org_admin", "member"):
@@ -447,6 +459,21 @@ def provision_user(
     return user_id
 
 
+def revoke_user_api_keys(user_id: str) -> int:
+    """CUSTOM B2B SaaS — révoque les clés API d'un utilisateur (ApiKeyScope
+    status=0 + suppression des APIToken associés). Appelé par la
+    dé-provision d'org, la suppression individuelle et les deux purges :
+    avant le 2026-09-07 seule la dé-provision le faisait, les clés d'un
+    compte supprimé/purgé restaient actives en base (bloquées à l'exécution
+    par is_active=0 seulement). À appeler dans un DB.connection_context()."""
+    from api.db.db_models import ApiKeyScope, APIToken
+    tokens = [k.token for k in ApiKeyScope.select(ApiKeyScope.token).where(ApiKeyScope.created_by == user_id)]
+    if tokens:
+        ApiKeyScope.update(status="0").where(ApiKeyScope.created_by == user_id).execute()
+        APIToken.delete().where(APIToken.token.in_(tokens)).execute()
+    return len(tokens)
+
+
 def deprovision_user(user_id: str) -> None:
     """
     Soft-delete a human user: flip is_active to '0' and status to '0'.
@@ -455,6 +482,7 @@ def deprovision_user(user_id: str) -> None:
     is freed for re-invite, while remaining readable in DB for audit/restore.
     """
     import time
+
     from api.db.db_models import DB, User
     from api.db.services.user_service import UserService
 
@@ -472,11 +500,7 @@ def deprovision_user(user_id: str) -> None:
         # CUSTOM B2B SaaS — ses clés API meurent avec lui : elles restaient
         # utilisables (et retombaient sur l'utilisateur technique du tenant)
         # après le départ (audit 2026-09-06).
-        from api.db.db_models import APIToken, ApiKeyScope
-        tokens = [s.token for s in ApiKeyScope.select(ApiKeyScope.token).where(ApiKeyScope.created_by == user_id)]
-        if tokens:
-            ApiKeyScope.update(status="0").where(ApiKeyScope.created_by == user_id).execute()
-            APIToken.delete().where(APIToken.token.in_(tokens)).execute()
+        revoke_user_api_keys(user_id)
 
 
 def grant_workspace_access(ws, target_user_id: str, role: str, member_id: str):
@@ -494,8 +518,8 @@ def grant_workspace_access(ws, target_user_id: str, role: str, member_id: str):
         member_id: Pre-generated ID for the WsMember record
     """
     from api.db.db_models import DB
-    from api.db.services.workspace_service import WsMemberService
     from api.db.services.user_service import UserTenantService
+    from api.db.services.workspace_service import WsMemberService
 
     with DB.connection_context():
         WsMemberService.save(**{

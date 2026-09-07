@@ -454,6 +454,8 @@ def purge_archived_user(user_id: str, confirm: str = "", user=Depends(require_su
         # Revoke all remaining access rows
         WsGroupMember.delete().where(WsGroupMember.user_id == user_id).execute()
         WsMember.delete().where(WsMember.user_id == user_id).execute()
+        from management.server.services.provisioning import revoke_user_api_keys
+        revoke_user_api_keys(user_id)  # clés API mortes avec le compte (recette 2026-09-07)
         OrgMember.delete().where(OrgMember.user_id == user_id).execute()
         UserTenant.delete().where(UserTenant.user_id == user_id).execute()
         # Delete personal tenant shell

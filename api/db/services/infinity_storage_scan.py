@@ -32,6 +32,7 @@ _REDIS_TTL_S = 2 * 3600
 def _redis_put(data: dict) -> None:
     try:
         import json
+
         from rag.utils.redis_conn import REDIS_CONN
         REDIS_CONN.set_obj(_REDIS_KEY, data, _REDIS_TTL_S) if hasattr(REDIS_CONN, "set_obj") else REDIS_CONN.set(_REDIS_KEY, json.dumps(data), _REDIS_TTL_S)
     except Exception:
@@ -41,6 +42,7 @@ def _redis_put(data: dict) -> None:
 def _redis_get() -> dict | None:
     try:
         import json
+
         from rag.utils.redis_conn import REDIS_CONN
         raw = REDIS_CONN.get(_REDIS_KEY)
         if not raw:
@@ -84,13 +86,20 @@ def _scan_elasticsearch() -> list[dict]:
     stats = es.indices.stats(index="ragflow_*", metric="store,docs")
     tables = []
     for idx_name, s in (stats.get("indices") or {}).items():
-        m = re.match(r"^ragflow_(.+)$", idx_name)
+        # `ragflow_<tenant>` = chunks ; `ragflow_doc_meta_<tenant>` = index de
+        # métadonnées du même tenant. Avant (2026-09-07) le second était
+        # attribué à un faux tenant "doc_meta_<id>" : ses octets sortaient du
+        # total du workspace et polluaient la liste.
+        m = re.match(r"^ragflow_(doc_meta_)?([0-9a-f]{32})$", idx_name)
         if not m:
             continue
-        tenant_id = m.group(1)
+        tenant_id = m.group(2)
         primaries = s.get("primaries") or {}
         total_rows = int(((primaries.get("docs") or {}).get("count")) or 0)
         total_bytes = int(((primaries.get("store") or {}).get("size_in_bytes")) or 0)
+        if m.group(1):  # index de métadonnées : octets au tenant, pas de "lignes" (ce ne sont pas des chunks)
+            tables.append({"tenant_id": tenant_id, "kb_id": "", "rows": 0, "bytes": total_bytes})
+            continue
 
         buckets = []
         if total_rows > 0:
@@ -125,11 +134,18 @@ def scan() -> dict:
     from common import settings as common_settings
 
     if not getattr(common_settings, "DOC_ENGINE_INFINITY", False):
+        engine = getattr(common_settings, "DOC_ENGINE", "")
+        if engine != "elasticsearch":
+            raise RuntimeError(f"storage scan: moteur {engine!r} non mesuré")
         try:
-            tables = _scan_elasticsearch() if getattr(common_settings, "DOC_ENGINE", "") == "elasticsearch" else []
+            tables = _scan_elasticsearch()
         except Exception as e:
-            logging.warning(f"storage scan ({getattr(common_settings, 'DOC_ENGINE', '?')}): {e}")
-            tables = []
+            # Ne PAS mettre en cache un relevé vide : le panel afficherait
+            # "0 Ko" pendant 2 h alors que la mesure est indisponible ("—").
+            logging.warning(f"storage scan (elasticsearch): {e}")
+            raise
+        if not tables:
+            logging.warning("storage scan (elasticsearch): aucun index ragflow_* vu par ce pod — vérifier ES_HOST / droits du compte")
         data = {
             "scanned_at": time.time(),
             "tables": tables,
