@@ -386,7 +386,7 @@ sandbox:
     # Depuis la release v0.9.11 : tag aligné sur global.imageTag (une
     # release = un tag partout, l'utilisateur rebuilde toutes les images).
     # Le contenu sandbox n'a pas changé depuis v0.9.7 — rebuild d'uniformisation.
-    tag: "v0.9.17.13"
+    tag: "v0.9.17.12"
   # harbor-pull-secret is copied once into rag-sandbox out-of-band
   # (externalSecrets disabled on this cluster) — this is only the NAME the
   # sandbox Jobs reference.
