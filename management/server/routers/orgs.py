@@ -154,31 +154,56 @@ def update_org(org_id: str, body: OrgUpdate, user_id: str = Depends(get_current_
 # ------------------------------------------------------------------
 
 _BRANDING_LOGO_MAX_BYTES = 400_000  # data-URI complet (~300 Ko d'image)
+_BRANDING_BANNER_MAX_BYTES = 1_400_000  # bannière large (~1 Mo d'image)
 _BRANDING_MIMES = ("image/png", "image/jpeg", "image/svg+xml", "image/webp")
+_BANNER_MODES = ("cyllene", "org")
 
 
-def validate_branding(logo: str | None, brand_color: str | None) -> str | None:
+def _check_image(value: str, label: str, max_bytes: int) -> str | None:
+    if not any(value.startswith(f"data:{m};base64,") for m in _BRANDING_MIMES):
+        return f"{label} : format attendu data:image/(png|jpeg|svg+xml|webp);base64"
+    if len(value) > max_bytes:
+        return f"{label} trop lourd (max {max_bytes // 1000} Ko encodé)"
+    return None
+
+
+def validate_branding(logo: str | None, brand_color: str | None,
+                      banner: str | None = None, banner_mode: str | None = None) -> str | None:
     """Retourne un message d'erreur, ou None si le branding est valide.
 
     Fonction pure (épinglée par test) : chaîne vide = effacement (OK),
-    logo doit être un data-URI image base64 sous la limite de taille,
-    couleur au format #rrggbb strict.
+    logo et bannière = data-URI image base64 sous la limite de taille,
+    couleur au format #rrggbb strict, mode de bannière "cyllene" ou "org"
+    (bannière d'accueil par organisation, 2026-09-07).
     """
     import re
 
     if logo:
-        if not any(logo.startswith(f"data:{m};base64,") for m in _BRANDING_MIMES):
-            return "Logo : format attendu data:image/(png|jpeg|svg+xml|webp);base64"
-        if len(logo) > _BRANDING_LOGO_MAX_BYTES:
-            return f"Logo trop lourd (max {_BRANDING_LOGO_MAX_BYTES // 1000} Ko encodé)"
+        err = _check_image(logo, "Logo", _BRANDING_LOGO_MAX_BYTES)
+        if err:
+            return err
+    if banner:
+        err = _check_image(banner, "Bannière", _BRANDING_BANNER_MAX_BYTES)
+        if err:
+            return err
     if brand_color and not re.fullmatch(r"#[0-9a-fA-F]{6}", brand_color):
         return "Couleur : format attendu #rrggbb"
+    if banner_mode and banner_mode not in _BANNER_MODES:
+        return "Bannière : mode attendu cyllene ou org"
     return None
+
+
+def _branding_payload(org) -> dict:
+    return {"logo": org.logo or None, "brand_color": org.brand_color or None,
+            "banner_mode": getattr(org, "banner_mode", None) or "cyllene",
+            "banner": getattr(org, "banner", None) or None}
 
 
 class BrandingUpdate(BaseModel):
     logo: str | None = None
     brand_color: str | None = None
+    banner: str | None = None
+    banner_mode: str | None = None
 
 
 @router.get("/{org_id}/branding")
@@ -190,7 +215,7 @@ def get_org_branding(org_id: str, user_id: str = Depends(get_current_user_id)):
         org = Organisation.get_or_none(Organisation.id == org_id)
     if not org:
         raise HTTPException(status_code=404, detail="Organisation introuvable")
-    return {"logo": org.logo or None, "brand_color": org.brand_color or None}
+    return _branding_payload(org)
 
 
 @router.put("/{org_id}/branding")
@@ -201,7 +226,7 @@ def update_org_branding(request: Request, org_id: str, body: BrandingUpdate,
     fields = body.model_dump(exclude_unset=True)
     if not fields:
         raise HTTPException(status_code=400, detail="Aucun champ fourni")
-    err = validate_branding(fields.get("logo"), fields.get("brand_color"))
+    err = validate_branding(fields.get("logo"), fields.get("brand_color"), fields.get("banner"), fields.get("banner_mode"))
     if err:
         raise HTTPException(status_code=400, detail=err)
 
@@ -218,7 +243,7 @@ def update_org_branding(request: Request, org_id: str, body: BrandingUpdate,
                      action="org.branding.update", org_id=org_id,
                      resource_type="organisation", resource_id=org_id,
                      details={"fields": sorted(fields)})
-    return {"logo": org.logo or None, "brand_color": org.brand_color or None}
+    return _branding_payload(org)
 
 
 @router.delete("/{org_id}", status_code=status.HTTP_204_NO_CONTENT)

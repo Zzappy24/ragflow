@@ -1,5 +1,6 @@
 import bannerBg from '@/assets/banner-cyllene.jpg';
 import { Card, CardContent } from '@/components/ui/card';
+import { useFetchOrgBranding } from '@/hooks/use-org-branding';
 import { useFetchUserInfo } from '@/hooks/use-user-setting-request';
 import { ArrowRight, X } from 'lucide-react';
 import { useTranslation } from 'react-i18next';
@@ -41,19 +42,67 @@ export function Banner() {
   );
 }
 
+// CUSTOM B2B SaaS — bannière d'accueil par organisation (2026-09-07).
+// banner_mode 'org' : image de l'org si fournie, sinon bannière générée depuis
+// sa couleur d'accent et son logo. Sinon (défaut) : la montagne Cyllene.
+function OrgBannerBackground({
+  branding,
+}: {
+  branding: ReturnType<typeof useFetchOrgBranding>;
+}) {
+  if (branding?.banner) {
+    return (
+      <>
+        <img
+          src={branding.banner}
+          alt=""
+          className="absolute inset-0 size-full object-cover"
+        />
+        <div className="absolute inset-0 bg-gradient-to-r from-black/65 via-black/35 to-black/10" />
+      </>
+    );
+  }
+  const accent = branding?.brand_color || 'rgb(var(--accent-primary))';
+  return (
+    <>
+      <div
+        className="absolute inset-0"
+        style={{
+          background: `linear-gradient(115deg, ${accent} 0%, color-mix(in srgb, ${accent} 55%, black) 100%)`,
+        }}
+      />
+      {branding?.logo && (
+        <img
+          src={branding.logo}
+          alt={branding.org_name || ''}
+          className="absolute right-10 top-1/2 -translate-y-1/2 max-h-16 max-w-48 object-contain opacity-90"
+        />
+      )}
+    </>
+  );
+}
+
 export function NextBanner() {
   const { t, i18n } = useTranslation();
   const {
     data: { nickname },
   } = useFetchUserInfo();
+  const branding = useFetchOrgBranding();
+  const orgBanner = branding?.banner_mode === 'org';
   return (
     <section className="relative rounded-2xl overflow-hidden my-8">
-      <img
-        src={bannerBg}
-        alt=""
-        className="absolute inset-0 size-full object-cover"
-      />
-      <div className="absolute inset-0 bg-gradient-to-r from-black/65 via-black/35 to-black/10" />
+      {orgBanner ? (
+        <OrgBannerBackground branding={branding} />
+      ) : (
+        <>
+          <img
+            src={bannerBg}
+            alt=""
+            className="absolute inset-0 size-full object-cover"
+          />
+          <div className="absolute inset-0 bg-gradient-to-r from-black/65 via-black/35 to-black/10" />
+        </>
+      )}
       <h1
         className="relative px-10 py-12 text-5xl leading-normal text-left"
         dir={i18n.language?.startsWith('ar') ? 'rtl' : 'ltr'}

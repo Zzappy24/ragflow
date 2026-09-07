@@ -53,6 +53,31 @@ class TestValidateBranding:
 
         assert hasattr(Organisation, "logo")
         assert hasattr(Organisation, "brand_color")
+        # bannière d'accueil par organisation (2026-09-07)
+        assert hasattr(Organisation, "banner_mode")
+        assert hasattr(Organisation, "banner")
+
+    def test_banner_mode_and_image_validated(self):
+        from management.server.routers.orgs import validate_branding
+
+        png = "data:image/png;base64,iVBORw0KGgo="
+        assert validate_branding(None, None, banner=png, banner_mode="org") is None
+        assert validate_branding(None, None, banner_mode="cyllene") is None
+        assert validate_branding(None, None, banner_mode="blanche") is not None, "mode inconnu accepté"
+        assert validate_branding(None, None, banner="data:text/html;base64,PHNjcmlwdD4=") is not None, "bannière non image acceptée"
+        assert validate_branding(None, None, banner="data:image/png;base64," + "A" * 1_500_000) is not None, "bannière sans limite de taille"
+
+    def test_banner_wired_end_to_end(self):
+        """Panel (saisie) → API produit (lecture) → front (rendu)."""
+        import pathlib
+        root = pathlib.Path(__file__).resolve().parents[2]
+        api_src = (root / "api/apps/restful_apis/branding_api.py").read_text()
+        assert '"banner_mode"' in api_src and '"banner"' in api_src
+        panel = (root / "management/web/src/pages/organisations/branding-card.tsx").read_text()
+        assert "banner_mode" in panel and "Bannière d'accueil" in panel
+        front = (root / "web/src/pages/home/banner.tsx").read_text()
+        assert "useFetchOrgBranding" in front and "banner_mode === 'org'" in front
+        assert "banner-cyllene.jpg" in front, "la montagne Cyllene doit rester le défaut"
 
 
 class TestBrandingNeverForcesLogout:

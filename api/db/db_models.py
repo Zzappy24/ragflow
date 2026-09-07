@@ -1474,6 +1474,12 @@ class Organisation(DataBaseModel):
     # CUSTOM B2B SaaS — DA par organisation : couleur d'accent (#rrggbb)
     # appliquée par le front avec le logo ci-dessus. NULL = thème Cyllene.
     brand_color = CharField(max_length=16, null=True)
+    # CUSTOM B2B SaaS — bannière d'accueil par organisation (2026-09-07) :
+    # banner_mode NULL/"cyllene" = montagne Cyllene ; "org" = bannière de
+    # l'org : image data-URI `banner` si fournie, sinon générée par le front
+    # depuis brand_color + logo. Réglage panel, sans redéploiement.
+    banner_mode = CharField(max_length=16, null=True)
+    banner = TextField(null=True)
     status = CharField(max_length=1, null=True, default="1", index=True)
     max_users = IntegerField(default=50)
     max_workspaces = IntegerField(default=10)
@@ -2256,6 +2262,9 @@ def migrate_db():
     alter_db_add_column(migrator, "code_team", "bu", CharField(max_length=64, null=True))
     # CUSTOM B2B SaaS — DA par organisation (logo existait déjà)
     alter_db_add_column(migrator, "organisation", "brand_color", CharField(max_length=16, null=True))
+    # CUSTOM B2B SaaS — bannière d'accueil par organisation (2026-09-07)
+    alter_db_add_column(migrator, "organisation", "banner_mode", CharField(max_length=16, null=True))
+    alter_db_add_column(migrator, "organisation", "banner", TextField(null=True))
 
 
 def _add_rbac_unique_indexes(migrator):

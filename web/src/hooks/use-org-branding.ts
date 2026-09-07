@@ -9,6 +9,10 @@ export interface IOrgBranding {
   logo?: string | null;
   brand_color?: string | null;
   org_name?: string | null;
+  /** 'cyllene' (défaut) ou 'org' : bannière d'accueil de l'organisation */
+  banner_mode?: 'cyllene' | 'org' | null;
+  /** image data-URI de la bannière ; absente = bannière générée (couleur + logo) */
+  banner?: string | null;
 }
 
 const ACTIVE_WORKSPACE_KEY = 'active_workspace_id';

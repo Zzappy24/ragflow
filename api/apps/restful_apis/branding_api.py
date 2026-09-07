@@ -55,6 +55,9 @@ def _load_branding(tenant_id: str) -> dict:
         "logo": org.logo or None,
         "brand_color": org.brand_color or None,
         "org_name": org.name,
+        # bannière d'accueil (2026-09-07) : "org" = bannière de l'organisation
+        "banner_mode": getattr(org, "banner_mode", None) or "cyllene",
+        "banner": getattr(org, "banner", None) or None,
     }
 
 
