@@ -1,5 +1,10 @@
 import { render, screen, waitFor } from '@testing-library/react';
-import { WorkspaceGate } from '../workspace-gate';
+import * as React from 'react';
+
+// esbuild-jest transforme le JSX en React.createElement sans injecter
+// l'import : on expose React en global et on charge le composant après
+// (même mécanisme que global-navbar.test.tsx).
+(global as any).React = React;
 
 const mockClear = jest.fn();
 let mockUserInfo: any = {};
@@ -10,6 +15,9 @@ jest.mock('@/hooks/use-user-setting-request', () => ({
 jest.mock('@tanstack/react-query', () => ({
   useQueryClient: () => ({ clear: mockClear }),
 }));
+
+// eslint-disable-next-line @typescript-eslint/no-require-imports
+const { WorkspaceGate } = require('../workspace-gate');
 
 describe('WorkspaceGate', () => {
   beforeEach(() => {
