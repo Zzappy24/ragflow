@@ -11,7 +11,7 @@ replicas: 2
 image:
   repository: harbor.cylndata.cyllene.pro/data/ragflow-mgmt
   repositorySuffix: "-mgmt"
-  tag: v0.9.17.2
+  tag: v0.9.17.3
   pullPolicy: IfNotPresent
   imagePullSecrets:
     - name: harbor-pull-secret
