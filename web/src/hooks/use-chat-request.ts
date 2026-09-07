@@ -16,6 +16,7 @@ import { useGetSharedChatSearchParams } from '@/pages/next-chats/hooks/use-send-
 import chatService from '@/services/next-chat-service';
 import api from '@/utils/api';
 import { buildMessageListWithUuid } from '@/utils/chat';
+import { safeListData } from '@/utils/list-fallback';
 import {
   keepPreviousData,
   useMutation,
@@ -99,7 +100,7 @@ export const useFetchChatList = () => {
         true,
       );
 
-      return data?.data ?? { chats: [], total: 0 };
+      return safeListData(data, { chats: [], total: 0 });
     },
   });
 

@@ -7,6 +7,7 @@ import { Authorization } from '@/constants/authorization';
 import { ResponseType } from '@/interfaces/database/base';
 import i18n from '@/locales/config';
 import { getAuthorization } from '@/utils/authorization-util';
+import { isWorkspacePinned } from '@/utils/list-fallback';
 import notification from '@/utils/notification';
 import { handleUnauthorized } from '@/utils/session-guard';
 import { RequestMethod, extend } from 'umi-request';
@@ -151,6 +152,10 @@ request.interceptors.response.use(async (response: Response, options) => {
     message.error(data?.message);
   } else if (data?.code === 401) {
     await handleUnauthorized(data?.message || RetcodeMessage[401]);
+  } else if (data?.code === 403 && !isWorkspacePinned()) {
+    // CUSTOM B2B SaaS — 403 prématuré : requête partie avant que le
+    // sélecteur ait épinglé un workspace (tenant personnel, aucun rôle).
+    // Le sélecteur relance tout juste après ; pas de toast (2026-09-07).
   } else if (data?.code !== 0) {
     notification.error({
       message: `${i18n.t('message.hint')} : ${data?.code}`,

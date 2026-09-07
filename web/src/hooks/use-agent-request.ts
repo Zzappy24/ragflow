@@ -33,6 +33,7 @@ import agentService, {
   uploadAgentFile,
 } from '@/services/agent-service';
 import { buildMessageListWithUuid } from '@/utils/chat';
+import { safeListData } from '@/utils/list-fallback';
 import {
   keepPreviousData,
   useMutation,
@@ -174,7 +175,7 @@ export const useFetchAgentListByPage = () => {
         true,
       );
 
-      return data?.data;
+      return safeListData(data, { canvas: [], total: 0 });
     },
   });
 

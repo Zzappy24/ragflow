@@ -32,7 +32,7 @@ export function Agents({
 
   return (
     <>
-      {data.slice(0, 10).map((x) => (
+      {(Array.isArray(data) ? data : []).slice(0, 10).map((x) => (
         <HomeCard
           key={x.id}
           data={{ name: x.title, ...x } as any}
