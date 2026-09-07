@@ -20,7 +20,13 @@ from .base import ExecutionResult, SandboxInstance, SandboxProvider
 
 logger = logging.getLogger(__name__)
 
-_BOOTSTRAP = "import base64,os; exec(base64.b64decode(os.environ['SBX_CODE']).decode())"
+# CUSTOM B2B SaaS — cree artifacts/ AVANT le code utilisateur (2026-09-08).
+# Le contrat code_exec veut que les graphiques/fichiers soient sauves dans
+# artifacts/ (scanne par l'epilogue du wrapper APRES main). Mais rien ne
+# creait ce dossier avant, et le code utilisateur ne peut pas le faire
+# (import os bloque par la securite AST). Le bootstrap, lui, est du code de
+# confiance (commande du conteneur) : il cree artifacts/ dans le workingDir.
+_BOOTSTRAP = "import base64,os; os.makedirs('artifacts', exist_ok=True); exec(base64.b64decode(os.environ['SBX_CODE']).decode())"
 
 # Job creation payload cap: keep well under the 1MiB etcd object limit once
 # the manifest (labels, env, resources, ...) wraps the base64 wrapper.
