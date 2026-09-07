@@ -492,6 +492,19 @@ _ENV_SKIPS: list[tuple[str, str]] = [
      "fork uses workspace-tenant chat model, not glm-4-flash@ZHIPU-AI default"),
     ("test_update_dataset.py::TestDatasetUpdate::test_parser_config_none",
      "fork uses workspace-tenant chat model, not glm-4-flash@ZHIPU-AI default"),
+    # Upstream distingue "Unauthorized model" (au catalogue llm_factories mais
+    # sans clé) de "Unsupported model" (inconnu du catalogue). Notre catalogue
+    # llm_factories est vide par choix (init_llm_factory désactivé) : tout
+    # modèle non configuré est "Unsupported". Contrat de la fork, pas un bug
+    # (constaté ES 2026-09-07, échouait déjà sous Infinity).
+    ("test_update_dataset.py::TestDatasetUpdate::test_embedding_model_invalid[tenant_no_auth_default_tenant_llm]",
+     "fork: llm_factories vide par choix → 'Unsupported model', upstream attend 'Unauthorized model'"),
+    ("test_update_dataset.py::TestDatasetUpdate::test_embedding_model_invalid[tenant_no_auth]",
+     "fork: llm_factories vide par choix → 'Unsupported model', upstream attend 'Unauthorized model'"),
+    # Attend le modèle intégré BAAI/bge-small-en-v1.5@Builtin d'upstream ;
+    # nos workspaces n'ont que les modèles posés par le panel (nomic local).
+    ("test_update_dataset.py::TestDatasetUpdate::test_embedding_model_with_existing_chunks",
+     "fork: pas de modèle Builtin BAAI, embedding = celui du workspace (panel)"),
 
     # pagerank requires Elasticsearch with score scripting — skips
     # conditionnels au moteur, voir _ENGINE_SKIPS ci-dessous.
