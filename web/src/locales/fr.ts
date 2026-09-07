@@ -2995,6 +2995,7 @@ Mémoire procédurale : compétences acquises, habitudes et procédures automati
       id: 'ID',
       copySuccess: 'Copié avec succès',
       welcomeBack: 'Bon retour',
+      hello: 'Bonjour',
       searchSettings: 'Paramètres de recherche',
       name: 'Nom',
       avatar: 'Avatar',

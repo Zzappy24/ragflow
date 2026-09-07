@@ -5,6 +5,7 @@ import { cn } from '@/lib/utils';
 import { Routes } from '@/routes';
 import { Send } from 'lucide-react';
 import { useState } from 'react';
+import { useTranslation } from 'react-i18next';
 import { useFetchSearchDetail } from '../next-searches/hooks';
 import EmbedAppModal from './embed-app-modal';
 
@@ -41,6 +42,10 @@ function EmbedIcon() {
   );
 }
 
+// CUSTOM B2B SaaS — white-label : la page Recherche affichait le wordmark
+// « RAGFlow » en dégradé (fuite de marque, vue 2026-09-07 sur la vidéo de
+// démo). On affiche le nom de l'application de recherche, dans la couleur
+// d'accent (donc celle de l'organisation quand elle est brandée).
 export function RAGFlowLogo({
   onClick,
   showEmbedIcon = true,
@@ -48,15 +53,15 @@ export function RAGFlowLogo({
   onClick?: React.MouseEventHandler<HTMLHeadingElement>;
   showEmbedIcon?: boolean;
 }) {
+  const { data: searchData } = useFetchSearchDetail();
+  const { t } = useTranslation();
   return (
     <div className="flex gap-4 items-center">
       <h1
         onClick={onClick}
-        className={cn(
-          'text-4xl font-bold bg-gradient-to-l from-[#40EBE3] to-[#4A51FF] bg-clip-text',
-        )}
+        className={cn('text-4xl font-bold text-accent-primary')}
       >
-        RAGFlow
+        {searchData?.name || t('header.search')}
       </h1>
       {showEmbedIcon && <EmbedIcon></EmbedIcon>}
     </div>

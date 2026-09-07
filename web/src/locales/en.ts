@@ -3003,6 +3003,7 @@ Important structured information may include: names, dates, locations, events, k
       id: 'ID',
       copySuccess: 'Copy Success',
       welcomeBack: 'Welcome back',
+      hello: 'Hello',
       searchSettings: 'Search settings',
       name: 'Name',
       avatar: 'Avatar',
