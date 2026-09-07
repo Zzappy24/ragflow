@@ -240,7 +240,11 @@ async def completion(search_id):
         )
 
     req = await get_request_json()
-    uid = current_user.id
+    # CUSTOM B2B SaaS — scope to the active workspace tenant : async_ask() résout
+    # le modèle de résumé (et le reranker) sur ce tenant ; avec current_user.id
+    # (tenant personnel, vide) le résumé IA renvoyait « Tenant Model … not found »
+    # (vu le 2026-09-07 sur la vidéo de démo). L'accès reste vérifié par utilisateur.
+    uid = active_tenant_id()
     search_app = SearchService.get_detail(search_id)
     if not search_app:
         return get_data_error_result(message=f"Cannot find search {search_id}")

@@ -1643,6 +1643,13 @@ async def async_ask(question, kb_ids, tenant_id, chat_llm_name=None, search_conf
     embd_owner_tenant_id = kbs[0].tenant_id
     embd_model_config = get_model_config_from_provider_instance(embd_owner_tenant_id, LLMType.EMBEDDING, embedding_list[0])
     embd_mdl = LLMBundle(embd_owner_tenant_id, embd_model_config)
+    # CUSTOM B2B SaaS — recherche sans modèle choisi (search_config.chat_id absent) :
+    # repli sur le modèle de chat par défaut du tenant au lieu de planter sur
+    # split_model_name(None) (« NoneType has no attribute split », 2026-09-07).
+    if not chat_llm_name:
+        from api.db.services.user_service import TenantService  # import local : évite le cycle user_service ↔ dialog_service
+        ok_t, tenant_row = TenantService.get_by_id(tenant_id)
+        chat_llm_name = tenant_row.llm_id if ok_t and tenant_row else None
     chat_model_config = get_model_config_from_provider_instance(tenant_id, LLMType.CHAT, chat_llm_name)
     chat_mdl = LLMBundle(tenant_id, chat_model_config)
     if rerank_id:
