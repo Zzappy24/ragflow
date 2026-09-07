@@ -1,5 +1,6 @@
 import { Outlet } from 'react-router';
 import { Header } from './components/header';
+import { WorkspaceGate } from './components/workspace-gate';
 
 export function RootLayoutContainer({ children }: React.PropsWithChildren) {
   return (
@@ -13,8 +14,10 @@ export function RootLayoutContainer({ children }: React.PropsWithChildren) {
 
 export default function RootLayout() {
   return (
-    <RootLayoutContainer>
-      <Outlet />
-    </RootLayoutContainer>
+    <WorkspaceGate>
+      <RootLayoutContainer>
+        <Outlet />
+      </RootLayoutContainer>
+    </WorkspaceGate>
   );
 }
