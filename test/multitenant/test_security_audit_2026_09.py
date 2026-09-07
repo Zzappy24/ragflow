@@ -338,6 +338,15 @@ class TestFrontXss:
         widget = _src("web/src/components/floating-chat-widget-markdown.tsx")
         assert "DOMPurify.sanitize(content, {" in widget
 
+    def test_panel_nginx_sends_security_headers(self):
+        """Le panel admin n'a aucun rendu HTML brut (React seul), mais son
+        nginx ne posait aucun en-tête : parité avec le front (2026-09-07)."""
+        tpl = _src("helm/ragflow/charts/ragflow-management-frontend/templates/_helpers.tpl")
+        vhost = tpl[tpl.index('define "ragflow-management-frontend.nginxVhostConfig"'):]
+        assert vhost.count('add_header X-Frame-Options "DENY" always;') >= 2
+        assert 'add_header X-Content-Type-Options "nosniff" always;' in vhost
+        assert "frame-ancestors 'none'" in vhost
+
     def test_front_nginx_sends_security_headers_and_keeps_share_pages_embeddable(self):
         conf = _src("helm/ragflow/charts/ragflow-frontend/templates/configmap-nginx.yaml")
         assert conf.count('add_header X-Frame-Options "DENY" always;') >= 2

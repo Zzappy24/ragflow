@@ -87,9 +87,20 @@ server {
   root /usr/share/nginx/html;
   index index.html;
 
+  # CUSTOM B2B SaaS — en-têtes de sécurité (parité avec le front principal,
+  # audit 2026-09-06 / 2026-09-07). Le panel n'est JAMAIS embarqué dans un
+  # iframe : anti-clickjacking strict. nginx n'hérite pas d'add_header dans
+  # un bloc qui en déclare : redéclarés dans chaque location qui en a.
+  add_header X-Frame-Options "DENY" always;
+  add_header X-Content-Type-Options "nosniff" always;
+  add_header Referrer-Policy "no-referrer" always;
+  add_header Content-Security-Policy "frame-ancestors 'none'; object-src 'none'; base-uri 'self'" always;
+
   location /assets/ {
     expires 30d;
     add_header Cache-Control "public, immutable";
+    add_header X-Content-Type-Options "nosniff" always;
+    add_header Referrer-Policy "no-referrer" always;
     try_files $uri =404;
   }
 
@@ -112,6 +123,10 @@ server {
   location / {
     try_files $uri $uri/ /index.html;
     add_header Cache-Control "no-cache, no-store, must-revalidate";
+    add_header X-Frame-Options "DENY" always;
+    add_header X-Content-Type-Options "nosniff" always;
+    add_header Referrer-Policy "no-referrer" always;
+    add_header Content-Security-Policy "frame-ancestors 'none'; object-src 'none'; base-uri 'self'" always;
   }
 
   location = /healthz {
